@@ -69,7 +69,7 @@ GNOME 48 unless its author updates it.
 | Brightness UI | **Both**: a slider per monitor plus a linked "all monitors" slider. |
 | Brightness backend | **`libddcutil` kept loaded** in the brightness tool's serve process. It needs installing on the machine. |
 | Shared storage | Each tool keeps its own files in `~/.config/motherapp/` (settings) and `~/.local/state/motherapp/` (state). **SQLite** (`node:sqlite`) is added only where something needs searching, likely log history; when is Claude's call. |
-| Install | An **installer** that checks every dependency. It installs the missing ones, asking before anything uses `sudo`/apt, or explains how to install them. Then it builds the app and sets up the systemd user service. |
+| Install | An **installer** that checks every dependency. It installs the missing ones, asking before anything uses `sudo`/apt, or explains how to install them. Then it builds the app and sets up the systemd user service. Built as `install.sh` (bash, since Node 24 may be missing): `--check`, `--yes`, `--uninstall [--purge]`; Node 24 comes from the NodeSource apt repo (offered) or fnm/nvm (explained). |
 | Testing on the machine | When a build is ready to try, a **GitHub issue with step-by-step test instructions** is opened for a Claude session on the user's computer to follow. |
 | Branching | **Work directly on `main`.** No feature branches. |
 | Audio backend (Q9) | **PipeWire CLI route**: `pw-dump --monitor` for events, `wpctl` for default/volume/mute, `pw-play`/`pw-record` for the tests. No `pactl`, no GObject bindings. Built in `tools/audio/` (`audioctl`). |
@@ -270,7 +270,10 @@ page later without changing the shell.
 
 14. *Answered (§ 3): both kinds of slider, `libddcutil` kept loaded.* Still open for build time:
     how Node calls into `libddcutil`. Options are an FFI package such as `koffi`, or a small C
-    helper process. Also unverified: the exact Ubuntu 24.04 package name for the 1.4 library.
+    helper process. The Ubuntu 24.04 package for the 1.4 library is **`libddcutil4`**
+    (1.4.1-1build2, universe; ships `libddcutil.so.4`, the unversioned `libddcutil.so` symlink
+    is only in `libddcutil-dev`). Checked against the noble archive on 2026-10-19; `install.sh`
+    still picks the name with `apt-cache` at runtime.
 
     Finding: Ubuntu 24.04 packages **ddcutil 1.4.1**, not 2.x (2.2.x is in 25.04 and later).
     The 2.x line is where upstream reworked sleep timing and the shared library.

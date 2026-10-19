@@ -102,7 +102,7 @@ test("core + audio tool with fake PipeWire commands", async (t) => {
   const r = await c.call("action", { tool: "audio", name: "setAppVolume", args: { app: "Firefox", value: 30 } });
   assert.equal(r.error, undefined);
   assert.deepEqual(
-    calls().filter((x) => x.cmd === "wpctl").map((x) => x.args!.join(" ")),
+    calls().filter((x) => x.cmd === "wpctl").map((x) => x.args!.join(" ")).sort(), // the streams are set in parallel
     ["set-volume 101 0.30", "set-volume 102 0.30"],
   );
   await waitFor(() => c.notes("state").some((s) => s.changes.some((x: any) => x.path === "apps.Firefox.volume" && x.value === 30)), "volume delta");
