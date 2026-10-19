@@ -37,6 +37,14 @@ test("validateManifest", () => {
   assert.equal(typeof validateManifest({ id: "core", title: "A", serve: ["x"] }), "string");
   assert.equal(typeof validateManifest({ id: "a", title: "A", serve: ["x"], page: "../x.ts" }), "string");
   assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], page: "p.ts", extra: 1 }), { id: "a", title: "A", serve: ["x"], page: "p.ts" });
+  // "bin" is for install.sh only; the core accepts and ignores it.
+  assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], bin: { actl: "a.ts" } }), { id: "a", title: "A", serve: ["x"] });
+});
+
+test("discoverTools: the repo's own tools/ load without errors (audio declares bin)", () => {
+  const r = discoverTools(path.join(fixturesDir, "..", "..", "..", "..", "tools"));
+  assert.deepEqual(r.errors, []);
+  assert.ok(r.tools.some((t) => t.manifest.id === "audio"));
 });
 
 test("resolveCommand: node is the core's own Node, ./ paths are tool-relative", () => {

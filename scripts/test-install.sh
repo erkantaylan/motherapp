@@ -12,6 +12,10 @@ TMP="$(mktemp -d)"
 # MOTHERAPP_TEST_KEEP=1 keeps the fake machines (and every installer output) for a look.
 if [[ -n ${MOTHERAPP_TEST_KEEP:-} ]]; then echo "# keeping $TMP"; else trap 'rm -rf "$TMP"' EXIT; fi
 ENV_BIN="$(command -v env)"
+# Fake node binaries answer --version themselves, print their arguments when started the way the
+# ~/.local/bin wrappers start them, and hand everything else (the installer's `node -e` manifest
+# read) to the real Node running these tests.
+REAL_NODE="$(command -v node)" || { echo "Bail out! needs node on PATH"; exit 1; }
 
 PASSED=0 FAILED=0 CASE="" C="" OUT="" CODE=0
 
@@ -32,7 +36,7 @@ stub() { # name body  (body gets "$@"; FAKE, FAKE_STUB and MOTHERAPP_INSTALL_ROO
 
 make_node() { # dir version
   mkdir -p "$1"
-  printf '#!/usr/bin/env bash\n[[ ${1:-} == --version ]] && echo %s\nexit 0\n' "$2" >"$1/node"
+  printf '#!/usr/bin/env bash\ncase ${1:-} in\n  --version) echo %s ;;\n  --disable-warning=*) echo "fake-node $*" ;;\n  -e) exec "$REAL_NODE" "$@" ;;\nesac\nexit 0\n' "$2" >"$1/node"
   cat >"$1/npm" <<'EOF'
 #!/usr/bin/env bash
 echo "npm $* (node=$(command -v node))" >>"$FAKE/calls"
@@ -59,10 +63,16 @@ new_case() {
   mkdir -p "$R/packaging" "$HOME_" "$ROOT" "$FAKE"/{apt,dpkg,active,enabled} "$STUB"
   cp "$REPO/install.sh" "$R/"
   cp "$REPO/packaging/motherapp.service" "$R/packaging/"
+  local t
+  for t in "$REPO"/tools/*/manifest.json; do   # the real manifests (audio declares "bin")
+    t="${t%/manifest.json}"
+    mkdir -p "$R/tools/${t##*/}"
+    cp "$t/manifest.json" "$t"/*.ts "$R/tools/${t##*/}/"
+  done
   : >"$FAKE/calls"
   NODE_PATH_DIR="$C/node24/bin"
   make_node "$NODE_PATH_DIR" v24.1.0
-  EXTRA_ENV=()
+  EXTRA_ENV=() EXTRA_PATH=""
 
   # apt archive (candidates) and dpkg database (installed)
   echo 1.4.1-1build2 >"$FAKE/apt/ddcutil"
@@ -122,10 +132,11 @@ for p in "${@:2}"; do
     wireplumber) printf "#!/bin/sh\n" >"$FAKE_STUB/wpctl"; chmod +x "$FAKE_STUB/wpctl" ;;
     sound-theme-freedesktop) mkdir -p "$R/usr/share/sounds/freedesktop/stereo"; touch "$R/usr/share/sounds/freedesktop/stereo/audio-channel-front-"{left,right}.oga ;;
     libddcutil4) mkdir -p "$R/usr/lib/x86_64-linux-gnu"; touch "$R/usr/lib/x86_64-linux-gnu/libddcutil.so.4" ;;
-    nodejs) mkdir -p "$R/usr/bin"; printf "#!/bin/sh\n[ \"\$1\" = --version ] && echo v24.1.0\n" >"$R/usr/bin/node"; cp "$FAKE/npm_template" "$R/usr/bin/npm"; chmod +x "$R/usr/bin/node" "$R/usr/bin/npm" ;;
+    nodejs) mkdir -p "$R/usr/bin"; cp "$FAKE/node_template" "$R/usr/bin/node"; cp "$FAKE/npm_template" "$R/usr/bin/npm"; chmod +x "$R/usr/bin/node" "$R/usr/bin/npm" ;;
   esac
 done'
   cp "$NODE_PATH_DIR/npm" "$FAKE/npm_template"
+  cp "$NODE_PATH_DIR/node" "$FAKE/node_template"
   stub gpg 'out=""; while (($#)); do [[ $1 == -o ]] && out=$2; shift; done; echo "gpg -o $out" >>"$FAKE/calls"; cat >"$out"'
   stub modprobe 'echo "modprobe $*" >>"$FAKE/calls"; mkdir -p "$MOTHERAPP_INSTALL_ROOT/sys/module/i2c_dev"; touch "$MOTHERAPP_INSTALL_ROOT/dev/i2c-1" "$MOTHERAPP_INSTALL_ROOT/dev/i2c-3"'
   stub usermod 'echo "usermod $*" >>"$FAKE/calls"; [[ $1 == -aG ]] && echo "$(cat "$FAKE/user_groups") $2" >"$FAKE/user_groups"'
@@ -154,8 +165,9 @@ esac'
 run_installer() {
   local path="$STUB:$SYSBIN"
   [[ -n $NODE_PATH_DIR ]] && path="$NODE_PATH_DIR:$path"
+  [[ -n $EXTRA_PATH ]] && path="$EXTRA_PATH:$path"
   OUT="$C/out.$(date +%s%N)"
-  (cd "$C" && "$ENV_BIN" -i HOME="$HOME_" PATH="$path" FAKE="$FAKE" FAKE_STUB="$STUB" \
+  (cd "$C" && "$ENV_BIN" -i HOME="$HOME_" PATH="$path" FAKE="$FAKE" FAKE_STUB="$STUB" REAL_NODE="$REAL_NODE" \
     MOTHERAPP_INSTALL_ROOT="$ROOT" MOTHERAPP_INSTALL_WAIT=1 "${EXTRA_ENV[@]}" \
     bash "$R/install.sh" "$@") >"$OUT" 2>&1
   CODE=$?
@@ -180,6 +192,8 @@ exit_is() { [[ $CODE == "$1" ]]; }
 file_has() { grep -qF -- "$2" "$1"; }
 
 UNIT() { printf '%s' "$HOME_/.config/systemd/user/motherapp.service"; }
+WRAP() { printf '%s' "$HOME_/.local/bin/${1:-audioctl}"; }
+MARKER="# managed by motherapp install.sh"
 
 # ------------------------------------------------------------------ cases
 
@@ -215,6 +229,7 @@ run_installer --check
 check "--check after install: exit 0" exit_is 0
 check "--check: unit up to date" out_has '^OK +unit +.*up to date'
 check "--check: service active" out_has '^OK +service +active \(enabled\)'
+check "--check: wrapper up to date" out_has '^OK +audioctl +.*/\.local/bin/audioctl up to date'
 
 new_case node22
 NODE_PATH_DIR="$C/node22/bin"
@@ -345,6 +360,7 @@ check "no sudo" calls_lacks '^sudo'
 run_installer --uninstall
 check "uninstall twice: exit 0" exit_is 0
 check "uninstall twice: unit not present" out_has '^OK +unit +.*not present'
+check "uninstall twice: no wrappers left" out_has '^OK +commands +no motherapp wrappers'
 run_installer --uninstall --purge <<<"n"
 check "purge answered no: config kept" test -d "$HOME_/.config/motherapp"
 run_installer --uninstall --purge --yes
@@ -400,6 +416,103 @@ new_case root-refused
 stub id '[[ $1 == -u ]] && echo 0; exit 0'
 run_installer --check
 check "running as root: exit 2" exit_is 2
+
+new_case bin-wrappers
+run_installer --yes
+check "exit 0" exit_is 0
+check "wrapper written" out_has "^OK +audioctl +wrote $HOME_/\\.local/bin/audioctl \\(node: "
+check "wrapper is executable" test -x "$(WRAP)"
+check "wrapper carries the marker on line 2" bash -c '[[ "$(sed -n 2p "$1")" == "$2" ]]' _ "$(WRAP)" "$MARKER"
+check "wrapper execs the chosen Node by absolute path" file_has "$(WRAP)" \
+  "exec $(printf %q "$NODE_PATH_DIR/node") --disable-warning=ExperimentalWarning $(printf %q "$R/tools/audio/audioctl.ts") \"\$@\""
+check "no wrapper for the demo tool (no bin)" bash -c '[[ $(ls -A "$1" | wc -l) == 1 ]]' _ "$HOME_/.local/bin"
+# Run it the way a keyboard shortcut would: no PATH at all, an argument with a space.
+WOUT="$("$ENV_BIN" -i "$(WRAP)" list "a b" 2>&1)"
+check "wrapper runs with an empty environment" test "$WOUT" = \
+  "fake-node --disable-warning=ExperimentalWarning $R/tools/audio/audioctl.ts list a b"
+check "\$HOME/.local/bin not on PATH: WARN" out_has '^WARN +bin-path +.*/\.local/bin is not on PATH'
+check "PATH WARN explains the re-login" out_has "fix: log out and back in: Ubuntu's ~/\\.profile adds ~/\\.local/bin"
+check "PATH WARN suggests the absolute path for shortcuts" out_has "absolute path, e\\.g\\. $HOME_/\\.local/bin/audioctl"
+cp "$(WRAP)" "$C/wrap.first"
+run_installer --yes
+check "re-run: wrapper unchanged" out_has '^OK +audioctl +.*/\.local/bin/audioctl unchanged'
+check "re-run: same wrapper" cmp -s "$(WRAP)" "$C/wrap.first"
+EXTRA_PATH="$HOME_/.local/bin"
+run_installer --check
+check "on PATH: bin-path OK" out_has '^OK +bin-path +.*/\.local/bin is on PATH'
+check "on PATH: no bin-path WARN" out_lacks '^WARN +bin-path'
+EXTRA_PATH=""
+# A wrapper that a moved Node would leave behind: --check reports it and leaves it alone.
+sed -i 's|^exec .*|exec /old/node "$@"|' "$(WRAP)"
+cp "$(WRAP)" "$C/wrap.old"
+cp "$(WRAP)" "$(WRAP oldctl)"   # a wrapper for a command no manifest declares any more
+tree() { (cd "$C" && find home root "repo dir" -printf '%p %s %T@\n' | sort); }
+tree >"$C/before"
+: >"$FAKE/calls"
+run_installer --check
+tree >"$C/after"
+check "--check: changed wrapper is a WARN" out_has '^WARN +audioctl +.*differs from what the installer would write'
+check "--check: stale wrapper is a WARN" out_has '^WARN +oldctl +.*no tool declares it'
+check "--check: file tree unchanged" cmp -s "$C/before" "$C/after"
+check "--check: exit 0" exit_is 0
+run_installer --yes
+check "update: rewritten" out_has '^OK +audioctl +updated '
+check "update: back to the current wrapper" cmp -s "$(WRAP)" "$C/wrap.first"
+check "update: stale wrapper removed" test ! -e "$(WRAP oldctl)"
+rm "$(WRAP)"
+run_installer --check
+check "--check: missing wrapper is MISSING" out_has '^MISSING +audioctl +.*/\.local/bin/audioctl not installed'
+check "--check: missing wrapper fails the check" exit_is 1
+
+new_case bin-foreign
+mkdir -p "$HOME_/.local/bin"
+printf '#!/bin/sh\necho my own audioctl\n' >"$(WRAP)"
+cp "$(WRAP)" "$C/foreign"
+run_installer --yes
+check "foreign file: WARN" out_has "^WARN +audioctl +$HOME_/\\.local/bin/audioctl exists and wasn't written by install\\.sh; left alone"
+check "foreign file: untouched" cmp -s "$(WRAP)" "$C/foreign"
+check "foreign file: still exit 0" exit_is 0
+run_installer --check
+check "--check: foreign file is a WARN" out_has "^WARN +audioctl +.*wasn't written by install\\.sh"
+rm "$(WRAP)"
+ln -s "$R/tools/audio/audioctl.ts" "$(WRAP)"   # a symlink the user made by hand
+run_installer --yes
+check "foreign symlink: WARN" out_has "^WARN +audioctl +.*wasn't written by install\\.sh; left alone"
+check "foreign symlink: still a symlink" test -L "$(WRAP)"
+run_installer --uninstall
+check "uninstall: foreign symlink kept" test -L "$(WRAP)"
+
+new_case bin-uninstall
+run_installer --yes
+printf '#!/bin/sh\n# managed by me\n' >"$(WRAP mine)"
+printf '#!/bin/sh\necho %s\n' "$MARKER" >"$(WRAP mine2)"   # marker text, but not on line 2
+: >"$FAKE/calls"
+run_installer --uninstall
+check "exit 0" exit_is 0
+check "marked wrapper removed" test ! -e "$(WRAP)"
+check "removal reported" out_has '^OK +audioctl +removed .*/\.local/bin/audioctl'
+check "unmarked files kept" test -f "$(WRAP mine)" -a -f "$(WRAP mine2)"
+check "the bin directory itself is kept" test -d "$HOME_/.local/bin"
+
+new_case bin-no-node
+NODE_PATH_DIR="$C/node22/bin"
+make_node "$NODE_PATH_DIR" v22.23.2
+run_installer --check
+check "--check without Node 24: commands SKIP" out_has '^SKIP +commands +can.t check the wrappers'
+run_installer <<<"n"
+check "install without Node 24: commands SKIP" out_has '^SKIP +commands +Node >= 24 missing; wrappers not written'
+check "install without Node 24: nothing written" test ! -e "$HOME_/.local/bin"
+
+new_case bin-bad-manifest
+printf '{"id":"bad","title":"Bad","serve":["x"],"bin":{"../x":"x.ts","badctl":"../escape.ts","nofile":"missing.ts"}}\n' \
+  >"$R/tools/demo/manifest.json"
+run_installer --yes
+check "bad command name: WARN" out_has '^WARN +commands +tools/demo/manifest\.json: bad command name "\.\./x"'
+check "script outside the tool dir: WARN" out_has '^WARN +commands +tools/demo/manifest\.json: badctl: the script must be a relative path'
+check "missing script: WARN" out_has '^WARN +commands +tools/demo/manifest\.json: nofile: missing\.ts not found'
+check "good entries still written" test -f "$(WRAP)"
+check "bad entries not written" test ! -e "$(WRAP badctl)" -a ! -e "$(WRAP nofile)"
+check "exit 0 (bad bin entries are warnings)" exit_is 0
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 (( FAILED == 0 ))

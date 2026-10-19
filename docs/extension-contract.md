@@ -29,10 +29,11 @@ tools/<id>/
 | `serve` | Command line, relative to the tool dir. `"node"` means the Node that runs the core (so systemd's PATH doesn't matter). A command with a `/` is resolved against the tool dir. Any language works. |
 | `page` | Optional custom page module (see § 6). |
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
+| `bin` | Optional. `{ "<command>": "<script relative to the tool dir>" }`, e.g. `{"audioctl": "audioctl.ts"}`. For each entry `install.sh` writes `~/.local/bin/<command>`, a bash wrapper that runs the script with the installer's Node 24 by absolute path (so an older `node` on PATH or a keyboard shortcut's minimal PATH doesn't matter), and `--uninstall` removes it. The script must be a Node script; the command name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and must be unique across tools. The core ignores this field. |
 
 The core reads `tools/*/manifest.json` at startup. Enabled/disabled is stored in
 `~/.config/motherapp/config.json` (`{"port": 7323, "tools": {"<id>": {"enabled": true}}}`) and can
-be changed on the Settings page. After adding a tool, run `npm install` once at the repo root
+be changed on the Settings page. Unknown manifest fields are ignored. After adding a tool, run `npm install` once at the repo root
 (the tool is a workspace) and restart the core.
 
 ## 2. Serve mode: messages

@@ -3,5 +3,6 @@
   "title": "Audio",
   "icon": "🔊",
   "serve": ["node", "audioctl.ts", "serve"],
+  "bin": { "audioctl": "audioctl.ts" },
   "defaultEnabled": true
 }

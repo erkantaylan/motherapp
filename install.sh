@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # motherapp installer: checks every dependency, installs the missing ones (asking before
 # anything uses sudo/apt) or says how to install them, then builds the app and sets up the
-# systemd user service. Target: Ubuntu 24.04, GNOME 46, Wayland. Safe to re-run.
+# systemd user service. It also writes a small wrapper in ~/.local/bin for each command a tool
+# declares in its manifest ("bin", e.g. audioctl), so tool CLIs work from any terminal and from
+# GNOME keyboard shortcuts. Target: Ubuntu 24.04, GNOME 46, Wayland. Safe to re-run.
 #
 #   ./install.sh               interactive: asks y/N before each sudo/apt step and before
 #                              enabling the service
 #   ./install.sh --check       report only, change nothing (also: npm run doctor)
 #   ./install.sh --yes         accept every prompt
-#   ./install.sh --uninstall   stop + disable the service and remove the unit file
+#   ./install.sh --uninstall   stop + disable the service, remove the unit file and the
+#                              ~/.local/bin wrappers this installer wrote
 #                              (add --purge to also delete ~/.config/motherapp and
 #                              ~/.local/state/motherapp)
 #
@@ -62,10 +65,12 @@ Usage: ./install.sh [--check | --uninstall [--purge]] [--yes]
 
   (no option)   Check dependencies, offer to install missing ones (asks before every
                 sudo/apt step), run npm ci + npm run build, write the systemd user unit,
-                ask before enabling it, then check http://127.0.0.1:7323/.
+                ask before enabling it, then check http://127.0.0.1:7323/. Writes a
+                wrapper in ~/.local/bin for each tool command (e.g. audioctl).
   --check       Only report status. Changes nothing, asks nothing.
   --yes, -y     Answer yes to every prompt.
-  --uninstall   Stop and disable the service, remove ~/.config/systemd/user/motherapp.service.
+  --uninstall   Stop and disable the service, remove ~/.config/systemd/user/motherapp.service
+                and the ~/.local/bin wrappers written by this installer.
                 Keeps ~/.config/motherapp and ~/.local/state/motherapp.
   --purge       With --uninstall: also delete those two directories.
   --help, -h    This text.
@@ -732,6 +737,161 @@ app_status() {
   fi
 }
 
+# ---------------------------------------------------------------- tool commands (~/.local/bin)
+
+BIN_DIR="$HOME/.local/bin"
+BIN_MARKER="# managed by motherapp install.sh"
+BIN_CMDS=() BIN_SCRIPTS=() BIN_BAD=0
+
+# Prints the "bin" entries of every tools/*/manifest.json, one per line:
+# "ok<TAB>tool dir<TAB>command<TAB>absolute script" or "bad<TAB>tool dir<TAB>message".
+BINS_JS='
+const fs = require("fs"), path = require("path");
+const root = process.argv[1], seen = new Map(), clean = (s) => String(s).replace(/\s+/g, " ");
+const out = (...f) => console.log(f.join("\t"));
+for (const d of fs.readdirSync(root).sort()) {
+  const file = path.join(root, d, "manifest.json");
+  if (!fs.existsSync(file)) continue;
+  let m;
+  try { m = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { out("bad", d, clean(e.message)); continue; }
+  const bin = m && m.bin;
+  if (bin === undefined) continue;
+  if (typeof bin !== "object" || bin === null || Array.isArray(bin)) { out("bad", d, "\"bin\" must be an object"); continue; }
+  for (const [cmd, rel] of Object.entries(bin)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(cmd)) { out("bad", d, "bad command name " + clean(JSON.stringify(cmd))); continue; }
+    if (typeof rel !== "string" || rel === "" || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..") || /[\t\n\r]/.test(rel)) {
+      out("bad", d, cmd + ": the script must be a relative path inside the tool directory"); continue;
+    }
+    if (seen.has(cmd)) { out("bad", d, cmd + ": already provided by tools/" + seen.get(cmd)); continue; }
+    const abs = path.join(root, d, rel);
+    if (/[\t\n\r]/.test(abs) || !fs.statSync(abs, { throwIfNoEntry: false })?.isFile()) { out("bad", d, cmd + ": " + clean(rel) + " not found"); continue; }
+    seen.set(cmd, d);
+    out("ok", d, cmd, abs);
+  }
+}'
+
+# Fills BIN_CMDS/BIN_SCRIPTS from the manifests, read with the chosen Node (records a WARN
+# for each bad entry). Returns 1 when the manifests couldn't be read at all.
+load_bins() {
+  BIN_CMDS=() BIN_SCRIPTS=() BIN_BAD=0
+  local out kind dir a b
+  if ! out="$("$NODE_BIN" -e "$BINS_JS" "$REPO_DIR/tools" 2>&1)"; then
+    record WARN commands "couldn't read tools/*/manifest.json with $NODE_BIN: ${out//$'\n'/ }" "" 0
+    return 1
+  fi
+  while IFS=$'\t' read -r kind dir a b; do
+    case $kind in
+      ok) BIN_CMDS+=("$a") BIN_SCRIPTS+=("$b") ;;
+      bad) BIN_BAD=1; record WARN commands "tools/$dir/manifest.json: $a" "fix its \"bin\" field (docs/extension-contract.md)" 0 ;;
+    esac
+  done <<<"$out"
+}
+
+# The wrapper for one script: the chosen Node by absolute path, so neither an older `node`
+# first on PATH nor the minimal PATH of a keyboard shortcut matters.
+render_wrapper() {
+  printf '#!/usr/bin/env bash\n%s\n# Runs %s with the Node chosen by ./install.sh. Re-run ./install.sh to\n# update it; ./install.sh --uninstall removes it.\nexec %q --disable-warning=ExperimentalWarning %q "$@"\n' \
+    "$BIN_MARKER" "${1#"$REPO_DIR"/}" "$NODE_BIN" "$1"
+}
+
+# True for a regular file (not a symlink) whose second line is the marker.
+is_managed() {
+  [[ -f $1 && ! -L $1 ]] && [[ "$(head -c 512 -- "$1" 2>/dev/null | sed -n 2p)" == "$BIN_MARKER" ]]
+}
+
+is_bin_cmd() { local c; for c in "${BIN_CMDS[@]}"; do [[ $c == "$1" ]] && return 0; done; return 1; }
+
+check_bin_path() {
+  (( ${#BIN_CMDS[@]} )) || return 0
+  if [[ ":$PATH:" == *":$BIN_DIR:"* || ":$PATH:" == *":$BIN_DIR/:"* ]]; then
+    record OK bin-path "$BIN_DIR is on PATH"
+  else
+    record WARN bin-path "$BIN_DIR is not on PATH here, so \`${BIN_CMDS[0]}\` isn't found by name" \
+      "log out and back in: Ubuntu's ~/.profile adds ~/.local/bin to PATH at login once the directory exists (a first install creates it)
+or add to ~/.bashrc: export PATH=\"\$HOME/.local/bin:\$PATH\"
+GNOME keyboard shortcuts use the login session's PATH; if in doubt, give them the absolute path, e.g. $BIN_DIR/${BIN_CMDS[0]}" 0
+  fi
+}
+
+bin_setup() {
+  section "Tool commands ($BIN_DIR)"
+  if [[ -z $NODE_BIN ]]; then
+    record SKIP commands "Node >= ${MIN_NODE} missing; wrappers not written" "install Node ${MIN_NODE} (see node above), then re-run ./install.sh" 0
+    return
+  fi
+  load_bins || return
+  local i cmd f want verb
+  (( ${#BIN_CMDS[@]} )) && mkdir -p "$BIN_DIR"
+  for i in "${!BIN_CMDS[@]}"; do
+    cmd=${BIN_CMDS[$i]} f="$BIN_DIR/${BIN_CMDS[$i]}"
+    want="$(render_wrapper "${BIN_SCRIPTS[$i]}")"
+    if [[ -e $f || -L $f ]] && ! is_managed "$f"; then
+      record WARN "$cmd" "$f exists and wasn't written by install.sh; left alone" \
+        "remove or rename it and re-run ./install.sh, or call $NODE_BIN ${BIN_SCRIPTS[$i]} directly" 0
+    elif [[ -f $f && "$(<"$f")" == "$want" ]]; then
+      record OK "$cmd" "$f unchanged"
+    else
+      verb=wrote
+      [[ -f $f ]] && verb=updated
+      if printf '%s\n' "$want" >"$f.tmp" && chmod 755 "$f.tmp" && mv -f "$f.tmp" "$f"; then
+        record OK "$cmd" "$verb $f (node: $NODE_BIN)"
+      else
+        rm -f "$f.tmp"
+        record FAIL "$cmd" "couldn't write $f"
+      fi
+    fi
+  done
+  # Wrappers for commands no tool declares any more (skipped while a manifest has a bad "bin").
+  if (( ! BIN_BAD )); then
+    for f in "$BIN_DIR"/*; do
+      if ! is_managed "$f" || is_bin_cmd "${f##*/}"; then continue; fi
+      run rm -f -- "$f"
+      record OK "${f##*/}" "removed $f (no tool declares it any more)"
+    done
+  fi
+  check_bin_path
+}
+
+# Read-only version of bin_setup for --check.
+bin_status() {
+  section "Tool commands ($BIN_DIR)"
+  if [[ -z $NODE_BIN ]]; then
+    record SKIP commands "can't check the wrappers without Node >= ${MIN_NODE}" "" 0
+    return
+  fi
+  load_bins || return
+  local i cmd f
+  for i in "${!BIN_CMDS[@]}"; do
+    cmd=${BIN_CMDS[$i]} f="$BIN_DIR/${BIN_CMDS[$i]}"
+    if [[ ! -e $f && ! -L $f ]]; then
+      record MISSING "$cmd" "$f not installed" "./install.sh"
+    elif ! is_managed "$f"; then
+      record WARN "$cmd" "$f exists and wasn't written by install.sh; the installer leaves it alone" \
+        "remove or rename it, then re-run ./install.sh" 0
+    elif [[ "$(<"$f")" == "$(render_wrapper "${BIN_SCRIPTS[$i]}")" ]]; then
+      record OK "$cmd" "$f up to date"
+    else
+      record WARN "$cmd" "$f differs from what the installer would write now (Node or checkout moved?)" "./install.sh" 0
+    fi
+  done
+  for f in "$BIN_DIR"/*; do
+    if ! is_managed "$f" || is_bin_cmd "${f##*/}"; then continue; fi
+    record WARN "${f##*/}" "$f: no tool declares it any more" "./install.sh removes it" 0
+  done
+  check_bin_path
+}
+
+uninstall_bins() {
+  local f n=0
+  for f in "$BIN_DIR"/*; do
+    is_managed "$f" || continue
+    run rm -f -- "$f"
+    record OK "${f##*/}" "removed $f"
+    n=$((n + 1))
+  done
+  (( n )) || record OK commands "no motherapp wrappers in $BIN_DIR"
+}
+
 # ---------------------------------------------------------------- summary
 
 summary() {
@@ -782,6 +942,7 @@ uninstall() {
     run systemctl --user daemon-reload
     systemctl --user reset-failed "$UNIT_NAME" >/dev/null 2>&1 || true
   fi
+  uninstall_bins
   local d
   for d in "$APP_CONFIG_DIR" "$APP_STATE_DIR"; do
     if [[ ! -e $d ]]; then
@@ -820,6 +981,7 @@ case "$MODE" in
     run_checks
     resolve_port
     app_status
+    bin_status
     summary
     exit $?
     ;;
@@ -833,6 +995,7 @@ case "$MODE" in
     fi
     resolve_port
     app_setup
+    bin_setup
     summary
     exit $?
     ;;

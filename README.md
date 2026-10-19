@@ -60,6 +60,8 @@ runs `npm ci` and `npm run build`, writes `~/.config/systemd/user/motherapp.serv
 Every status line starts with `OK`, `MISSING`, `WARN`, `FAIL` or `SKIP`, the last line is
 `RESULT: OK` or `RESULT: FAIL`, and the exit code is 0 only when everything required is OK.
 Re-running it is safe; re-run it after moving the checkout or changing Node.
+It also puts each tool's command in `~/.local/bin` (e.g. `audioctl`, a small wrapper that runs it
+with that Node), for terminals and GNOME keyboard shortcuts; `--uninstall` removes them.
 
 ```sh
 journalctl --user -u motherapp -f    # one JSON line per log entry
