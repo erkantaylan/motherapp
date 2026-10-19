@@ -1,0 +1,20 @@
+{
+  "//": "Node side: protocol, tool SDK, core, tools, scripts and all tests. The browser code has web/tsconfig.json.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2024"],
+    "types": ["node"]
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "core/**/*.ts",
+    "tools/*/*.ts",
+    "scripts/**/*.ts",
+    "web/test/**/*.ts",
+    "web/vite.config.ts"
+  ],
+  "exclude": ["node_modules", "**/dist", "packages/protocol/src/page.ts", "**/page.ts"]
+}

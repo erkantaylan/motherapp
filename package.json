@@ -1,0 +1,28 @@
+{
+  "name": "motherapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Locally served control panel: a generic manager core plus independent CLI tools.",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "packages/*",
+    "core",
+    "web",
+    "tools/*"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.ts",
+    "build": "npm run build --workspace web",
+    "start": "node core/src/main.ts",
+    "test": "node --test --disable-warning=ExperimentalWarning \"packages/*/test/*.test.ts\" \"core/test/*.test.ts\" \"web/test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/ws": "^8.18.1",
+    "typescript": "~5.9.3"
+  }
+}

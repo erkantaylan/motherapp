@@ -1,0 +1,13 @@
+{
+  "name": "@motherapp/tool-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Helper for implementing `<tool> serve` (JSON-RPC over stdio, state, persistence, logs).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@motherapp/protocol": "*"
+  }
+}

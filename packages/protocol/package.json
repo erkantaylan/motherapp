@@ -1,0 +1,11 @@
+{
+  "name": "@motherapp/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared message types and the tiny JSON-RPC/state runtime used by core, tool SDK and web.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./page": "./src/page.ts"
+  }
+}
