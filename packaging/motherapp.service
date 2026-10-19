@@ -1,0 +1,21 @@
+# systemd *user* unit for the motherapp core. Install: see README.md.
+# Runs in the login session so tools can reach PipeWire under $XDG_RUNTIME_DIR. No root.
+[Unit]
+Description=motherapp control panel (core manager)
+After=pipewire.service pipewire-pulse.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+# Adjust both paths: the Node 24 binary and the repo checkout.
+ExecStart=/usr/bin/node %h/src/motherapp/core/src/main.ts
+WorkingDirectory=%h/src/motherapp
+Restart=on-failure
+RestartSec=2
+# The core prints one JSON line per log entry; journald keeps them.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=motherapp
+
+[Install]
+WantedBy=default.target

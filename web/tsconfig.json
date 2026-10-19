@@ -1,0 +1,11 @@
+{
+  "//": "Browser side. Node-side code and all tests are checked by the root tsconfig.json.",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "types": ["vite/client"]
+  },
+  "include": ["src/**/*.ts", "../packages/protocol/src/page.ts", "../tools/*/page.ts", "../core/test/fixtures/tools/*/page.ts"]
+}

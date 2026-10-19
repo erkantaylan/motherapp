@@ -1,0 +1,17 @@
+{
+  "name": "@motherapp/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "motherapp frontend: sidebar shell, declarative renderer, built-in pages (plain TS + Vite).",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@motherapp/protocol": "*"
+  },
+  "devDependencies": {
+    "vite": "^8.3.4"
+  }
+}
