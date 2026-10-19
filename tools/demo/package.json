@@ -1,0 +1,10 @@
+{
+  "name": "@motherapp/tool-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Demo tool for testing the extension contract. Not a real feature.",
+  "dependencies": {
+    "@motherapp/tool-sdk": "*"
+  }
+}

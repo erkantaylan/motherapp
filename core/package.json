@@ -1,0 +1,12 @@
+{
+  "name": "@motherapp/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "motherapp manager: tool supervision, state cache, log service, HTTP/WebSocket server.",
+  "main": "src/main.ts",
+  "dependencies": {
+    "@motherapp/protocol": "*",
+    "ws": "^8.18.3"
+  }
+}

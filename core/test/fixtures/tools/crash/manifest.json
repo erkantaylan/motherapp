@@ -1,0 +1,1 @@
+{ "id": "crash", "title": "Crash fixture", "serve": ["node", "-e", "process.stderr.write('dying\\n'); process.exit(3)"] }

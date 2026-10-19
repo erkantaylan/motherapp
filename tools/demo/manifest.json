@@ -1,0 +1,7 @@
+{
+  "id": "demo",
+  "title": "Demo",
+  "icon": "🧪",
+  "serve": ["node", "demo.ts", "serve"],
+  "defaultEnabled": false
+}
