@@ -51,6 +51,13 @@ GNOME 48 unless its author updates it.
 | Per-app audio scope | **Playback streams only** (apps playing sound), not recording apps. |
 | Cockpit | **Not** used as the host, but borrow ideas: **logs, storage, networking** pages. |
 | First features | Audio (device switching + test tools + per-app volume), then monitor brightness. |
+| Repo layout | **One repo** for the core and all tools. |
+| Next after audio + brightness | **Logs**. Storage and networking come later. |
+| Cockpit-style pages | **Write actions from the start**, not read-only first. |
+| Network switch scope | **All or none.** When it is on, everything is reachable from the LAN. No per-action local-only flag for now. |
+| Network pairing | QR + one-time-token pairing is **nice to have**, not required for the first version. **No auto-off**: no timeout, nothing on screen lock. |
+| Control feedback | The UI shows the last known value immediately (the brightness tool holds its last set value). Each control has a **small status dot**: setting / set / failed. |
+| Retiring predecessors | Retire audio-switch and the Per App Volume extension once the audio tool ships. **The user decides when.** |
 
 ## 4. Proposed, awaiting confirmation
 
@@ -84,10 +91,9 @@ by Claude Code for free — optional, but cheap if we're designing a protocol an
 
 - Flipping it rebinds the listener `127.0.0.1` → LAN address; the switch itself is only
   operable from localhost (a remote client must not be able to keep it on).
-- Pairing: desktop shows a QR code with a one-time token, phone scans it, that device is
-  trusted. Unpaired clients get nothing.
-- Per-action `remote: false` flag in a tool's description for things that must stay local even
-  with the network on (mic recording, anything that changes the system).
+- Pairing (nice to have, see § 3): desktop shows a QR code with a one-time token, phone scans
+  it, that device is trusted. Unpaired clients get nothing.
+- Dropped: a per-action `remote: false` flag. § 3 decided all-or-none instead.
 
 ### 4.4 Build order
 
@@ -95,28 +101,107 @@ Build audio and brightness first with a clean seam to the core, then extract the
 contract from what the two actually share. Freezing a contract from a single example is
 designing in a vacuum.
 
+### 4.5 Recommendation on the hybrid UI (Q1): accept it
+
+The first three features already need both tiers. Audio and brightness are lists and sliders,
+which the declarative tier covers. Logs needs a live tail with filters, which is a custom page.
+"Custom pages are TS only" costs nothing, since everything is TS anyway.
+
+### 4.6 Manager ↔ tool protocol (Q2)
+
+- Each tool has a long-running **`<tool> serve`** mode. The core starts it once and talks to it
+  over stdin/stdout. The same executable keeps its plain CLI subcommands for terminal and
+  keybinding use.
+- Messages are **JSON-RPC 2.0, one message per line**. That gives request/response matching
+  and standard error objects for free, and it is also the base layer of MCP, so moving to MCP
+  later stays cheap.
+- **State lives in the tool.** The tool keeps current values in memory and saves the last known
+  ones to `$XDG_STATE_HOME/motherapp/<tool>.json`. After a restart, brightness shows its last
+  set value immediately, then re-reads the monitor in the background.
+- **The core caches the latest state of every tool.** Opening a page is served from that cache,
+  with no tool call and no 0.5 s `ddcutil` wait.
+
+### 4.7 Contract shape (Q3)
+
+| Message | Direction | Content |
+|---|---|---|
+| `describe` | core → tool, request | `{ title, icon, page: "declarative" \| "custom", layout }` |
+| `state.get` | core → tool, request | Full state snapshot (used on start and after a crash). |
+| `state` | tool → core, notification | `{ changes: [{ path, value }] }`, small deltas only. |
+| `action` | core → tool, request | `{ name, args }` → result, or a JSON-RPC error `{ code, message }`. |
+| `progress` | tool → core, notification | `{ id, text, fraction? }` for slow actions. |
+| `stream.open` / `stream.close` | core → tool, request | Starts or stops a high-rate value, such as the mic meter. |
+| `stream` | tool → core, notification | `{ name, value }` up to ~20 Hz, only while open, never cached. |
+
+How the status dot is driven:
+- **setting**: the action was sent and has no reply yet.
+- **set**: the reply came back OK.
+- **failed**: an error came back. The message shows on hover.
+
+A tool can also mark a value `stale`, for example a cached brightness that hasn't been re-read
+from the monitor yet.
+
+### 4.8 Discovery (Q4): the simplest option
+
+- Each tool lives in `tools/<name>/` in this repo, with a `manifest.json`:
+  `{ id, title, icon, serve: ["node", "serve.ts"], page?: "page.ts" }`.
+- At startup the core reads `tools/*/manifest.json`. The set of enabled tools is stored in
+  `~/.config/motherapp/config.json`.
+- No install-from-URL and no versioning. One repo means one version.
+
+### 4.9 Crash handling (Q6)
+
+- **Crashes show up on the logs page.** The core runs under systemd and forwards each tool's
+  stderr to the journal, tagged with the tool id. Since the logs page reads the journal, tool
+  errors appear there with no extra work.
+- The tool's sidebar entry gets a red dot while the tool is down. Its page keeps showing the
+  cached state, marked stale.
+- Restart with backoff: 1 s, 2 s, 4 s and so on, capped at 30 s. After 5 crashes within 2 minutes
+  the core stops retrying and shows a "restart" button.
+
+### 4.10 Runtime (Q7): Node 24 LTS
+
+| | Node | Bun |
+|---|---|---|
+| On the machine | 22.23 (supported until 2027-04) | 1.3.14 |
+| Maturity | Long-term-support releases, very large user base | Younger, with more edge-case bugs and Node-compatibility gaps |
+| Running TS | Runs `.ts` directly (type stripping, no enums) | Runs `.ts` directly |
+| WebSocket server | Needs the `ws` package | Built in |
+| Speed | Fast enough | Faster startup and higher HTTP throughput |
+
+Bun's speed advantage doesn't show up here. The core and the tools are long-running processes
+serving one local user, and the real bottleneck is `ddcutil` at ~0.5 s per call. Safety is
+noticeable, so the recommendation is **Node 24 LTS** (supported until 2028-04). It needs to be
+installed, because Node 22 runs out in six months. Deno is not installed and is no longer in the
+running.
+
+### 4.11 Frontend (Q8): plain TS + Vite
+
+What a framework would give us:
+- **Updating list rows in place.** This is exactly what audio-switch got wrong. In plain TS it is
+  one keyed-list helper (~100 lines) inside the declarative renderer, written once.
+- **Components for custom pages.** Standard web components, built into browsers, cover this.
+
+Nothing else is needed. Vite is only for development and the build; the core serves the output
+as static files. If the logs page turns out painful, a small library can be added to that one
+page later without changing the shell.
+
 ## 5. Open questions
 
 ### Core and contract
 
-1. **Hybrid UI (4.1)** — accept it? Is "custom pages are TS only" acceptable?
-2. **Manager ↔ tool protocol.** Spawn the CLI per call, or a long-running `tool serve` mode over
-   stdio (LSP-style)? Plain JSON lines vs JSON-RPC vs MCP?
-3. **Contract shape.** What exactly is in `describe` / `watch` / action calls? How are errors,
-   progress and streaming values (mic meter at ~20 Hz) represented?
-4. **Discovery.** Folder the core scans (e.g. `~/.config/motherapp/extensions/`)? Manifest format?
-   Is install-from-URL / versioning ever needed, or is enable/disable enough?
-5. **Repo layout.** Core and tools in this one repo (monorepo), or each tool in its own repo so
-   it is truly independent?
-6. **Crash handling.** Core restarts a crashed tool process — with backoff? Surfaced in the UI?
+1. **Hybrid UI (4.1)** — recommendation in § 4.5, awaiting your OK.
+2. **Manager ↔ tool protocol** — proposal in § 4.6, awaiting your OK.
+3. **Contract shape** — proposal in § 4.7, awaiting your OK.
+4. **Discovery** — proposal in § 4.8, awaiting your OK.
+5. *Answered: one repo (§ 3).*
+6. **Crash handling** — proposal in § 4.9, awaiting your OK.
 
 ### Stack
 
-7. **Runtime for the core:** Bun (built-in TS, HTTP + WebSocket, single-binary compile), Node 24
-   (native type stripping, safest ecosystem, needs a ws package), or Deno (permission flags —
-   `--allow-run=wpctl,...`, `--allow-net=127.0.0.1` — fit the network-switch security story)?
-8. **Frontend framework:** React, Svelte, Solid, or plain TS + Vite? Mostly taste; the sidebar
-   must collapse on small screens.
+7. **Runtime for the core** — recommendation in § 4.10 (Node 24 LTS), awaiting your OK.
+8. **Frontend framework** — recommendation in § 4.11 (plain TS + Vite), awaiting your OK. The
+   sidebar must collapse on small screens.
 9. **How the audio tool talks to PipeWire:**
    - CLI tools, driven properly: `pw-dump --monitor` (event-driven JSON; removals arrive as
      objects with `info: null`), `wpctl` (volume, mute, default), `pw-metadata` (per-app routing
@@ -130,10 +215,10 @@ designing in a vacuum.
      GObject bindings (typelib availability on the target machine unverified).
 
    Findings (2026-10-19 research, see § 6 for what still needs checking on the machine):
-   - If the target is Ubuntu 24.04 (likely, given GNOME 46), it has **WirePlumber 0.4.17**, not
-     0.5. The `gi://Wp` and Python routes would target the **Wp-0.4** API (package
-     `gir1.2-wp-0.4`, in the archive but not necessarily installed). The 0.5 API is different,
-     so code written now would need porting on the next LTS.
+   - The machine is Ubuntu 24.04 with **WirePlumber 0.4.17**, not 0.5 (confirmed, § 6). The
+     `gi://Wp` and Python routes would target the **Wp-0.4** API. Its package, `gir1.2-wp-0.4`,
+     is in the archive but **not installed**. The 0.5 API is different, so code written now
+     would need porting on the next LTS.
    - npm PulseAudio clients are thin: `paclient` (pure JS, 26 stars, 7 commits) covers
      sink-inputs (`getSinkInputs`, `setSinkInputVolumesByIndex`, `setSinkInputMuteByIndex`,
      `moveSinkInput`) and `subscribe`. `@tmigone/pulseaudio` (TS, 18 stars, no releases)
@@ -142,7 +227,7 @@ designing in a vacuum.
      vendoring or forking `paclient`.
    - Fallback for the pulse route: spawn `pactl subscribe` / `pactl -f json list sink-inputs`.
      That has the same parsing-and-spawn cost as the PipeWire CLI route, plus a dependency on
-     `pipewire-pulse`.
+     `pipewire-pulse`. `pipewire-pulse` is running, but `pactl` isn't installed.
    - Net: of the routes that avoid an extra dependency, the **PipeWire CLI route**
      (`pw-dump --monitor` + `wpctl` + `pw-metadata`) is the only one that doesn't depend on a
      thin library or a version-specific GObject API.
@@ -168,19 +253,22 @@ designing in a vacuum.
     process? Per-monitor sliders, a linked "all monitors" slider, or both?
 
     Finding: Ubuntu 24.04 packages **ddcutil 1.4.1**, not 2.x (2.2.x is in 25.04 and later).
-    The 2.x line is where upstream reworked sleep timing and the shared library. On 1.4,
-    expect the slow end of the timings above. Use `--bus N` on every call to skip detection.
+    The 2.x line is where upstream reworked sleep timing and the shared library.
+
+    Measured on the machine (see `machine-facts/`): `detect` takes ~1.0 s. A brightness read
+    with `--bus N` takes ~0.5 s per monitor. So caching (§ 4.6), debouncing and one call at a
+    time per monitor are required, not optional. Buses: DP-1 is `/dev/i2c-1`, DP-2 is
+    `/dev/i2c-3`. Both report brightness on a 0–100 scale.
 
 ### Network switch
 
-15. QR + token pairing (4.3) okay? Should the switch auto-off (after a timeout, or when the
-    screen locks)?
-16. Which actions are local-only by default?
+15. *Answered: pairing is nice to have, no auto-off (§ 3).*
+16. *Answered: all or none (§ 3).*
 
 ### Cockpit-inspired pages
 
-17. Which comes first after audio and brightness — logs, storage, or networking?
-18. Read-only first, or with write actions? Risk notes:
+17. *Answered: logs comes first (§ 3).*
+18. *Answered: write actions from the start (§ 3).* Risk notes, kept for when we build them:
     - logs: `journalctl -f -o json` is already a structured stream; easy backend, rich UI (custom page).
     - storage: reading via `lsblk --json` / `df` is easy; mount/unmount via udisks2 (polkit
       handles authorization for the session user, no root).
@@ -189,7 +277,7 @@ designing in a vacuum.
 
 ### Housekeeping
 
-19. Once motherapp's audio tool ships: retire audio-switch and the Per App Volume extension?
+19. *Answered: yes, and the user decides when (§ 3).*
 
 ## 6. Target machine facts
 
@@ -203,15 +291,16 @@ Captured because a cloud session cannot inspect the machine.
 - `ddcutil` installed, `/dev/i2c-*` present, user is in the `i2c` group.
 - Not installed: `brightnessctl`.
 
-**To confirm on the machine** (asked 2026-10-19; the version-specific findings in Q9 and Q14
-assume Ubuntu 24.04):
+Collected 2026-10-19. Full output is in `machine-facts/`, and `machine-facts/collect.sh` can be
+re-run any time.
 
-```sh
-lsb_release -ds; wpctl --version; ddcutil --version
-pactl info | grep 'Server Name'          # is pipewire-pulse running?
-ls /usr/lib/*/girepository-1.0/ | grep -i -E '^Wp-'   # WirePlumber typelib installed?
-node --version; bun --version; deno --version          # any runtime already present?
-```
+- **Ubuntu 24.04.5 LTS**, GNOME Shell 46.0, **Wayland** session.
+- PipeWire **1.0.5**, WirePlumber **0.4.17**. `pipewire-pulse` is running and its socket is up;
+  `pactl` is not installed.
+- No WirePlumber typelib (`gir1.2-wp-0.4` is available in apt but not installed), and no `Gvc`.
+- ddcutil **1.4.1**; `libddcutil` is not installed. Monitors: DP-1 = MSI G274QPF on
+  `/dev/i2c-1`, DP-2 = Acer X34 P on `/dev/i2c-3`.
+- Node **22.23.2**, Bun **1.3.14** and GJS 1.80.2 are installed. Deno is not.
 
 ## 7. Prior art worth reading
 
