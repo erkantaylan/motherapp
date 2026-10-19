@@ -128,6 +128,24 @@ designing in a vacuum.
      built on) and Soup for HTTP/WebSocket. Most native; not Node, npm mostly unusable.
    - Or, since tools are separate processes: write the audio tool in Python with WirePlumber's
      GObject bindings (typelib availability on the target machine unverified).
+
+   Findings (2026-10-19 research, see § 6 for what still needs checking on the machine):
+   - If the target is Ubuntu 24.04 (likely, given GNOME 46), it has **WirePlumber 0.4.17**, not
+     0.5. The `gi://Wp` and Python routes would target the **Wp-0.4** API (package
+     `gir1.2-wp-0.4`, in the archive but not necessarily installed). The 0.5 API is different,
+     so code written now would need porting on the next LTS.
+   - npm PulseAudio clients are thin: `paclient` (pure JS, 26 stars, 7 commits) covers
+     sink-inputs (`getSinkInputs`, `setSinkInputVolumesByIndex`, `setSinkInputMuteByIndex`,
+     `moveSinkInput`) and `subscribe`. `@tmigone/pulseaudio` (TS, 18 stars, no releases)
+     documents sinks and events only, with no sink-input API shown. `pulseaudio2` binds libpulse
+     natively. **No mature, typed option exists**, so a TS audio tool over pulse would mean
+     vendoring or forking `paclient`.
+   - Fallback for the pulse route: spawn `pactl subscribe` / `pactl -f json list sink-inputs`.
+     That has the same parsing-and-spawn cost as the PipeWire CLI route, plus a dependency on
+     `pipewire-pulse`.
+   - Net: of the routes that avoid an extra dependency, the **PipeWire CLI route**
+     (`pw-dump --monitor` + `wpctl` + `pw-metadata`) is the only one that doesn't depend on a
+     thin library or a version-specific GObject API.
 10. **Launcher.** App-mode browser window (`chromium --app=http://localhost:…`) from a `.desktop`
     entry? Tray icon? Port number?
 
@@ -148,6 +166,10 @@ designing in a vacuum.
     slow (detect: seconds; each set: tens–hundreds of ms), so: debounce sliders, serialize per
     monitor, cache bus numbers from one detect. CLI `ddcutil` vs `libddcutil` for a persistent
     process? Per-monitor sliders, a linked "all monitors" slider, or both?
+
+    Finding: Ubuntu 24.04 packages **ddcutil 1.4.1**, not 2.x (2.2.x is in 25.04 and later).
+    The 2.x line is where upstream reworked sleep timing and the shared library. On 1.4,
+    expect the slow end of the timings above. Use `--bus N` on every call to skip detection.
 
 ### Network switch
 
@@ -180,6 +202,16 @@ Captured because a cloud session cannot inspect the machine.
   backlight device.
 - `ddcutil` installed, `/dev/i2c-*` present, user is in the `i2c` group.
 - Not installed: `brightnessctl`.
+
+**To confirm on the machine** (asked 2026-10-19; the version-specific findings in Q9 and Q14
+assume Ubuntu 24.04):
+
+```sh
+lsb_release -ds; wpctl --version; ddcutil --version
+pactl info | grep 'Server Name'          # is pipewire-pulse running?
+ls /usr/lib/*/girepository-1.0/ | grep -i -E '^Wp-'   # WirePlumber typelib installed?
+node --version; bun --version; deno --version          # any runtime already present?
+```
 
 ## 7. Prior art worth reading
 
