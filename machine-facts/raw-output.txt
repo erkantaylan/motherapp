@@ -1,0 +1,153 @@
+# collected 2026-10-19T19:58:05+03:00 on kappa
+
+## Commands requested in DESIGN.md § 6
+
+$ lsb_release -ds
+Ubuntu 24.04.5 LTS
+[exit 0]
+
+$ wpctl --version
+Error: Unknown option --version
+
+Usage:
+  wpctl [OPTION…] COMMAND [COMMAND_OPTIONS] - WirePlumber Control CLI
+
+Commands:
+  status 
+  get-volume ID
+  inspect ID
+  set-default ID
+  set-volume ID VOL[%][-/+]
+  set-mute ID 1|0|toggle
+  set-profile ID INDEX
+  clear-default [ID]
+
+Help Options:
+  -h, --help       Show help options
+
+Pass -h after a command to see command-specific options
+
+[exit 1]
+
+$ ddcutil --version
+ddcutil 1.4.1
+Built with support for USB connected displays.
+Built without function failure simulation.
+Built with libdrm services.
+
+Copyright (C) 2015-2023 Sanford Rockowitz
+License GPLv2: GNU GPL version 2 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+[exit 0]
+
+$ pactl info | grep 'Server Name'
+bash: line 1: pactl: command not found
+[exit 1]
+
+$ ls /usr/lib/*/girepository-1.0/ | grep -i -E '^Wp-'
+[exit 1]
+
+$ node --version
+v22.23.2
+[exit 0]
+
+$ bun --version
+1.3.14
+[exit 0]
+
+$ deno --version
+bash: line 1: deno: command not found
+[exit 127]
+
+## Follow-ups (wpctl has no --version, pactl is not installed)
+
+$ dpkg-query -W -f='${Package} ${Version} ${db:Status-Status}\n' wireplumber libwireplumber-0.4-0 pipewire pipewire-pulse pulseaudio-utils gir1.2-wp-0.4 gir1.2-wp-0.5 ddcutil libddcutil4 libddcutil-dev
+dpkg-query: no packages found matching gir1.2-wp-0.4
+dpkg-query: no packages found matching gir1.2-wp-0.5
+dpkg-query: no packages found matching libddcutil4
+dpkg-query: no packages found matching libddcutil-dev
+ddcutil 1.4.1-1build2 installed
+libwireplumber-0.4-0 0.4.17-1ubuntu4.1 installed
+pipewire 1.0.5-1ubuntu3.3 installed
+pipewire-pulse 1.0.5-1ubuntu3.3 installed
+pulseaudio-utils  not-installed
+wireplumber 0.4.17-1ubuntu4.1 installed
+[exit 1]
+
+$ apt-cache policy gir1.2-wp-0.4 pulseaudio-utils | grep -E '^[a-z]|Installed|Candidate'
+gir1.2-wp-0.4:
+  Installed: (none)
+  Candidate: 0.4.17-1ubuntu4.1
+pulseaudio-utils:
+  Installed: (none)
+  Candidate: 1:16.1+dfsg1-2ubuntu10.1
+[exit 0]
+
+$ pipewire --version
+pipewire
+Compiled with libpipewire 1.0.5
+Linked with libpipewire 1.0.5
+[exit 0]
+
+$ systemctl --user is-active pipewire pipewire-pulse.socket pipewire-pulse wireplumber
+active
+active
+active
+active
+[exit 0]
+
+$ ls -l $XDG_RUNTIME_DIR/pulse/native
+srw-rw-rw- 1 kappa kappa 0 Oct 19 18:28 /run/user/1000/pulse/native
+[exit 0]
+
+$ ls /usr/lib/x86_64-linux-gnu/girepository-1.0/ | grep -iE '^(Wp|Gvc)'
+[exit 1]
+
+$ gjs --version
+gjs 1.80.2
+[exit 0]
+
+$ gnome-shell --version
+GNOME Shell 46.0
+[exit 0]
+
+$ echo $XDG_SESSION_TYPE
+wayland
+[exit 0]
+
+## DDC/CI: detection and brightness reads, timed
+
+$ time ddcutil detect --brief
+Display 1
+   I2C bus:          /dev/i2c-1
+   DRM connector:    card1-DP-1
+   Monitor:          MSI:MSI G274QPF:CC2H683C00058
+
+Display 2
+   I2C bus:          /dev/i2c-3
+   DRM connector:    card1-DP-2
+   Monitor:          ACR:Acer X34 P:#ASM1Buw5LKnd
+
+
+real	0m1.010s
+user	0m0.003s
+sys	0m0.595s
+[exit 0]
+
+$ time ddcutil --bus 1 getvcp 10
+VCP code 0x10 (Brightness                    ): current value =    48, max value =   100
+
+real	0m0.516s
+user	0m0.001s
+sys	0m0.205s
+[exit 0]
+
+$ time ddcutil --bus 3 getvcp 10
+VCP code 0x10 (Brightness                    ): current value =    52, max value =   100
+
+real	0m0.539s
+user	0m0.003s
+sys	0m0.226s
+[exit 0]
+
