@@ -62,7 +62,13 @@ GNOME 48 unless its author updates it.
 | Protocol, contract, discovery, crashes | As written in **§ 4.6–4.9**, accepted 2026-10-19. |
 | Runtime | **Node 24 LTS** (§ 4.10). It gets installed on the machine. |
 | Frontend | **Plain TS + Vite**, web components for custom pages (§ 4.11). |
-| Build order | 1. Core infra (manager). 2. A **log service in the core** that every extension uses, plus its logs page (§ 4.12). 3. The **audio tool** at audio-switch parity. This replaces § 4.4. |
+| Launcher | **Served on the web only**: open `http://127.0.0.1:7323` in a browser. No tray icon for now. |
+| Audio scope, first version | **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
+| Per-app rows | **One row per app.** All of an app's streams are grouped, e.g. one Firefox row. |
+| Audio test tools | **Keep audio-switch's**: L/R test, live mic meter, record-and-playback. |
+| Brightness UI | **Both**: a slider per monitor plus a linked "all monitors" slider. |
+| Brightness backend | **`libddcutil` kept loaded** in the brightness tool's serve process. It needs installing on the machine. |
+| Build order | 1. Core infra (manager). 2. A **log service in the core** that every extension uses, plus its logs page (§ 4.12). 3. The **audio tool**: audio-switch parity plus per-app volume and mute. This replaces § 4.4. |
 
 ## 4. Details
 
@@ -245,26 +251,20 @@ page later without changing the shell.
    - Net: of the routes that avoid an extra dependency, the **PipeWire CLI route**
      (`pw-dump --monitor` + `wpctl` + `pw-metadata`) is the only one that doesn't depend on a
      thin library or a version-specific GObject API.
-10. **Launcher.** App-mode browser window (`chromium --app=http://localhost:…`) from a `.desktop`
-    entry? Tray icon? Port number?
+10. *Answered (§ 3): served on the web, no tray.*
 
 ### Audio
 
-11. **"Generalize" scope beyond per-app volume:** device volume/mute, per-app output routing
-    (send one app to headphones while the rest stays on speakers), Bluetooth card profiles
-    (A2DP vs HFP), mic gain?
-12. **Per-stream or per-app rows?** Firefox can have several streams at once — one slider each,
-    or grouped by `application.name`?
-13. *Being built at audio-switch parity (§ 3 build order).* Keep audio-switch's test tools as-is (L/R test, live meter, record-and-playback)? Note: the
-    mic meter must be measured on the backend — a browser's `getUserMedia` would hear the
-    viewing device's mic, not the PC's.
+11. *Answered (§ 3): start small.* Bluetooth profiles and mic gain aren't scheduled.
+12. *Answered (§ 3): one row per app.*
+13. *Answered (§ 3): keep the test tools.* Note: the mic meter must be measured on the backend.
+    A browser's `getUserMedia` would hear the viewing device's mic, not the PC's.
 
 ### Brightness
 
-14. Target hardware is DDC/CI over external monitors (no `/sys/class/backlight`). `ddcutil` is
-    slow (detect: seconds; each set: tens–hundreds of ms), so: debounce sliders, serialize per
-    monitor, cache bus numbers from one detect. CLI `ddcutil` vs `libddcutil` for a persistent
-    process? Per-monitor sliders, a linked "all monitors" slider, or both?
+14. *Answered (§ 3): both kinds of slider, `libddcutil` kept loaded.* Still open for build time:
+    how Node calls into `libddcutil`. Options are an FFI package such as `koffi`, or a small C
+    helper process. Also unverified: the exact Ubuntu 24.04 package name for the 1.4 library.
 
     Finding: Ubuntu 24.04 packages **ddcutil 1.4.1**, not 2.x (2.2.x is in 25.04 and later).
     The 2.x line is where upstream reworked sleep timing and the shared library.
