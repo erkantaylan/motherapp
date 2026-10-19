@@ -58,8 +58,16 @@ GNOME 48 unless its author updates it.
 | Network pairing | QR + one-time-token pairing is **nice to have**, not required for the first version. **No auto-off**: no timeout, nothing on screen lock. |
 | Control feedback | The UI shows the last known value immediately (the brightness tool holds its last set value). Each control has a **small status dot**: setting / set / failed. |
 | Retiring predecessors | Retire audio-switch and the Per App Volume extension once the audio tool ships. **The user decides when.** |
+| UI model | **Hybrid** (§ 4.1, § 4.5): declarative pages by default, TS custom pages as the escape hatch. |
+| Protocol, contract, discovery, crashes | As written in **§ 4.6–4.9**, accepted 2026-10-19. |
+| Runtime | **Node 24 LTS** (§ 4.10). It gets installed on the machine. |
+| Frontend | **Plain TS + Vite**, web components for custom pages (§ 4.11). |
+| Build order | 1. Core infra (manager). 2. A **log service in the core** that every extension uses, plus its logs page (§ 4.12). 3. The **audio tool** at audio-switch parity. This replaces § 4.4. |
 
-## 4. Proposed, awaiting confirmation
+## 4. Details
+
+4.1 and 4.5–4.11 were accepted on 2026-10-19 (see § 3). 4.4 is superseded by the build order in
+§ 3. 4.12 is what is being built; revise it if it's wrong.
 
 ### 4.1 Hybrid UI model (declarative by default, custom pages as escape hatch)
 
@@ -186,22 +194,28 @@ Nothing else is needed. Vite is only for development and the build; the core ser
 as static files. If the logs page turns out painful, a small library can be added to that one
 page later without changing the shell.
 
+### 4.12 Log service (core)
+
+- **One log for the whole app.** The core, and every tool, writes to it.
+- **How tools write to it.** A tool sends `log` notifications `{ level, msg, fields? }` over its
+  serve channel. Anything a tool prints to stderr is captured as level `error` lines. The core
+  adds its own entries for tool start, exit, crash and restart.
+- **Where entries go.** Each entry is tagged with the tool id and:
+  - is printed as one JSON line on the core's stdout, so journald keeps it under systemd;
+  - is appended to `$XDG_STATE_HOME/motherapp/log.jsonl`, which is size-capped and rotated;
+  - is kept in an in-memory ring buffer that serves the logs page.
+- **The logs page** is the first custom page. It has a live tail, filters by tool and level, and
+  text search.
+- **Port.** Q10 is still open, so the core listens on `127.0.0.1:7323` by default, changeable in
+  the config file.
+
 ## 5. Open questions
 
 ### Core and contract
 
-1. **Hybrid UI (4.1)** — recommendation in § 4.5, awaiting your OK.
-2. **Manager ↔ tool protocol** — proposal in § 4.6, awaiting your OK.
-3. **Contract shape** — proposal in § 4.7, awaiting your OK.
-4. **Discovery** — proposal in § 4.8, awaiting your OK.
-5. *Answered: one repo (§ 3).*
-6. **Crash handling** — proposal in § 4.9, awaiting your OK.
+1–8. *Answered (§ 3).*
 
 ### Stack
-
-7. **Runtime for the core** — recommendation in § 4.10 (Node 24 LTS), awaiting your OK.
-8. **Frontend framework** — recommendation in § 4.11 (plain TS + Vite), awaiting your OK. The
-   sidebar must collapse on small screens.
 9. **How the audio tool talks to PipeWire:**
    - CLI tools, driven properly: `pw-dump --monitor` (event-driven JSON; removals arrive as
      objects with `info: null`), `wpctl` (volume, mute, default), `pw-metadata` (per-app routing
@@ -241,7 +255,7 @@ page later without changing the shell.
     (A2DP vs HFP), mic gain?
 12. **Per-stream or per-app rows?** Firefox can have several streams at once — one slider each,
     or grouped by `application.name`?
-13. Keep audio-switch's test tools as-is (L/R test, live meter, record-and-playback)? Note: the
+13. *Being built at audio-switch parity (§ 3 build order).* Keep audio-switch's test tools as-is (L/R test, live meter, record-and-playback)? Note: the
     mic meter must be measured on the backend — a browser's `getUserMedia` would hear the
     viewing device's mic, not the PC's.
 
