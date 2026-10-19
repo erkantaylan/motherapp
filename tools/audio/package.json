@@ -1,0 +1,13 @@
+{
+  "name": "@motherapp/tool-audio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Audio tool: PipeWire device switching, test sounds, mic meter, per-app volume and mute.",
+  "bin": {
+    "audioctl": "./audioctl.ts"
+  },
+  "dependencies": {
+    "@motherapp/tool-sdk": "*"
+  }
+}

@@ -72,6 +72,7 @@ GNOME 48 unless its author updates it.
 | Install | An **installer** that checks every dependency. It installs the missing ones, asking before anything uses `sudo`/apt, or explains how to install them. Then it builds the app and sets up the systemd user service. |
 | Testing on the machine | When a build is ready to try, a **GitHub issue with step-by-step test instructions** is opened for a Claude session on the user's computer to follow. |
 | Branching | **Work directly on `main`.** No feature branches. |
+| Audio backend (Q9) | **PipeWire CLI route**: `pw-dump --monitor` for events, `wpctl` for default/volume/mute, `pw-play`/`pw-record` for the tests. No `pactl`, no GObject bindings. Built in `tools/audio/` (`audioctl`). |
 | Build order | 1. Core infra (manager). 2. A **log service in the core** that every extension uses, plus its logs page (§ 4.12). 3. The **audio tool**: audio-switch parity plus per-app volume and mute. This replaces § 4.4. |
 
 ## 4. Details
@@ -226,7 +227,8 @@ page later without changing the shell.
 1–8. *Answered (§ 3).*
 
 ### Stack
-9. **How the audio tool talks to PipeWire:**
+9. *Answered (§ 3): the PipeWire CLI route.* The options and findings are kept for context.
+   **How the audio tool talks to PipeWire:**
    - CLI tools, driven properly: `pw-dump --monitor` (event-driven JSON; removals arrive as
      objects with `info: null`), `wpctl` (volume, mute, default), `pw-metadata` (per-app routing
      via `target.object`), `pw-play`/`pw-record` (tests). Most predictable; costs parsing and a

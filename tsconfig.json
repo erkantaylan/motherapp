@@ -12,6 +12,8 @@
     "packages/*/test/**/*.ts",
     "core/**/*.ts",
     "tools/*/*.ts",
+    "tools/*/src/**/*.ts",
+    "tools/*/test/**/*.ts",
     "scripts/**/*.ts",
     "web/test/**/*.ts",
     "web/vite.config.ts"

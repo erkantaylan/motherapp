@@ -1,0 +1,7 @@
+{
+  "id": "audio",
+  "title": "Audio",
+  "icon": "🔊",
+  "serve": ["node", "audioctl.ts", "serve"],
+  "defaultEnabled": true
+}
