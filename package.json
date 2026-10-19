@@ -17,8 +17,9 @@
     "dev": "node scripts/dev.ts",
     "build": "npm run build --workspace web",
     "start": "node core/src/main.ts",
-    "test": "node --test --disable-warning=ExperimentalWarning \"packages/*/test/*.test.ts\" \"core/test/*.test.ts\" \"web/test/*.test.ts\"",
-    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json"
+    "test": "node --test --disable-warning=ExperimentalWarning \"packages/*/test/*.test.ts\" \"core/test/*.test.ts\" \"web/test/*.test.ts\" \"scripts/test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
+    "doctor": "bash install.sh --check"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

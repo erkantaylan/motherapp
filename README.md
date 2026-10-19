@@ -37,12 +37,30 @@ Config lives in `~/.config/motherapp/config.json` (created on first start: `port
 tools), state and `log.jsonl` in `~/.local/state/motherapp/`. Enable the demo tool on the
 Settings page to try the widgets.
 
-## Install as a user service
+## Install
+
+On the target machine (Ubuntu 24.04, GNOME, Wayland), from a clone of this repo:
 
 ```sh
-cp packaging/motherapp.service ~/.config/systemd/user/
-# edit ExecStart/WorkingDirectory: path to Node 24 and to this checkout
-systemctl --user daemon-reload
-systemctl --user enable --now motherapp
+./install.sh               # or: make install
+./install.sh --check       # or: make check / npm run doctor - report only, changes nothing
+./install.sh --uninstall   # or: make uninstall - stop + remove the user service (keeps config/state)
+```
+
+`make help` lists the other targets (`make purge` = `--uninstall --purge`, which also deletes
+`~/.config/motherapp` and `~/.local/state/motherapp`).
+
+The installer checks Node >= 24, the PipeWire tools (`pw-dump`, `pw-play`, `pw-record`,
+`pw-metadata`, `wpctl`), the freedesktop test sounds, the PipeWire user services, `ddcutil`,
+`libddcutil`, the `i2c-dev` module, `/dev/i2c-*` and `i2c` group membership. It offers to fix
+what is missing and asks y/N before every `sudo`/apt step (`--yes` accepts everything). Then it
+runs `npm ci` and `npm run build`, writes `~/.config/systemd/user/motherapp.service` from
+`packaging/motherapp.service` (a template: real Node and repo paths are filled in), asks before
+`systemctl --user enable --now motherapp`, and checks that `http://127.0.0.1:7323/` responds.
+Every status line starts with `OK`, `MISSING`, `WARN`, `FAIL` or `SKIP`, the last line is
+`RESULT: OK` or `RESULT: FAIL`, and the exit code is 0 only when everything required is OK.
+Re-running it is safe; re-run it after moving the checkout or changing Node.
+
+```sh
 journalctl --user -u motherapp -f    # one JSON line per log entry
 ```
