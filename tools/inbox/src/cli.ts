@@ -17,8 +17,10 @@ export const USAGE = `usage: inboxctl <command> [options]
 
   panes [--json]          tmux panes running Claude
   links [--json]          active links: id, label, pane, expiry, uses, pending
-  new --pane <pane> --label <label> [--expires 24h] [--max-uses 20] [--max-len 500]
-                          make a link for a pane (motherapp:0.0 or %3); prints it ONCE
+  new --pane <pane> --label <label> [--expires 24h] [--max-uses 20] [--max-len 500] [--print]
+                          make a link for a pane (motherapp:0.0 or %3); prints it ONCE.
+                          Only to a terminal: with stdout piped or captured (e.g. an agent's
+                          tool call, whose output may be mirrored) it refuses unless --print.
   revoke <id>             revoke a link (it answers 404 from then on)
   log [--json] [-n N]     deliveries: time, link, pane, result, text (default: last 20)
   serve                   JSON-RPC mode, started by the motherapp core
@@ -39,6 +41,8 @@ export interface CliIO {
   /** Default: the real core on its configured port. */
   connect?: () => Promise<CoreConnection | undefined>;
   now?: () => number;
+  /** Default: `stdout.isTTY`. */
+  stdoutIsTTY?: boolean;
 }
 
 class UsageError extends Error {}
@@ -52,7 +56,7 @@ interface Flags {
 }
 
 const VALUE_FLAGS = new Set(["--pane", "--label", "--expires", "--max-uses", "--max-len", "-n"]);
-const BOOL_FLAGS = new Set(["--json"]);
+const BOOL_FLAGS = new Set(["--json", "--print"]);
 
 function parse(args: string[]): Flags {
   const f: Flags = { pos: [], opts: new Map(), bools: new Set() };
@@ -105,7 +109,7 @@ function printLog(out: Writable, entries: DeliveryEntry[]): void {
     line(out, "No deliveries yet.");
     return;
   }
-  for (const e of entries) line(out, `${new Date(e.time).toISOString()}  ${e.linkId} → ${e.pane}  ${e.result}\n    ${e.text}`);
+  for (const e of entries) line(out, `${new Date(e.time).toISOString()}  ${e.linkId} → ${e.pane}  ${e.result}${e.from ? `  (${e.from})` : ""}\n    ${e.text}`);
 }
 
 export async function runCli(argv: string[], io: CliIO): Promise<number> {
@@ -156,10 +160,14 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       }
       case "new": {
         const f = parse(rest);
-        allow(f, ["--pane", "--label", "--expires", "--max-uses", "--max-len"], [], 0);
+        allow(f, ["--pane", "--label", "--expires", "--max-uses", "--max-len"], ["--print"], 0);
         const pane = f.opts.get("--pane");
         if (!pane) throw new UsageError("--pane is required (see inboxctl panes)");
         if (!f.opts.get("--label")) throw new UsageError("--label is required");
+        // A link printed into captured output (an agent's tool call) can end up mirrored or logged.
+        if (!(io.stdoutIsTTY ?? (io.stdout as { isTTY?: boolean }).isTTY) && !f.bools.has("--print")) {
+          throw new UsageError("stdout isn't a terminal, so the link could end up in a log or a mirrored transcript. Create it on the Inbox page, run this in a terminal, or add --print if you really mean it");
+        }
         const args: Record<string, unknown> = { pane, label: f.opts.get("--label") };
         if (f.opts.has("--expires")) args.expires = f.opts.get("--expires");
         if (f.opts.has("--max-uses")) args.maxUses = f.opts.get("--max-uses");

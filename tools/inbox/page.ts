@@ -38,6 +38,7 @@ interface LogRow {
   pane: string;
   text: string;
   result: string;
+  from?: string;
 }
 
 interface TunnelRow {
@@ -395,6 +396,7 @@ export default class InboxPage extends HTMLElement {
             { class: "mib-full" },
             el("div", { class: "mib-muted" }, `${time(e.time)} · ${e.label} (${e.linkId}) → ${e.pane} · `, el("span", { class: cls, text: e.result })),
             el("div", { class: "mib-text", text: e.text }),
+            ...(e.from ? [el("div", { class: "mib-muted", text: `from ${e.from} (as the sender reports it)` })] : []),
           ),
         ),
       );

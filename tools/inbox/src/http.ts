@@ -7,7 +7,8 @@
 // those other answers are only ever seen by a holder of a live token.
 //
 // Never logged: the request URL (it holds the token). X-Forwarded-* and the Host header are
-// never read: nothing here depends on who the client claims to be.
+// never read, and nothing here depends on who the client claims to be; Cf-Connecting-IP and
+// User-Agent are only recorded in the delivery log (describeSender).
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -22,6 +23,22 @@ export interface MessageBody {
   ref?: unknown;
 }
 
+/**
+ * Who sent it, as cloudflared reports it (`Cf-Connecting-IP`) plus the `User-Agent`, for the
+ * delivery log only (issue #16: through the tunnel every request comes from 127.0.0.1). Cleaned
+ * and short; client-controlled, so never used for any decision.
+ */
+export function describeSender(headers: http.IncomingHttpHeaders): string {
+  const one = (v: string | string[] | undefined, max: number) =>
+    String(Array.isArray(v) ? v[0] : (v ?? ""))
+      .replace(/[^\x20-\x7e]/g, "")
+      .trim()
+      .slice(0, max);
+  const ip = one(headers["cf-connecting-ip"], 64);
+  const ua = one(headers["user-agent"], 120);
+  return [ip && `ip ${ip}`, ua && `ua ${ua}`].filter(Boolean).join(", ");
+}
+
 export interface Reply {
   status: number;
   body: Record<string, unknown>;
@@ -34,7 +51,7 @@ export interface InboxBackend {
   skill(linkId: string): string;
   /** Counts a message attempt; 0 if allowed, else ms until the next is. */
   rateLimit(linkId: string): number;
-  message(linkId: string, body: MessageBody): Promise<Reply>;
+  message(linkId: string, body: MessageBody, from: string): Promise<Reply>;
   /** Called for unexpected errors (never with the URL or token). */
   onError?(msg: string): void;
 }
@@ -132,7 +149,7 @@ export function inboxHandler(backend: InboxBackend) {
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || typeof (parsed as MessageBody).text !== "string") {
         return sendJson(res, 400, { error: "\"text\" must be a string" });
       }
-      const reply = await backend.message(linkId, parsed as MessageBody);
+      const reply = await backend.message(linkId, parsed as MessageBody, describeSender(req.headers));
       sendJson(res, reply.status, reply.body, reply.headers);
     } catch (e) {
       backend.onError?.(`inbox request failed: ${(e as Error).message}`);

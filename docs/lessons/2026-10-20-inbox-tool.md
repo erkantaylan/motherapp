@@ -43,6 +43,10 @@ TUI, a real tunnel, or a real cloud agent.
   prompt line with a `───` rule directly above and below, ≤ 4 non-empty lines under it); input
   empty or only the `Try "…"` placeholder; no `esc to interrupt` / `ctrl+c to interrupt` in the 6
   lines above the box or the footer. Anything else is busy and the message waits.
+- From the tunnel probe (`2026-10-20-tunnel-probe.md`, merged mid-build): the delivery log (page
+  and `deliveries.json`, never the journal) records `Cf-Connecting-IP` and `User-Agent` as
+  `from`, cleaned and trusted for nothing; and `inboxctl new` refuses to print a link when stdout
+  isn't a terminal (an agent's tool call, which may be mirrored) unless `--print` is given.
 - Delivery: text (`-l --`), wait, **check the text is in the input box before pressing Enter**
   (else no Enter: a dialog that opened in between could take it), Enter, wait, check, at most one
   more Enter.

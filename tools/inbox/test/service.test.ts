@@ -107,7 +107,7 @@ test("POST: typed as `[inbox: label] (re ref) text`, cleaned, in two tmux calls;
   const h = await harness();
   t.after(() => h.close());
   const r = await create(h);
-  const res = await post(h, r.token, { text: "CI is red\r\non main \x1b[31m\u202Enow\t", ref: "#10" });
+  const res = await post(h, r.token, { text: "CI is red\r\non main \x1b[31m\u202Enow\t", ref: "#10" }, { "cf-connecting-ip": "203.0.113.9", "user-agent": "curl/8.5" + String.fromCharCode(0xe9) + "x" });
   assert.equal(res.status, 200, res.body);
   assert.deepEqual(JSON.parse(res.body), { status: "delivered", result: "submitted" });
   const pane = h.runner.tmux.panes[0]!;
@@ -115,6 +115,9 @@ test("POST: typed as `[inbox: label] (re ref) text`, cleaned, in two tmux calls;
   assert.deepEqual(h.runner.tmux.sends(), [["-l", "--", "[inbox: cloud] (re #10) CI is red on main now"], ["Enter"]]);
   const log = Object.values(h.tool.get("log") as Record<string, { text: string; result: string; linkId: string }>);
   assert.deepEqual(log.map((e) => [e.linkId, e.text, e.result]), [[r.id, "[inbox: cloud] (re #10) CI is red on main now", "submitted"]]);
+  // the sender as cloudflared reports it, cleaned; on the page only, not in the journal
+  assert.equal((log[0] as { from?: string }).from, "ip 203.0.113.9, ua curl/8.5x");
+  assert.ok(!JSON.stringify(h.logs()).includes("203.0.113.9"));
   assert.equal((h.tool.get(`links.${r.id}`) as { uses: number }).uses, 1);
   // the journal gets the outcome, never the text
   const msgLog = h.logs().find((l) => l.msg === "inbox message submitted")!;

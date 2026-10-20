@@ -81,6 +81,7 @@ export interface ServiceOptions {
 interface Pending {
   line: string;
   received: number;
+  from: string;
 }
 
 type Attempt = { kind: "done"; result: DeliveryResult } | { kind: "held"; reason: string } | { kind: "gone"; reason: string };
@@ -274,8 +275,8 @@ export class InboxService {
     this.tool.set("log", rows);
   }
 
-  private addLog(link: Pick<LinkRecord, "id" | "label" | "pane">, text: string, result: string): DeliveryEntry {
-    const e = this.store.addDelivery({ time: this.timers.now(), linkId: link.id, label: link.label, pane: link.pane.target, text, result });
+  private addLog(link: Pick<LinkRecord, "id" | "label" | "pane">, text: string, result: string, from = ""): DeliveryEntry {
+    const e = this.store.addDelivery({ time: this.timers.now(), linkId: link.id, label: link.label, pane: link.pane.target, text, result, ...(from ? { from } : {}) });
     this.tool.set(`log.${e.seq}`, e as unknown as JsonObject);
     const keys = Object.keys((this.tool.get("log") as JsonObject | undefined) ?? {});
     for (const k of keys.slice(0, Math.max(0, keys.length - STATE_LOG_MAX))) this.tool.delete(`log.${k}`);
@@ -317,9 +318,9 @@ export class InboxService {
     });
   }
 
-  private enqueue(link: LinkRecord, line: string, reason: string): number {
+  private enqueue(link: LinkRecord, line: string, reason: string, from: string): number {
     const q = this.queues.get(link.id) ?? [];
-    q.push({ line, received: this.timers.now() });
+    q.push({ line, received: this.timers.now(), from });
     this.queues.set(link.id, q);
     this.held.set(link.id, reason);
     this.publishLinks();
@@ -332,7 +333,7 @@ export class InboxService {
     this.held.delete(id);
     if (!q || q.length === 0) return;
     const link = this.store.get(id);
-    for (const p of q) this.addLog(link ?? { id, label: "?", pane: { id: "", target: "?", pid: 0, path: "" } }, p.line, `dropped: ${why}`);
+    for (const p of q) this.addLog(link ?? { id, label: "?", pane: { id: "", target: "?", pid: 0, path: "" } }, p.line, `dropped: ${why}`, p.from);
   }
 
   /** Tries the head of each queue once. */
@@ -363,7 +364,7 @@ export class InboxService {
             this.queues.delete(id);
             this.held.delete(id);
           }
-          this.addLog(link, sent.line, a.result);
+          this.addLog(link, sent.line, a.result, sent.from);
         }
       }
     } finally {
@@ -392,12 +393,12 @@ export class InboxService {
         return skillMarkdown(l, RATE_PER_MINUTE);
       },
       rateLimit: (id) => this.limiter.hit(id, this.timers.now()),
-      message: (id, body) => this.message(id, body),
+      message: (id, body, from) => this.message(id, body, from),
       onError: (msg) => this.tool.log.error(msg),
     };
   }
 
-  async message(id: string, body: MessageBody): Promise<Reply> {
+  async message(id: string, body: MessageBody, from = ""): Promise<Reply> {
     const now = this.timers.now();
     const link = this.store.get(id);
     if (!link || linkStatus(link, now) !== "active") return { status: 404, body: { error: "not found" } };
@@ -418,17 +419,17 @@ export class InboxService {
       a = await this.attempt(link, line);
     }
     if (a.kind === "gone") {
-      this.addLog(link, line, `rejected: ${a.reason}`);
+      this.addLog(link, line, `rejected: ${a.reason}`, from);
       return { status: 409, body: { error: `Claude isn't running in pane ${link.pane.target} any more (${a.reason}); nothing was typed` } };
     }
     this.store.recordUse(id);
     if (a.kind === "held") {
-      const pending = this.enqueue(link, line, a.reason);
-      this.addLog(link, line, `queued: ${a.reason}`);
+      const pending = this.enqueue(link, line, a.reason, from);
+      this.addLog(link, line, `queued: ${a.reason}`, from);
       return { status: 202, body: { status: "queued", pending, reason: a.reason } };
     }
     this.publishLinks();
-    this.addLog(link, line, a.result);
+    this.addLog(link, line, a.result, from);
     if (a.result.startsWith("not submitted")) return { status: 202, body: { status: "typed", result: a.result } };
     return { status: 200, body: { status: "delivered", result: a.result } };
   }

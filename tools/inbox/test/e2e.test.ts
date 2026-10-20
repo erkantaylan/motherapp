@@ -173,13 +173,16 @@ test("core + inbox tool: link over the WebSocket and inboxctl, delivery, revoke,
   const links = await run(process.execPath, ["--disable-warning=ExperimentalWarning", ctl, "links"], cliEnv);
   assert.equal(links.code, 0, links.err);
   assert.match(links.out, new RegExp(`^${created.result.id}  …${token.slice(-4)}  cloud  → motherapp:0\\.0  expires in 24 h, used 1/20\\n$`));
-  const made = await run(process.execPath, ["--disable-warning=ExperimentalWarning", ctl, "new", "--pane", "motherapp:0.0", "--label", "second", "--expires", "1h"], cliEnv);
+  const refused = await run(process.execPath, ["--disable-warning=ExperimentalWarning", ctl, "new", "--pane", "motherapp:0.0", "--label", "second"], cliEnv);
+  assert.equal(refused.code, 2, "stdout is a pipe here");
+  assert.equal(refused.out, "");
+  const made = await run(process.execPath, ["--disable-warning=ExperimentalWarning", ctl, "new", "--pane", "motherapp:0.0", "--label", "second", "--expires", "1h", "--print"], cliEnv);
   assert.equal(made.code, 0, made.err);
   const link2 = made.out.trim();
   assert.match(link2, /^https:\/\/e2e-fake-host\.trycloudflare\.com\/inbox\/[A-Za-z0-9_-]{43}$/);
   const token2 = link2.split("/").at(-1)!;
   assert.equal(calls().filter((x) => x[0] === "cloudflared").length, 1, "the running tunnel is reused");
-  const notClaude = await run(process.execPath, ["--disable-warning=ExperimentalWarning", ctl, "new", "--pane", "other:0.0", "--label", "x"], cliEnv);
+  const notClaude = await run(process.execPath, ["--disable-warning=ExperimentalWarning", ctl, "new", "--pane", "other:0.0", "--label", "x", "--print"], cliEnv);
   assert.equal(notClaude.code, 1);
   assert.match(notClaude.err, /not Claude/);
 

@@ -79,7 +79,7 @@ test("links and log, directly on the files; revoke directly", async () => {
 test("new: goes through the core, prints the link once on stdout; exit 1 without the core", async () => {
   const link = `https://h.trycloudflare.com/inbox/${"t".repeat(43)}`;
   const core = fakeCore({}, { create: () => ({ id: "ab12cd34", link, message: `${link}\nGET…`, expires: NOW + 3600_000 }) });
-  const r = await cli(["new", "--pane", "motherapp:0.0", "--label", "cloud", "--expires=1h", "--max-uses", "5"], { connect: async () => core.conn });
+  const r = await cli(["new", "--pane", "motherapp:0.0", "--label", "cloud", "--expires=1h", "--max-uses", "5"], { connect: async () => core.conn, stdoutIsTTY: true });
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out, `${link}\n`);
   assert.ok(!r.err.includes(link), "printed once");
@@ -88,14 +88,26 @@ test("new: goes through the core, prints the link once on stdout; exit 1 without
   assert.deepEqual(core.calls, [["create", { pane: "motherapp:0.0", label: "cloud", expires: "1h", maxUses: "5" }]]);
   assert.ok(core.closed());
 
-  const none = await cli(["new", "--pane", "motherapp:0.0", "--label", "cloud"]);
+  const none = await cli(["new", "--pane", "motherapp:0.0", "--label", "cloud"], { stdoutIsTTY: true });
   assert.equal(none.code, 1);
   assert.match(none.err, /motherapp isn't running/);
   assert.equal(none.out, "");
 
   const failing = fakeCore({}, { create: () => Promise.reject(new Error("pane motherapp:0.1 runs bash, not Claude")) });
-  const f = await cli(["new", "--pane", "motherapp:0.1", "--label", "x"], { connect: async () => failing.conn });
+  const f = await cli(["new", "--pane", "motherapp:0.1", "--label", "x"], { connect: async () => failing.conn, stdoutIsTTY: true });
   assert.deepEqual([f.code, f.err], [1, "inboxctl: pane motherapp:0.1 runs bash, not Claude\n"]);
+});
+
+test("new: refuses to print a link into captured output unless --print", async () => {
+  const link = `https://h.trycloudflare.com/inbox/${"t".repeat(43)}`;
+  const core = fakeCore({}, { create: () => ({ id: "ab12cd34", link, message: link, expires: NOW }) });
+  const piped = await cli(["new", "--pane", "motherapp:0.0", "--label", "cloud"], { connect: async () => core.conn, stdoutIsTTY: false });
+  assert.equal(piped.code, 2);
+  assert.match(piped.err, /stdout isn't a terminal/);
+  assert.equal(piped.out, "");
+  assert.deepEqual(core.calls, [], "no link was made");
+  const forced = await cli(["new", "--pane", "motherapp:0.0", "--label", "cloud", "--print"], { connect: async () => core.conn, stdoutIsTTY: false });
+  assert.deepEqual([forced.code, forced.out], [0, `${link}\n`]);
 });
 
 test("links, panes and revoke through the core", async () => {

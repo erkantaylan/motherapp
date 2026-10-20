@@ -44,6 +44,8 @@ export interface DeliveryEntry {
   /** The full line as typed (or as it would have been). */
   text: string;
   result: string;
+  /** Sender as reported by the request (Cf-Connecting-IP, User-Agent); informational only. */
+  from?: string;
 }
 
 interface LinksFile {
