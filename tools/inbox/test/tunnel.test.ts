@@ -1,28 +1,23 @@
-// cloudflared: URL parsing, restart with backoff (and a new quick URL), named config, stop.
+// cloudflared: URL parsing, restart with backoff (and a new quick URL), stop. Quick tunnels only.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { Tunnel, namedConfig, parseQuickHost, redactPaths } from "../src/tunnel.ts";
+import { Tunnel, parseQuickHost, redactPaths } from "../src/tunnel.ts";
 import type { TunnelInfo } from "../src/tunnel.ts";
-import { FakeRunner, FakeTimers, QUICK_OUTPUT, tick, tmpDir, waitFor } from "./fakes.ts";
+import { FakeRunner, FakeTimers, QUICK_OUTPUT, tick, waitFor } from "./fakes.ts";
 
-function setup(settings: ConstructorParameters<typeof Tunnel>[0]["settings"] = { mode: "quick" }) {
+function setup() {
   const runner = new FakeRunner();
   const timers = new FakeTimers();
   const changes: TunnelInfo[] = [];
   const logs: string[] = [];
-  const stateDir = tmpDir("tunnel");
   const t = new Tunnel({
     runner,
     timers,
-    settings,
     port: 7324,
-    stateDir,
     log: { info: (m, f) => logs.push(`${m} ${JSON.stringify(f ?? {})}`), warn: (m, f) => logs.push(`${m} ${JSON.stringify(f ?? {})}`) },
     onChange: (i) => changes.push(i),
   });
-  return { runner, timers, changes, logs, t, stateDir };
+  return { runner, timers, changes, logs, t };
 }
 
 test("parseQuickHost: the banner line, nothing else in cloudflared's output", () => {
@@ -42,7 +37,7 @@ test("quick: starts with --url to the inbox port only, running once the URL is p
   assert.deepEqual(runner.cf.starts[0], ["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:7324"]);
   assert.equal(await t.waitForHost(1000), "first-tunnel-aa.trycloudflare.com");
   await waitFor(() => t.info().connected, "connected");
-  assert.deepEqual(t.info(), { status: "running", mode: "quick", host: "first-tunnel-aa.trycloudflare.com", connected: true, error: "" });
+  assert.deepEqual(t.info(), { status: "running", host: "first-tunnel-aa.trycloudflare.com", connected: true, error: "" });
   assert.ok(logs.some((l) => l.startsWith("tunnel up")));
 });
 
@@ -110,29 +105,16 @@ test("waitForHost fails after its timeout when nothing is printed", async () => 
   t.stop();
 });
 
-test("named: config with one ingress rule for the hostname's /inbox/ paths, then 404", async () => {
-  const { runner, t, stateDir } = setup({ mode: "named", name: "motherapp", hostname: "inbox.example.com" });
-  t.start();
-  const file = path.join(stateDir, "cloudflared-motherapp.yml");
-  assert.deepEqual(runner.cf.starts[0], ["tunnel", "--no-autoupdate", "--config", file, "run", "motherapp"]);
-  assert.equal(fs.readFileSync(file, "utf8"), namedConfig("motherapp", "inbox.example.com", 7324));
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-  assert.match(namedConfig("m", "h.example.com", 7324), /hostname: h\.example\.com\n {4}path: "\^\/inbox\/"\n {4}service: http:\/\/127\.0\.0\.1:7324\n {2}- service: http_status:404/);
-  assert.equal(await t.waitForHost(1000), "inbox.example.com");
-  assert.equal(t.info().connected, true);
-  t.stop();
-  assert.equal(t.info().host, "inbox.example.com", "a named host stays known");
-});
-
-test("reconfigure restarts a running tunnel with the new mode", async () => {
+test("reconfigure restarts a running tunnel on the new port, always as a quick tunnel", async () => {
   const { runner, t } = setup();
   t.start();
   await t.waitForHost(1000);
-  t.reconfigure({ mode: "named", name: "n", hostname: "x.example.org" }, 7325);
+  t.reconfigure(7325);
   assert.equal(runner.cf.starts.length, 2);
-  assert.equal(runner.cf.starts[1]!.at(-1), "n");
-  assert.equal(await t.waitForHost(1000), "x.example.org");
+  assert.deepEqual(runner.cf.starts[1], ["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:7325"]);
+  assert.equal(await t.waitForHost(1000), "second-tunnel-bb.trycloudflare.com");
   t.stop();
-  t.reconfigure({ mode: "quick" }, 7325);
+  t.reconfigure(7326);
   assert.equal(runner.cf.starts.length, 2, "not started when it wasn't running");
+  assert.ok(runner.cf.starts.every((a) => !a.includes("run") && !a.includes("--config")), "never a named tunnel");
 });

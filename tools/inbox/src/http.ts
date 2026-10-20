@@ -2,7 +2,7 @@
 // nothing else, so this is everything the tunnel exposes:
 //   GET  /inbox/<token>   the skill (Markdown)
 //   POST /inbox/<token>   deliver a message
-// Every other path or method, and every unknown/revoked/expired/used-up token, gets the same
+// Every other path or method, and every unknown/revoked/expired token, gets the same
 // 404, byte for byte. The token is checked before anything else (rate limit, body, JSON), so
 // those other answers are only ever seen by a holder of a live token.
 //
@@ -13,8 +13,8 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 
 /**
- * Largest request body accepted. The longest allowed message (2000 characters) JSON-escaped as
- * surrogate pairs (`🚀`, 12 bytes per character) is 24 000 bytes, so this fits it.
+ * Largest request body accepted. This is the only size limit on a message (there is no
+ * per-link length option); the agent's skill states it.
  */
 export const BODY_CAP = 32 * 1024;
 

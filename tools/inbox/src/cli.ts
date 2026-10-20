@@ -5,9 +5,10 @@
 import type { Writable } from "node:stream";
 import { connectCore, corePort } from "./coreClient.ts";
 import type { CoreConnection } from "./coreClient.ts";
-import { remaining } from "./limits.ts";
+import { DEFAULT_HOURS, remaining } from "./limits.ts";
 import { AGENT_SENTENCE } from "./skill.ts";
-import { TmuxPanes, isClaudeCommand } from "./panes.ts";
+import { TmuxPanes, isClaudeCommand, resolvePane } from "./panes.ts";
+import { saveScreen } from "./screens.ts";
 import type { PanesOptions } from "./panes.ts";
 import { loadSettings, settingsFile } from "./settings.ts";
 import { Store } from "./store.ts";
@@ -16,13 +17,17 @@ import type { DeliveryEntry } from "./store.ts";
 export const USAGE = `usage: inboxctl <command> [options]
 
   panes [--json]          tmux panes running Claude
-  links [--json]          active links: id, label, pane, expiry, uses, pending
-  new --pane <pane> --label <label> [--expires 24h] [--max-uses 20] [--max-len 500] [--print]
+  links [--json]          active links: id, label, pane, expiry, messages, pending
+  new --pane <pane> --label <label> [--expires <hours>] [--print]
                           make a link for a pane (motherapp:0.0 or %3); prints it ONCE.
+                          --expires: hours (default ${DEFAULT_HOURS}; 0.5 or 90m and 7d work too).
                           Only to a terminal: with stdout piped or captured (e.g. an agent's
                           tool call, whose output may be mirrored) it refuses unless --print.
   revoke <id>             revoke a link (it answers 404 from then on)
   log [--json] [-n N]     deliveries: time, link, pane, result, text (default: last 20)
+  screen <pane>           save the pane's screen (tmux capture-pane -p) to
+                          ~/.local/state/motherapp/inbox/screens/<time>.txt, for idle-detector
+                          fixtures, and say what the detector makes of it
   serve                   JSON-RPC mode, started by the motherapp core
 
   "new" needs motherapp running (systemctl --user start motherapp): the inbox listener and
@@ -55,7 +60,7 @@ interface Flags {
   bools: Set<string>;
 }
 
-const VALUE_FLAGS = new Set(["--pane", "--label", "--expires", "--max-uses", "--max-len", "-n"]);
+const VALUE_FLAGS = new Set(["--pane", "--label", "--expires", "-n"]);
 const BOOL_FLAGS = new Set(["--json", "--print"]);
 
 function parse(args: string[]): Flags {
@@ -78,7 +83,7 @@ function parse(args: string[]): Flags {
 function allow(f: Flags, values: string[], bools: string[], positional: number): void {
   for (const k of f.opts.keys()) if (!values.includes(k)) throw new UsageError(`unknown option "${k}"`);
   for (const k of f.bools) if (!bools.includes(k)) throw new UsageError(`unknown option "${k}"`);
-  if (f.pos.length !== positional) throw new UsageError(positional === 0 ? `unexpected argument "${f.pos[0]}"` : "expected one link id");
+  if (f.pos.length !== positional) throw new UsageError(positional === 0 ? `unexpected argument "${f.pos[0]}"` : "expected one argument");
 }
 
 interface LinkRow {
@@ -87,7 +92,6 @@ interface LinkRow {
   pane: string;
   expires: number;
   uses: number;
-  maxUses: number;
   pending: number;
   last4: string;
   held?: string;
@@ -100,7 +104,7 @@ function printLinks(out: Writable, rows: LinkRow[], now: number): void {
   }
   for (const r of rows.sort((a, b) => a.expires - b.expires)) {
     const pend = r.pending > 0 ? `, ${r.pending} pending${r.held ? ` (${r.held})` : ""}` : "";
-    line(out, `${r.id}  …${r.last4}  ${r.label}  → ${r.pane}  expires in ${remaining(r.expires, now)}, used ${r.uses}/${r.maxUses}${pend}`);
+    line(out, `${r.id}  …${r.last4}  ${r.label}  → ${r.pane}  expires in ${remaining(r.expires, now)}, ${r.uses} message${r.uses === 1 ? "" : "s"}${pend}`);
   }
 }
 
@@ -153,14 +157,14 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         const c = await open();
         const rows: LinkRow[] = c
           ? Object.values((c.state.links ?? {}) as Record<string, LinkRow>)
-          : new Store(io.stateDir).active(now()).map((l) => ({ id: l.id, label: l.label, pane: l.pane.target, expires: l.expires, uses: l.uses, maxUses: l.maxUses, pending: 0, last4: l.last4 }));
+          : new Store(io.stateDir).active(now()).map((l) => ({ id: l.id, label: l.label, pane: l.pane.target, expires: l.expires, uses: l.uses, pending: 0, last4: l.last4 }));
         if (f.bools.has("--json")) line(io.stdout, JSON.stringify(rows, null, 2));
         else printLinks(io.stdout, rows, now());
         return 0;
       }
       case "new": {
         const f = parse(rest);
-        allow(f, ["--pane", "--label", "--expires", "--max-uses", "--max-len"], ["--print"], 0);
+        allow(f, ["--pane", "--label", "--expires"], ["--print"], 0);
         const pane = f.opts.get("--pane");
         if (!pane) throw new UsageError("--pane is required (see inboxctl panes)");
         if (!f.opts.get("--label")) throw new UsageError("--label is required");
@@ -170,8 +174,6 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         }
         const args: Record<string, unknown> = { pane, label: f.opts.get("--label") };
         if (f.opts.has("--expires")) args.expires = f.opts.get("--expires");
-        if (f.opts.has("--max-uses")) args.maxUses = f.opts.get("--max-uses");
-        if (f.opts.has("--max-len")) args.maxLen = f.opts.get("--max-len");
         const c = await open();
         if (!c) throw new Error("motherapp isn't running with the inbox tool, and the link needs its tunnel. Start it: systemctl --user start motherapp");
         const r = (await c.action("create", args)) as { id: string; link: string; message: string; expires: number };
@@ -189,6 +191,19 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         if (c) await c.action("revoke", { id });
         else if (!new Store(io.stateDir).revoke(id, now())) throw new Error(`no active link with id ${id}`);
         line(io.stdout, `revoked ${id}`);
+        return 0;
+      }
+      case "screen": {
+        // Straight to tmux, with or without motherapp running. Any pane, not only Claude's.
+        const f = parse(rest);
+        allow(f, [], [], 1);
+        const list = await new TmuxPanes(io.panes).list();
+        if (list.kind === "none") throw new Error(list.reason);
+        const pane = resolvePane(list.panes, f.pos[0]!);
+        if (!pane) throw new Error(`no tmux pane ${f.pos[0]} (see inboxctl panes, or tmux list-panes -a)`);
+        const saved = await saveScreen(new TmuxPanes(io.panes), io.stateDir, pane.id, pane.inMode, now());
+        line(io.stdout, saved.file);
+        line(io.stderr, `Saved the screen of ${pane.target} (${pane.id}). The idle detector says: ${saved.verdict.idle ? "idle" : `busy (${saved.verdict.check}): ${saved.verdict.reason}`}`);
         return 0;
       }
       case "log": {

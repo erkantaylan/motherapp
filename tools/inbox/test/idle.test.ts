@@ -28,14 +28,37 @@ for (const f of fixtures) {
 }
 
 test("reasons a person can read", () => {
-  assert.deepEqual(idleState(read("busy-typing.txt"), false), { idle: false, reason: "someone is typing in the pane" });
-  assert.deepEqual(idleState(read("busy-typing-wrapped.txt"), false), { idle: false, reason: "someone is typing in the pane" });
-  assert.deepEqual(idleState(read("busy-working.txt"), false), { idle: false, reason: "Claude is working" });
-  assert.deepEqual(idleState(read("busy-working-ctrlc.txt"), false), { idle: false, reason: "Claude is working" });
+  const typing = { idle: false, reason: "someone is typing in the pane (input not empty)", check: "input-not-empty" };
+  const working = { idle: false, reason: 'Claude is working (busy marker "… to interrupt" near the box)', check: "busy-marker" };
+  assert.deepEqual(idleState(read("busy-typing.txt"), false), typing);
+  assert.deepEqual(idleState(read("busy-typing-wrapped.txt"), false), typing);
+  assert.deepEqual(idleState(read("busy-working.txt"), false), working);
+  assert.deepEqual(idleState(read("busy-working-ctrlc.txt"), false), working);
   assert.match((idleState(read("busy-dialog.txt"), false) as { reason: string }).reason, /input box isn't on screen/);
   assert.match((idleState(read("busy-shell.txt"), false) as { reason: string }).reason, /input box isn't on screen/);
-  assert.deepEqual(idleState(read("idle-empty.txt"), true), { idle: false, reason: "the pane is in copy mode" });
+  assert.deepEqual(idleState(read("idle-empty.txt"), true), { idle: false, reason: "the pane is in copy mode", check: "copy-mode" });
   assert.deepEqual(idleState("", false).idle, false);
+});
+
+test("a busy verdict names the check that failed", () => {
+  const rule = "─".repeat(40);
+  const check = (screen: string[], inMode = false) => {
+    const r = idleState(screen.join("\n"), inMode);
+    return r.idle ? "idle" : r.check;
+  };
+  assert.equal(check(["● ok", "", rule, "> ", rule, "  ? for shortcuts"]), "idle");
+  assert.equal(check(["● ok", "", rule, "> ", rule], true), "copy-mode");
+  assert.equal(check(["● ok", "user@host:~$ "]), "no-prompt-line");
+  assert.equal(check(["● ok", "", "> ", rule, "  ? for shortcuts"]), "no-rule-above");
+  assert.equal(check(["● ok", "", rule, "> ", "  ? for shortcuts"]), "no-rule-below");
+  assert.equal(check(["● ok", "", rule, "> ", rule, "a", "b", "c", "d", "e"]), "too-many-lines-below");
+  assert.equal(check(["● ok", "", rule, "> hello", rule, "  ? for shortcuts"]), "input-not-empty");
+  assert.equal(check(["✻ Thinking… (esc to interrupt)", "", rule, "> ", rule, ""]), "busy-marker");
+  const r = idleState(["● ok", "", "> ", rule].join("\n"), false) as { reason: string };
+  assert.equal(r.reason, "Claude's input box isn't on screen (a dialog, or not Claude's prompt): a `>` prompt line, but no ─── rule directly above it");
+  assert.match((idleState(["● ok", "", rule, "> ", "x"].join("\n"), false) as { reason: string }).reason, /no ─── rule below it$/);
+  assert.equal(analyseScreen("user@host:~$ ").miss, "no-prompt-line");
+  assert.equal(analyseScreen(["x", rule, "> ", rule].join("\n")).miss, undefined, "only set when the box wasn't found");
 });
 
 test("analyseScreen: input text, wrapped lines joined, placeholder, old box style", () => {

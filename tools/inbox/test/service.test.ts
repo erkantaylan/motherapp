@@ -47,14 +47,15 @@ const exceptCreateReplies = (h: Harness) => h.out.filter((l) => !(JSON.parse(l).
 test("create: a link on the tunnel host, shown once; the token is in no state, log or file", async (t) => {
   const h = await harness();
   t.after(() => h.close());
-  const r = await create(h, { expires: "2h", maxUses: 5, maxLen: 100 });
+  const r = await create(h, { hours: "2" });
   assert.match(r.link, /^https:\/\/first-tunnel-aa\.trycloudflare\.com\/inbox\/[A-Za-z0-9_-]{43}$/);
   assert.equal(r.message, `${r.link}\nGET this link first; it explains how to message me.`);
   assert.deepEqual(h.runner.cf.starts[0], ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${h.service.port}`]);
   const row = h.tool.get(`links.${r.id}`) as Record<string, unknown>;
   assert.equal(row.label, "cloud");
   assert.equal(row.pane, "motherapp:0.1");
-  assert.equal(row.maxUses, 5);
+  assert.equal(row.expires, h.timers.now() + 2 * 3600_000);
+  assert.equal(row.maxUses, undefined);
   assert.equal(row.last4, r.token.slice(-4));
   assert.equal(h.tool.get("activeCount"), 1);
   const everything = JSON.stringify(h.tool.snapshot()) + exceptCreateReplies(h).join("\n");
@@ -90,15 +91,16 @@ test("create: a tunnel that never comes up fails the create and is stopped again
 test("GET returns the skill for agents; HEAD too", async (t) => {
   const h = await harness();
   t.after(() => h.close());
-  const r = await create(h, { maxLen: 300 });
+  const r = await create(h);
   const g = await req(h.url(`/inbox/${r.token}`));
   assert.equal(g.status, 200);
   assert.match(g.headers["content-type"]!, /^text\/markdown/);
   assert.equal(g.headers["cache-control"], "no-store");
-  for (const s of ["motherapp:0.1", "[inbox: cloud]", "POST", '"ref": "#10"', "300 characters", "Never commit, log or post this URL", "SendMessage", "| `409` |", "| `429` |", PEER_RULE]) {
+  for (const s of ["motherapp:0.1", "[inbox: cloud]", "POST", '"ref": "#10"', "**32 KiB** of JSON", "at most 6 per minute, or 10 are already waiting", "Never commit, log or post this URL", "SendMessage", "| `409` |", "| `429` |", PEER_RULE]) {
     assert.ok(g.body.includes(s), s);
   }
   assert.ok(!g.body.includes(r.token), "the skill doesn't repeat the token");
+  assert.ok(!/more messages?|characters\*\*|used-up/.test(g.body), "no per-link message count or length");
   const head = await req(h.url(`/inbox/${r.token}`), "HEAD");
   assert.deepEqual([head.status, head.body], [200, ""]);
 });
@@ -125,14 +127,13 @@ test("POST: typed as `[inbox: label] (re ref) text`, cleaned, in two tmux calls;
   assert.ok(!JSON.stringify(h.logs()).includes("CI is red"));
 });
 
-test("unknown, revoked, expired and used-up tokens, other paths and methods: the same 404", async (t) => {
+test("unknown, revoked and expired tokens, other paths and methods: the same 404", async (t) => {
   const h = await harness();
   t.after(() => h.close());
   const live = await create(h);
   const revoked = await create(h);
   const expiring = await create(h, { expires: "1m" });
-  const once = await create(h, { maxUses: 1 });
-  assert.equal((await post(h, once.token, { text: "the only one" })).status, 200);
+  assert.equal((await post(h, live.token, { text: "the only one" })).status, 200);
   assert.equal((await h.call("revoke", { id: revoked.id })).error, undefined);
   h.timers.t += 61_000;
   const fake = "A".repeat(43);
@@ -143,8 +144,6 @@ test("unknown, revoked, expired and used-up tokens, other paths and methods: the
     [`/inbox/${revoked.token}`, "POST", '{"text":"x"}'],
     [`/inbox/${expiring.token}`, "GET"],
     [`/inbox/${expiring.token}`, "POST", '{"text":"x"}'],
-    [`/inbox/${once.token}`, "GET"],
-    [`/inbox/${once.token}`, "POST", '{"text":"x"}'],
     [`/inbox/${live.token}`, "PUT", '{"text":"x"}'],
     [`/inbox/${live.token}`, "DELETE"],
     [`/inbox/${live.token}/x`, "GET"],
@@ -168,18 +167,16 @@ test("unknown, revoked, expired and used-up tokens, other paths and methods: the
   assert.deepEqual(h.runner.tmux.panes[0]!.submitted, ["[inbox: cloud] the only one"], "nothing else was typed");
 });
 
-test("400 bad JSON or text, 413 too long or too large, nothing typed", async (t) => {
+test("400 bad JSON or text, 413 only for a body over the cap, nothing typed", async (t) => {
   const h = await harness();
   t.after(() => h.close());
-  const r = await create(h, { maxLen: 20 });
+  const r = await create(h);
   for (const body of ["{not json", "[]", '"text"', '{"text": 5}', "{}"]) assert.equal((await post(h, r.token, body)).status, 400, body);
   assert.equal((await post(h, r.token, { text: " \r\n\x1b[0m\t " })).status, 400, "empty after cleaning");
   h.timers.t += 60_000; // every attempt counts against the 6 per minute
-  assert.equal((await post(h, r.token, { text: "one too many?" })).status, 200);
-  const long = await post(h, r.token, { text: "x".repeat(21) });
-  assert.equal(long.status, 413);
-  assert.match(JSON.parse(long.body).error, /21 characters; the limit is 20/);
-  assert.equal((await post(h, r.token, { text: "x".repeat(20) + "\x1b[31m\u200B" })).status, 200, "the limit counts cleaned text");
+  assert.equal((await post(h, r.token, { text: "short" })).status, 200);
+  assert.equal((await post(h, r.token, { text: "x".repeat(20_000) + "\x1b[31m\u200B" })).status, 200, "long text is fine under the body cap");
+  assert.equal(h.runner.tmux.panes[0]!.submitted[1], `[inbox: cloud] ${"x".repeat(20_000)}`, "cleaned, not cut");
   assert.equal((await post(h, r.token, { text: "x", pad: "y".repeat(BODY_CAP) })).status, 413, "body cap");
   assert.equal((await post(h, r.token, "{}", { "content-length": String(BODY_CAP + 1) }).catch(() => ({ status: 413 }))).status, 413, "declared length over the cap");
   assert.equal(h.runner.tmux.panes[0]!.submitted.length, 2);
@@ -230,15 +227,15 @@ test("held while the user types, Claude works, a dialog is open or copy mode is 
   pane.input = "half a thought";
   const res = await post(h, r.token, { text: "first" });
   assert.equal(res.status, 202);
-  assert.deepEqual(JSON.parse(res.body), { status: "queued", pending: 1, reason: "someone is typing in the pane" });
+  assert.deepEqual(JSON.parse(res.body), { status: "queued", pending: 1, reason: "someone is typing in the pane (input not empty)" });
   assert.equal(pane.input, "half a thought", "nothing mixed into the user's line");
   assert.equal((await post(h, r.token, { text: "second" })).status, 202);
   const row = () => h.tool.get(`links.${r.id}`) as { pending: number; held: string };
-  assert.deepEqual([row().pending, row().held], [2, "someone is typing in the pane"]);
+  assert.deepEqual([row().pending, row().held, (row() as unknown as { check: string }).check], [2, "someone is typing in the pane (input not empty)", "input-not-empty"]);
 
   for (const [state, reason] of [
-    [{ input: "", working: true }, "Claude is working"],
-    [{ working: false, dialog: true }, "Claude's input box isn't on screen (a dialog, or not Claude's prompt)"],
+    [{ input: "", working: true }, "Claude is working (busy marker \"… to interrupt\" near the box)"],
+    [{ working: false, dialog: true }, "Claude's input box isn't on screen (a dialog, or not Claude's prompt): no `>` prompt line found"],
     [{ dialog: false, inMode: true }, "the pane is in copy mode"],
   ] as const) {
     Object.assign(pane, state);
@@ -261,7 +258,7 @@ test("held while the user types, Claude works, a dialog is open or copy mode is 
   assert.deepEqual(pane.submitted, ["[inbox: cloud] first", "[inbox: cloud] second"], "in order");
   assert.equal(row().pending, 0);
   const results = Object.values(h.tool.get("log") as Record<string, { result: string }>).map((e) => e.result);
-  assert.deepEqual(results, ["queued: someone is typing in the pane", "queued: someone is typing in the pane", "submitted", "submitted"]);
+  assert.deepEqual(results, ["queued: someone is typing in the pane (input not empty)", "queued: someone is typing in the pane (input not empty)", "submitted", "submitted"]);
 });
 
 test("the queue holds at most 10 per link; revoking drops what waits and stops the tunnel", async (t) => {
@@ -333,7 +330,7 @@ test("on start, active links are listed and logged (ids only) and the tunnel com
     tool: h2.tool,
     panes: { list: async () => ({ kind: "ok", panes: [] }), capture: async () => "", sendLiteral: async () => {}, sendEnter: async () => {} },
     store,
-    settings: { port: 0, tunnel: { mode: "quick" }, sendDelayMs: 0, verifyDelayMs: 0, paneCommands: [], checkScreen: true },
+    settings: { port: 0, sendDelayMs: 0, verifyDelayMs: 0, paneCommands: [], checkScreen: true },
     runner: h2.runner,
     stateDir: h.stateDir,
     timers: h2.timers,
@@ -354,7 +351,7 @@ test("no token in any line the tool emitted, across every kind of request", asyn
   h.runner.tmux.panes[0]!.input = "typing";
   await post(h, r.token, { text: "queued one" });
   await post(h, r.token, "{bad");
-  await post(h, r.token, { text: "x".repeat(600) });
+  await post(h, r.token, { text: "x", pad: "y".repeat(40_000) });
   await req(h.url(`/inbox/${r.token}`));
   await req(h.url(`/inbox/${"B".repeat(43)}`), "POST", "{}");
   h.runner.tmux.panes[0]!.input = "";
@@ -371,14 +368,3 @@ test("no token in any line the tool emitted, across every kind of request", asyn
   assert.equal(h.out.filter((l) => l.includes(r.token)).length, 1, "only the create reply carries it");
 });
 
-test("setTunnel: validates, switches to a named tunnel with the inbox port", async (t) => {
-  const h = await harness();
-  t.after(() => h.close());
-  assert.equal((await h.call("setTunnel", { mode: "named", name: "", hostname: "x" })).error!.code, -32602);
-  assert.equal((await h.call("setTunnel", { mode: "ftp" })).error!.code, -32602);
-  assert.equal((await h.call("setTunnel", { mode: "named", name: "motherapp", hostname: "inbox.example.com" })).error, undefined);
-  assert.equal((h.tool.get("tunnel") as { mode: string }).mode, "named");
-  const r = await create(h);
-  assert.match(r.link, /^https:\/\/inbox\.example\.com\/inbox\//);
-  assert.equal(h.runner.cf.starts[0]!.at(-1), "motherapp");
-});

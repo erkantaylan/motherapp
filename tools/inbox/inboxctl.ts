@@ -21,11 +21,11 @@ if (process.argv[2] === "serve") {
   const file = settingsFile();
   const { settings, error } = loadSettings(file);
   const panes = new TmuxPanes({ runner });
-  const service = new InboxService({ tool, panes, store: new Store(stateDir), settings, settingsFile: file, runner, stateDir });
+  const service = new InboxService({ tool, panes, store: new Store(stateDir), settings, runner, stateDir });
   // The SDK exits right after SIGTERM; take cloudflared down with us.
   process.once("exit", () => service.tunnel.stop());
   const serving = tool.serve();
-  tool.log.info("inbox tool serving", { port: settings.port, tunnel: settings.tunnel.mode, socket: panes.socketPath });
+  tool.log.info("inbox tool serving", { port: settings.port, socket: panes.socketPath });
   if (error) tool.log.warn(error);
   await service.start();
   await serving;

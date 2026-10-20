@@ -169,7 +169,7 @@ export class FakeCloudflared {
     setImmediate(() => {
       if (this.behaviour === "die") return p.finish(1, "", "2026-10-20T10:00:00Z ERR failed to connect\n");
       if (this.behaviour === "silent") return;
-      p.stderr.write(args.includes("run") ? "2026-10-20T10:00:01Z INF Registered tunnel connection connIndex=0 location=fra08 protocol=quic\n" : QUICK_OUTPUT(this.hosts[n] ?? `host-${n}`));
+      p.stderr.write(QUICK_OUTPUT(this.hosts[n] ?? `host-${n}`));
     });
     return p;
   }
