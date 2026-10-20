@@ -22,6 +22,7 @@ import { buttonStyle, clickButton, copyToClipboard } from "./button.ts";
 import type { CopyEnv } from "./button.ts";
 import { interpolate, interpolateWidget } from "./template.ts";
 import { textView } from "./textWidget.ts";
+import { rowSelectRadio } from "./rowSelect.ts";
 import type { TemplateContext } from "./template.ts";
 
 export interface RenderContext {
@@ -460,9 +461,12 @@ function list(w: ListWidget, ctx: RenderContext): Mounted {
     const path = joinPath(w.bind, key);
     const tctx = () => ({ key, path, item: current });
     let current = item;
-    const title = h("div", { class: "row-title" });
-    const sub = h("div", { class: "row-sub" });
-    const labels = h("div", { class: "row-labels" }, title, sub);
+    const title = h("span", { class: "row-title" });
+    const sub = h("span", { class: "row-sub" });
+    const widgets = (w.item.widgets ?? []).map((x) => interpolateWidget(x, tctx()));
+    // With one "default device" radio, the title and subtitle are its <label> (issue #14).
+    const selectIndex = rowSelectRadio(widgets);
+    const labels = h(selectIndex !== undefined ? "label" : "div", { class: "row-labels" }, title, sub);
     const controls = h("div", { class: "row-controls" });
     const node = h("div", { class: "list-group-item list-row" }, labels, controls);
     node.dataset.key = key;
@@ -477,8 +481,19 @@ function list(w: ListWidget, ctx: RenderContext): Mounted {
       sub.hidden = s === "";
     };
     setLabels();
-    const widgets = (w.item.widgets ?? []).map((x) => interpolateWidget(x, tctx()));
     const cleanup = renderWidgets(widgets, controls, { ...ctx, template: tctx });
+    const radioInput = selectIndex !== undefined ? controls.querySelector<HTMLInputElement>("input.radio") : null;
+    if (labels instanceof HTMLLabelElement && radioInput) {
+      // Clicks on the labels go to the radio (arrow keys stay native); the other controls are
+      // outside the <label>, so they never select the row. The title alone names the radio.
+      labels.htmlFor = radioInput.id;
+      node.classList.add("row-selectable");
+      title.id = `t${++uid}`;
+      sub.id = `s${uid}`;
+      radioInput.removeAttribute("aria-label");
+      radioInput.setAttribute("aria-labelledby", title.id);
+      radioInput.setAttribute("aria-describedby", sub.id);
+    }
     const staleSync = () => markStale(node, ctx.store.isStale(path));
     staleSync();
     return {

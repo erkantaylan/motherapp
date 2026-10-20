@@ -168,7 +168,11 @@ the pointer. So:
 
 **Lists** bind to an **object map** `{ [key]: item }`. Rows are keyed by the map key and
 updated in place: a volume change on one row touches only that slider; rows appearing or
-vanishing don't rebuild the others; a slider being dragged is never overwritten. Inside `item`,
+vanishing don't rebuild the others; a slider being dragged is never overwritten. When a row's
+widgets hold exactly one radio and it is the one-button form (`value`), the row's label and
+sublabel become that radio's `<label>`: clicking them selects the row (and sends the action),
+and the label names the radio for screen readers. The row's other controls don't select it.
+Inside `item`,
 every string may use `{key}`, `{path}` (`<bind>.<key>`) and `{field}` (a field of the item):
 
 ```json

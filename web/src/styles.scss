@@ -182,11 +182,22 @@
   .list-group:empty { display: none; }
   .list-row { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4) var(--bs-spacer-5); align-items: center; }
   .list-row.selected { background-color: color-mix(in oklch, var(--bs-primary-bg-subtle) 60%, var(--bs-bg-body)); }
-  .row-labels { flex: 1 1 160px; min-width: 0; }
-  .row-title { font-weight: 550; overflow-wrap: anywhere; }
+  .row-labels { flex: 1 1 160px; min-width: 0; margin: 0; }
+  .row-title { display: block; font-weight: 550; overflow-wrap: anywhere; }
+  // A row whose title selects its radio (renderer.ts, issue #14): Bootstrap's list-group
+  // action look while the labels are hovered. Only the labels are a click target.
+  .row-selectable > .row-labels { cursor: pointer; }
+  .row-selectable:not(.selected):has(> .row-labels:hover) {
+    color: var(--bs-list-group-action-hover-color);
+    background-color: var(--bs-list-group-action-hover-bg);
+  }
+  .row-selectable:not(.selected):has(> .row-labels:active) {
+    color: var(--bs-list-group-action-active-color);
+    background-color: var(--bs-list-group-action-active-bg);
+  }
   // One line, always: a note added to a subtitle must not make the row taller (issue #12).
   // The full text is in the title attribute.
-  .row-sub { overflow: hidden; font-size: var(--bs-font-size-sm); color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+  .row-sub { display: block; overflow: hidden; font-size: var(--bs-font-size-sm); color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
   .row-controls { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4); align-items: center; }
   .row-controls .control { gap: var(--bs-spacer-3); }
   .list-empty[hidden] { display: none; }
