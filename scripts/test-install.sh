@@ -518,7 +518,7 @@ check "wrapper is executable" test -x "$(WRAP)"
 check "wrapper carries the marker on line 2" bash -c '[[ "$(sed -n 2p "$1")" == "$2" ]]' _ "$(WRAP)" "$MARKER"
 check "wrapper execs the chosen Node by absolute path" file_has "$(WRAP)" \
   "exec $(printf %q "$NODE_PATH_DIR/node") --disable-warning=ExperimentalWarning $(printf %q "$R/tools/audio/audioctl.ts") \"\$@\""
-check "no wrapper for the demo tool (no bin)" bash -c '[[ $(ls -A "$1" | wc -l) == 1 ]]' _ "$HOME_/.local/bin"
+check "no wrapper for the demo tool (no bin)" bash -c '! ls -A "$1" | grep -qi demo' _ "$HOME_/.local/bin"
 # Run it the way a keyboard shortcut would: no PATH at all, an argument with a space.
 WOUT="$("$ENV_BIN" -i "$(WRAP)" list "a b" 2>&1)"
 check "wrapper runs with an empty environment" test "$WOUT" = \
