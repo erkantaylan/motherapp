@@ -2,6 +2,7 @@
   "id": "audio",
   "title": "Audio",
   "icon": "🔊",
+  "order": 1,
   "serve": ["node", "audioctl.ts", "serve"],
   "bin": { "audioctl": "audioctl.ts" },
   "commands": {

@@ -58,8 +58,10 @@ test("core + tmux tool with a fake tmux: live list, rename in place, kill", asyn
   );
   const cfgDir = path.join(tmp, "config", "motherapp");
   fs.mkdirSync(cfgDir, { recursive: true });
-  // only the tmux tool, so the test doesn't depend on the others
-  fs.writeFileSync(path.join(cfgDir, "config.json"), JSON.stringify({ port: 0, tools: { audio: { enabled: false }, brightness: { enabled: false } } }));
+  // only the tmux tool, so the test doesn't depend on the others (the inbox tool also runs
+  // `tmux list-panes`, which landed in this fake's call log now and then)
+  const others = fs.readdirSync(path.join(repo, "tools")).filter((d) => d !== "tmux" && fs.existsSync(path.join(repo, "tools", d, "manifest.json")));
+  fs.writeFileSync(path.join(cfgDir, "config.json"), JSON.stringify({ port: 0, tools: Object.fromEntries(others.map((id) => [id, { enabled: false }])) }));
   const calls = () =>
     fs.existsSync(path.join(fake, "calls.log"))
       ? fs.readFileSync(path.join(fake, "calls.log"), "utf8").trim().split("\n").map((l) => (JSON.parse(l) as string[]).join(" "))

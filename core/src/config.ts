@@ -11,12 +11,25 @@ export interface Config {
   port: number;
   /** Per-tool settings; tools missing here use their manifest's defaultEnabled (default true). */
   tools: Record<string, ToolConfig>;
+  /**
+   * Sidebar order set on the Settings page (issue #20). Missing or empty: the default order
+   * (manifest `order` hints, then alphabetical). See `toolOrder.ts` for the merge rules.
+   */
+  order?: string[];
 }
 
 export const DEFAULT_PORT = 7323;
 
 export function defaultConfig(): Config {
   return { port: DEFAULT_PORT, tools: {} };
+}
+
+/** A saved `order`: strings only, first occurrence wins. Anything that isn't an array is ignored. */
+export function normalizeOrder(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  for (const v of raw) if (typeof v === "string" && v !== "" && !out.includes(v)) out.push(v);
+  return out;
 }
 
 function normalize(raw: unknown): Config {
@@ -31,6 +44,8 @@ function normalize(raw: unknown): Config {
       }
     }
   }
+  const order = normalizeOrder(r.order);
+  if (order) cfg.order = order;
   return cfg;
 }
 
@@ -55,9 +70,49 @@ export function loadConfig(file: string): { config: Config; created: boolean; er
   }
 }
 
-export function saveConfig(file: string, config: Config): void {
+function writeAtomic(file: string, data: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
-  fs.renameSync(tmp, file);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+/** Writes `config` as the whole file (temp file + rename). Used to create the default file. */
+export function saveConfig(file: string, config: Config): void {
+  writeAtomic(file, config);
+}
+
+/**
+ * Changes the file in place: reads it as it is now, lets `patch` edit the parsed object, and
+ * writes it back atomically. Every key `patch` doesn't touch is kept, including ones the core
+ * doesn't know. A file that isn't a JSON object is never overwritten: this throws instead, so
+ * a hand-edited typo isn't replaced with defaults. A missing file starts as `{}`.
+ */
+export function updateConfigFile(file: string, patch: (raw: Record<string, unknown>) => void): void {
+  let raw: Record<string, unknown> = {};
+  let text: string | undefined;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  if (text !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error(`${file} is not valid JSON (${(e as Error).message}); fix or delete it, then try again`);
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`${file} is not a JSON object; fix or delete it, then try again`);
+    }
+    raw = parsed as Record<string, unknown>;
+  }
+  patch(raw);
+  writeAtomic(file, raw);
 }
