@@ -179,7 +179,8 @@ every string may use `{key}`, `{path}` (`<bind>.<key>`) and `{field}` (a field o
 
 **Buttons: confirm and copy.** A click runs these steps in order:
 
-1. **`confirm: string`**: an in-page dialog (native `<dialog>`, not `window.confirm`) shows
+1. **`confirm: string`**: an in-page dialog (a native `<dialog>` styled as a Bootstrap dialog,
+   not `window.confirm`) shows
    this text with Cancel (focused) and a button carrying the widget's `label`. Cancel or Escape
    stops here: nothing is copied and no action is sent. A button with `confirm` gets the
    `danger` style unless it sets `style` itself.
@@ -188,8 +189,8 @@ every string may use `{key}`, `{path}` (`<bind>.<key>`) and `{field}` (a field o
    click time (objects as JSON). It uses `navigator.clipboard.writeText` (127.0.0.1 is a secure
    context). Where that is missing or refused, e.g. over plain-HTTP LAN access, it falls back
    to a hidden textarea and `document.execCommand("copy")`, and failing that shows the text
-   selected with "press Ctrl+C". The label shows "Copied" for 1.5 s. A copy-only button has
-   no status dot.
+   selected with "press Ctrl+C". A "Copied to the clipboard" toast shows for 1.5 s. A
+   copy-only button has no status dot.
 3. **`action`**: sends `args` as usual (status dot and all).
 
 Inside a list row, `confirm` and a string `copy` are interpolated **when clicked**, against
@@ -243,7 +244,20 @@ export default class AudioPage extends HTMLElement {
 `ctx` offers `get`, `isStale`, `subscribe`, `action(name, args, onProgress)`, `openStream`,
 `render(widgets, container)` (the declarative renderer, for mixing) and `info()`. Use the theme
 CSS variables (`--fg`, `--bg`, `--surface`, `--muted`, `--border`, `--accent`, `--ok`,
-`--warn`, `--err`).
+`--warn`, `--err`). They follow the OS light/dark setting.
+
+The shell's stylesheet is **Bootstrap 6** (6.0.0-alpha.1), so a custom page can also use its
+classes and tokens. Write v6 markup, not v5: `btn-solid theme-primary`, `btn-outline
+theme-secondary`, `btn-sm`; `list-group` / `list-group-item`; `badge badge-subtle theme-success`;
+`form-control` (also on `<select>`); a radio is `<input type="radio" class="radio">`; a switch
+is `<div class="switch"><input type="checkbox" role="switch" switch></div>`; a range is
+`<div class="form-range"><input type="range" class="form-range-input"></div>` (set
+`--bs-range-fill` to 0…1 on the wrapper to fill the track); a meter is `progress` /
+`progress-bar`. Bootstrap's tokens are prefixed `--bs-` (e.g. `var(--bs-primary-base)`,
+`var(--bs-bg-1)`), as in Bootstrap's own dist CSS. Only part of Bootstrap is included (reboot,
+forms, buttons, list group, nav, badge, dialog, toast, progress, theme colors, a subset of
+utilities): see `web/src/styles.scss` and `web/src/_utilities-subset.scss`. Bootstrap's
+JavaScript is not loaded.
 
 `tools/shortcuts/page.ts` is a working example: its own form and rows, styled only with those
 variables (a `<style>` scoped by a class on its root, so it doesn't depend on the shell's CSS),

@@ -61,7 +61,7 @@ GNOME 48 unless its author updates it.
 | UI model | **Hybrid** (§ 4.1, § 4.5): declarative pages by default, TS custom pages as the escape hatch. |
 | Protocol, contract, discovery, crashes | As written in **§ 4.6–4.9**, accepted 2026-10-19. |
 | Runtime | **Node 24 LTS** (§ 4.10). It gets installed on the machine. |
-| Frontend | **Plain TS + Vite**, web components for custom pages (§ 4.11). |
+| Frontend | **Plain TS + Vite + Bootstrap 6 (alpha, pinned)**, web components for custom pages (§ 4.11). |
 | Launcher | **Served on the web only**: open `http://127.0.0.1:7323` in a browser. No tray icon for now. |
 | Audio scope, first version | **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
 | Per-app rows | **One row per app.** All of an app's streams are grouped, e.g. one Firefox row. |
@@ -210,6 +210,9 @@ What a framework would give us:
 Nothing else is needed. Vite is only for development and the build; the core serves the output
 as static files. If the logs page turns out painful, a small library can be added to that one
 page later without changing the shell.
+
+Styling (issue #9, an experiment that may be reverted): Bootstrap 6 alpha's Sass, only the parts
+the shell uses, compiled by Vite into one stylesheet (`web/src/styles.scss`); no Bootstrap JS.
 
 ### 4.12 Log service (core)
 

@@ -1,6 +1,6 @@
 // Shell: sidebar (enabled tools with status dots, Logs, Settings) + content area.
 // Routes: #/tool/<id>, #/logs, #/settings.
-import "./style.css";
+import "./styles.scss";
 import type { ToolInfo } from "@motherapp/protocol";
 import { App } from "./app.ts";
 import { KeyedList } from "./keyedList.ts";
@@ -13,10 +13,10 @@ const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.hos
 const app = new App(wsUrl);
 
 // ---- layout ----
-const toolNav = h("nav", { class: "nav-tools" });
+const toolNav = h("nav", { class: "nav nav-tools" });
 toolNav.setAttribute("aria-label", "Tools");
-const builtinNav = h("nav", { class: "nav-builtin" });
-const menuBtn = h("button", { class: "menu-btn", text: "☰" });
+const builtinNav = h("nav", { class: "nav nav-builtin" });
+const menuBtn = h("button", { class: "menu-btn btn-outline theme-secondary btn-sm", text: "☰" });
 menuBtn.type = "button";
 menuBtn.setAttribute("aria-label", "Toggle sidebar");
 menuBtn.setAttribute("aria-expanded", "false");
@@ -33,7 +33,7 @@ const setSidebar = (open: boolean) => {
 menuBtn.addEventListener("click", () => setSidebar(!shell.classList.contains("sidebar-open")));
 
 function navLink(href: string, label: string, icon?: Node): HTMLAnchorElement {
-  const a = h("a", { class: "nav-item" }, icon ?? null, h("span", { class: "nav-label", text: label }));
+  const a = h("a", { class: "nav-link" }, icon ?? null, h("span", { class: "nav-label", text: label }));
   a.href = href;
   a.addEventListener("click", () => setSidebar(false));
   return a;
@@ -71,8 +71,11 @@ const navList = new KeyedList<ToolInfo, HTMLElement>(
 function refreshNav(): void {
   navList.update(app.tools.filter((t) => t.enabled).map((t) => [t.id, t] as const));
   connBanner.hidden = app.conn.connected;
-  for (const a of shell.querySelectorAll<HTMLAnchorElement>("a.nav-item")) {
-    a.classList.toggle("active", a.getAttribute("href") === location.hash);
+  for (const a of shell.querySelectorAll<HTMLAnchorElement>("a.nav-link")) {
+    const active = a.getAttribute("href") === location.hash;
+    a.classList.toggle("active", active);
+    if (active) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
   }
 }
 app.onTools(refreshNav);
