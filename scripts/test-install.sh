@@ -120,7 +120,12 @@ done'
       echo "installed $(cat "$FAKE/dpkg/$p")" ;;
   -S) echo "dpkg-query: no path found matching pattern $2" >&2; exit 1 ;;
 esac'
+  # apt-get -s prints $FAKE/apt_sim (Remv/Inst lines) when a case writes one.
   stub apt-get 'echo "apt-get $*" >>"$FAKE/calls"
+if [[ $1 == -s ]]; then
+  if [[ -f $FAKE/apt_sim ]]; then cat "$FAKE/apt_sim"; else echo "Inst nodejs (24.1.0-1nodesource1 NodeSource:nodistro [amd64])"; fi
+  exit 0
+fi
 [[ $1 == install ]] || exit 0
 R="$MOTHERAPP_INSTALL_ROOT"
 for p in "${@:2}"; do
@@ -257,6 +262,93 @@ check "--yes: node 24 found after install" out_has "^OK +node +v24\\.1\\.0 at $R
 check "--yes: old node reported as shadowing" out_has '^WARN +node-on-path +`node` on PATH is v22\.23\.2'
 check "--yes: unit uses the new node" file_has "$(UNIT)" "ExecStart=\"$ROOT/usr/bin/node\""
 check "--yes: npm from the new node" calls_has "npm ci"
+check "--yes: install simulated first" calls_has "apt-get -s install nodejs"
+check "no distro nodejs: no removal warning" out_lacks 'REMOVES'
+check "no distro nodejs: says it removes nothing" out_has 'step 2 of 2: sudo apt-get install nodejs \(installs nodejs 24\.1\.0-1nodesource1; removes nothing\)'
+check "no nvm/fnm: none offered" out_lacks 'Run: (nvm|fnm) install'
+check "no version-manager note for a NodeSource node" out_lacks '^    note: Node is'
+
+# Ubuntu's nodejs 18 is installed: installing NodeSource's nodejs would remove these.
+distro_node() {
+  echo 18.19.1+dfsg-6ubuntu5 >"$FAKE/dpkg/nodejs"
+  {
+    for p in npm eslint webpack node-gyp terser libnode-dev libnode109 nodejs-doc node-acorn node-ajv; do
+      echo "Remv $p [1.0-1]"
+    done
+    echo "Inst nodejs [18.19.1+dfsg-6ubuntu5] (24.22.0-1nodesource1 NodeSource:nodistro [amd64])"
+    echo "Conf nodejs (24.22.0-1nodesource1 NodeSource:nodistro [amd64])"
+  } >"$FAKE/apt_sim"
+}
+# A fake nvm.sh: `nvm install 24` puts a fake Node v24.5.0 under ~/.nvm/versions/node.
+fake_nvm() {
+  mkdir -p "$HOME_/.nvm"
+  cat >"$HOME_/.nvm/nvm.sh" <<'EOF'
+nvm() {
+  echo "nvm $*" >>"$FAKE/calls"
+  [[ $1 == install ]] || return 0
+  local d; d="$(dirname "${BASH_SOURCE[0]}")/versions/node/v$2.5.0/bin"
+  mkdir -p "$d"
+  sed "s/v24\.1\.0/v$2.5.0/" "$FAKE/node_template" >"$d/node"
+  cp "$FAKE/npm_template" "$d/npm"
+  chmod +x "$d/node" "$d/npm"
+}
+EOF
+}
+line_of() { grep -nE -- "$1" "$OUT" | head -n1 | cut -d: -f1; }
+
+new_case nvm-offered
+NODE_PATH_DIR="$C/node22/bin"
+make_node "$NODE_PATH_DIR" v22.23.2
+distro_node
+fake_nvm
+run_installer --yes
+check "exit 0" exit_is 0
+check "nvm offered" out_has 'Run: nvm install 24 \(no sudo\)'
+check "prompt says the paths are version-specific" out_has 'version-specific path under .*/\.nvm'
+check "nvm install ran" calls_has "nvm install 24"
+check "no sudo, no NodeSource" calls_lacks '^sudo|nodesource|apt-get'
+check "NodeSource not offered" out_lacks 'NodeSource, step'
+check "node from nvm chosen" out_has "^OK +node +v24\\.5\\.0 at $HOME_/\\.nvm/versions/node/v24\\.5\\.0/bin/node"
+check "unit uses the nvm node" file_has "$(UNIT)" "ExecStart=\"$HOME_/.nvm/versions/node/v24.5.0/bin/node\""
+check "summary: re-run note" out_has '^    note: Node is .*/\.nvm/.*re-run \./install\.sh after upgrading or removing'
+
+new_case nvm-declined
+NODE_PATH_DIR="$C/node22/bin"
+make_node "$NODE_PATH_DIR" v22.23.2
+distro_node
+fake_nvm
+run_installer <<<$'n\ny'
+check "nvm offered before NodeSource" test "$(line_of 'Run: nvm install')" -lt "$(line_of 'NodeSource, step 1 of 2')"
+check "nvm not run" calls_lacks '^nvm'
+check "repo step is separate and installs nothing" out_has 'step 1 of 2: add its apt repo .*This installs and removes nothing'
+check "repo added" calls_has "sudo apt-get update"
+check "removals listed in the prompt text" \
+  out_has "replaces Ubuntu's nodejs 18\\.19\\.1\\+dfsg-6ubuntu5 and REMOVES 10 package\\(s\\): npm, eslint, webpack, node-gyp, terser, libnode-dev, libnode109, nodejs-doc, \\.\\.\\."
+check "full list shown, first name" out_has '^      npm eslint webpack '
+check "full list shown, last name" out_has '^      .*node-ajv$'
+check "install step asks again" out_has 'step 2 of 2: sudo apt-get install nodejs, which REMOVES the 10 package\(s\) listed above'
+check "no answer: nothing installed" calls_lacks 'apt-get install'
+check "no answer: exit 1" exit_is 1
+run_installer <<<$'n\ny'
+check "re-run: repo already configured" out_has 'NodeSource apt repo for Node 24 is already configured'
+check "yes: installs without -y, so apt asks too" calls_has "sudo apt-get install nodejs"
+check "yes: no -y with removals" calls_lacks 'apt-get install -y nodejs'
+check "yes: exit 0" exit_is 0
+
+new_case removals-yes
+NODE_PATH_DIR="$C/node22/bin"
+make_node "$NODE_PATH_DIR" v22.23.2
+distro_node
+run_installer --yes
+check "--yes: removals listed" out_has 'REMOVES 10 package'
+check "--yes: stops before removing" out_has "not installing: --yes doesn't cover an install that removes packages"
+check "--yes: points at --allow-removals" out_has 'Re-run with --yes --allow-removals'
+check "--yes: nodejs not installed" calls_lacks 'apt-get install'
+check "--yes: exit 1" exit_is 1
+run_installer --yes --allow-removals
+check "--allow-removals: installs" calls_has "sudo apt-get install -y nodejs"
+check "--allow-removals: prompt says why it was accepted" out_has '\[y/N\] y \(--yes --allow-removals\)'
+check "--allow-removals: exit 0" exit_is 0
 
 new_case nvm-node
 NODE_PATH_DIR="$C/node22/bin"
@@ -411,6 +503,7 @@ check "--purge alone: exit 2" exit_is 2
 run_installer --help
 check "--help: exit 0" exit_is 0
 check "--help: mentions --check" out_has '[-][-]check'
+check "--help: documents --allow-removals" out_has '^  [-][-]allow-removals'
 
 new_case root-refused
 stub id '[[ $1 == -u ]] && echo 0; exit 0'
@@ -499,9 +592,30 @@ NODE_PATH_DIR="$C/node22/bin"
 make_node "$NODE_PATH_DIR" v22.23.2
 run_installer --check
 check "--check without Node 24: commands SKIP" out_has '^SKIP +commands +can.t check the wrappers'
+check "--check without Node 24: SKIP counted as skipped, not as a warning" \
+  out_has '^RESULT: FAIL \([0-9]+ required item\(s\) missing or failed, 0 warning\(s\), 1 skipped\)$'
 run_installer <<<"n"
 check "install without Node 24: commands SKIP" out_has '^SKIP +commands +Node >= 24 missing; wrappers not written'
+check "install without Node 24: optional SKIP counted as skipped" out_has '^RESULT: FAIL \(.*, 1 skipped\)$'
 check "install without Node 24: nothing written" test ! -e "$HOME_/.local/bin"
+
+new_case bin-binaries
+mkdir -p "$HOME_/.local/bin"
+printf '\177ELF\002\001\001\000\000\000\000\000\n\000\000\001\000' >"$(WRAP uv)"   # a binary, NULs and all
+printf '\177ELF\000\000\n%s\n\000\000' "$MARKER" >"$(WRAP ffmpeg)"   # marker on line 2, but no #!
+chmod +x "$(WRAP uv)" "$(WRAP ffmpeg)"
+cp "$(WRAP ffmpeg)" "$C/ffmpeg"
+run_installer --yes
+check "install: no null-byte warning" out_lacks 'null byte'
+check "install: exit 0" exit_is 0
+check "install: binary with the marker on line 2 kept" cmp -s "$(WRAP ffmpeg)" "$C/ffmpeg"
+run_installer --check
+check "--check: no null-byte warning" out_lacks 'null byte'
+check "--check: binaries aren't reported" out_lacks '^WARN +(uv|ffmpeg) '
+run_installer --uninstall
+check "uninstall: no null-byte warning" out_lacks 'null byte'
+check "uninstall: binaries kept" test -f "$(WRAP uv)" -a -f "$(WRAP ffmpeg)"
+check "uninstall: wrapper removed" test ! -e "$(WRAP)"
 
 new_case bin-bad-manifest
 printf '{"id":"bad","title":"Bad","serve":["x"],"bin":{"../x":"x.ts","badctl":"../escape.ts","nofile":"missing.ts"}}\n' \
