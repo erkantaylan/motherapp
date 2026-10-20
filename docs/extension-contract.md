@@ -259,8 +259,9 @@ forms, buttons, list group, nav, badge, dialog, toast, progress, theme colors, a
 utilities): see `web/src/styles.scss` and `web/src/_utilities-subset.scss`. Bootstrap's
 JavaScript is not loaded.
 
-`tools/shortcuts/page.ts` is a working example: its own form and rows, styled only with those
-variables (a `<style>` scoped by a class on its root, so it doesn't depend on the shell's CSS),
+`tools/shortcuts/page.ts` is a working example: its own form and rows, styled only with the
+theme variables above (an unlayered `<style>` scoped by a class on its root, so it doesn't
+depend on Bootstrap's classes),
 plus `ctx.render` for single `button` widgets, so Remove gets the shell's confirm dialog and
 status dot. Outside a list a button's `confirm` has no row, so text you put in it must not
 contain `{word}` placeholders (that page inserts a zero-width space after each `{`). Logic the
