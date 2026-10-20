@@ -39,7 +39,8 @@ usage() {
   cat <<'EOF'
 Usage: motherapp <command>
 
-  install, update   git fetch + git pull --ff-only on main, then ./install.sh --yes, then
+  install, update   git fetch + git pull --ff-only on main, then
+                    ./install.sh --yes --allow-removals (no questions asked), then
                     show old -> new version, the new commits and the HTTP check. Refuses
                     when the checkout has local changes, isn't on main, or has diverged
                     from origin (it never stashes, resets or merges). Already up to date:
@@ -252,13 +253,13 @@ cmd_install() {
       (( AHEAD > 0 )) && say "note: $BRANCH has $AHEAD local commit(s) that aren't on $REMOTE yet"
       return 0
     fi
-    say "already up to date with $REMOTE/$BRANCH, but $reason: running ./install.sh --yes"
+    say "already up to date with $REMOTE/$BRANCH, but $reason: running ./install.sh --yes --allow-removals"
   fi
 
   local log code
   log="$(mktemp "${TMPDIR:-/tmp}/motherapp-install.XXXXXX")" || die "mktemp failed"
-  cmdline "./install.sh --yes"
-  bash "$REPO_DIR/install.sh" --yes 2>&1 | tee "$log"
+  cmdline "./install.sh --yes --allow-removals"
+  bash "$REPO_DIR/install.sh" --yes --allow-removals 2>&1 | tee "$log"
   code=${PIPESTATUS[0]}
 
   local after base http
