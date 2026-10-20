@@ -143,7 +143,7 @@ an action. When the user changes a control, the action is called with `{ ...args
 | Widget | Fields |
 |---|---|
 | `text` | `text?` (static), `bind?` (shown value), `style?: "heading" \| "body" \| "muted"` |
-| `button` | `label`, `action`, `args?`, `style?: "default" \| "primary" \| "danger"` — sends `args` |
+| `button` | `label`, `action?`, `args?`, `style?: "default" \| "primary" \| "danger"`, `confirm?`, `copy?` — sends `args`. `action` is required unless `copy` is set. See "Buttons: confirm and copy" below. |
 | `toggle` | `label?`, `bind`, `action`, `args?` — `value: boolean` |
 | `slider` | `label?`, `bind`, `action`, `min`, `max`, `step?`, `unit?`, `args?` — `value: number` |
 | `radio` | `label?`, `bind`, `action`, `args?`, and either `options: [{value,label}]` (a group) or `value` (one button, checked when `state[bind] == value`; buttons sharing a `bind` form one group — use this inside list rows for "default device") |
@@ -164,6 +164,35 @@ every string may use `{key}`, `{path}` (`<bind>.<key>`) and `{field}` (a field o
               { "type": "meter", "stream": "level/{key}", "manual": true }
             ] } }
 ```
+
+**Buttons: confirm and copy.** A click runs these steps in order:
+
+1. **`confirm: string`**: an in-page dialog (native `<dialog>`, not `window.confirm`) shows
+   this text with Cancel (focused) and a button carrying the widget's `label`. Cancel or Escape
+   stops here: nothing is copied and no action is sent. A button with `confirm` gets the
+   `danger` style unless it sets `style` itself.
+2. **`copy: string | { bind: string }`**: copies text to the clipboard, in the browser, with no
+   tool round-trip. A string is the text; `{ bind }` copies the value at that state path at
+   click time (objects as JSON). It uses `navigator.clipboard.writeText` (127.0.0.1 is a secure
+   context). Where that is missing or refused, e.g. over plain-HTTP LAN access, it falls back
+   to a hidden textarea and `document.execCommand("copy")`, and failing that shows the text
+   selected with "press Ctrl+C". The label shows "Copied" for 1.5 s. A copy-only button has
+   no status dot.
+3. **`action`**: sends `args` as usual (status dot and all).
+
+Inside a list row, `confirm` and a string `copy` are interpolated **when clicked**, against
+the row's item at that moment, so `"Remove '{name}'?"` follows a rename. Everything else in a
+row's widgets (including `args` and a `copy.bind` path) is interpolated once, when the row is
+created, so use the row's stable `{key}` there. Outside a list, placeholders become empty
+strings. Values are shown as plain text, never HTML. Text a template can't build (say, a
+shell-quoted command) belongs in a state field, e.g. `copy: { bind: "sessions.{key}.attachCommand" }`.
+
+```json
+{ "type": "button", "label": "Kill", "action": "kill", "args": { "id": "{key}" },
+  "confirm": "Kill tmux session '{name}'?{attachedNote}" }
+```
+
+`tools/demo/` uses all three forms; `tools/tmux/` uses `copy: { bind }` and `confirm`.
 
 **Status dots** come for free: *setting* while the request is out, *set* on success, *failed*
 on error (message on hover). Slider values sent while a request is in flight are coalesced:

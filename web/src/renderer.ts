@@ -18,13 +18,18 @@ import { ActionRunner } from "./actionRunner.ts";
 import { KeyedList, listEntries } from "./keyedList.ts";
 import type { Row, RowHost } from "./keyedList.ts";
 import type { ToolStore } from "./store.ts";
+import { buttonStyle, clickButton, copyToClipboard } from "./button.ts";
+import type { CopyEnv } from "./button.ts";
 import { interpolate, interpolateWidget } from "./template.ts";
+import type { TemplateContext } from "./template.ts";
 
 export interface RenderContext {
   toolId: string;
   store: ToolStore;
   action(name: string, args?: JsonObject): Promise<JsonValue>;
   openStream(name: string, cb: (v: JsonValue) => void): () => void;
+  /** Inside a list row: the row's current template context (for click-time templates). */
+  template?: () => TemplateContext;
 }
 
 interface Mounted {
@@ -95,14 +100,119 @@ function text(w: TextWidget, ctx: RenderContext): Mounted {
   return { el, destroy: off };
 }
 
+/** In-page modal dialog (native `<dialog>`). Resolves with the button pressed, or "cancel" on Escape. */
+function modal(build: (dlg: HTMLDialogElement, close: (value: string) => void) => HTMLElement): Promise<string> {
+  return new Promise((resolve) => {
+    const dlg = h("dialog", { class: "ma-dialog" });
+    let done = false;
+    const close = (value: string) => {
+      if (done) return;
+      done = true;
+      dlg.close();
+      dlg.remove();
+      resolve(value);
+    };
+    dlg.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      close("cancel");
+    });
+    dlg.addEventListener("close", () => close("cancel"));
+    const focus = build(dlg, close);
+    document.body.append(dlg);
+    dlg.showModal();
+    focus.focus();
+  });
+}
+
+/** Confirm dialog for a button's `confirm` text. Cancel has the focus, so Enter is harmless. */
+export function confirmDialog(text: string, okLabel: string, style: string): Promise<boolean> {
+  return modal((dlg, close) => {
+    const msg = h("p", { class: "ma-dialog-text", text });
+    msg.id = `dlg${++uid}`;
+    dlg.setAttribute("role", "alertdialog");
+    dlg.setAttribute("aria-label", "Confirm");
+    dlg.setAttribute("aria-describedby", msg.id);
+    const cancel = h("button", { class: "btn default", text: "Cancel" });
+    const ok = h("button", { class: `btn ${style === "default" ? "primary" : style}`, text: okLabel });
+    cancel.type = ok.type = "button";
+    cancel.addEventListener("click", () => close("cancel"));
+    ok.addEventListener("click", () => close("ok"));
+    dlg.append(msg, h("div", { class: "ma-dialog-buttons" }, cancel, ok));
+    return cancel;
+  }).then((v) => v === "ok");
+}
+
+/** Fallback when the clipboard can't be written: the text, selected, and "press Ctrl+C". */
+function manualCopyDialog(text: string): Promise<void> {
+  return modal((dlg, close) => {
+    const msg = h("p", { class: "ma-dialog-text", text: "The browser won't let this page copy. Press Ctrl+C to copy the selected text:" });
+    msg.id = `dlg${++uid}`;
+    dlg.setAttribute("aria-labelledby", msg.id);
+    const field = h("input", { class: "ma-dialog-copy" });
+    field.readOnly = true;
+    field.value = text;
+    field.addEventListener("focus", () => field.select());
+    field.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") setTimeout(() => close("ok"), 0);
+    });
+    const done = h("button", { class: "btn default", text: "Close" });
+    done.type = "button";
+    done.addEventListener("click", () => close("ok"));
+    dlg.append(msg, field, h("div", { class: "ma-dialog-buttons" }, done));
+    return field;
+  }).then(() => undefined);
+}
+
+function execCopy(text: string): boolean {
+  const ta = h("textarea", { class: "ma-offscreen" });
+  ta.value = text;
+  ta.readOnly = true;
+  document.body.append(ta);
+  ta.select();
+  try {
+    return document.execCommand("copy");
+  } finally {
+    ta.remove();
+  }
+}
+
+const domCopyEnv = (): CopyEnv => ({
+  writeText: window.isSecureContext && navigator.clipboard?.writeText ? (t) => navigator.clipboard.writeText(t) : undefined,
+  execCopy,
+  manual: manualCopyDialog,
+});
+
 function button(w: ButtonWidget, ctx: RenderContext): Mounted {
   const dot = statusDot();
-  const btn = h("button", { class: `btn ${w.style ?? "default"}`, text: w.label });
+  const style = buttonStyle(w);
+  const btn = h("button", { class: `btn ${style}`, text: w.label });
   btn.type = "button";
-  const runner = runnerFor(ctx, w.action, dot.set);
-  btn.addEventListener("click", () => runner.send(w.args ?? {}));
-  const el = h("div", { class: "control w-button" }, btn, dot.el);
-  return { el, destroy: () => runner.dispose() };
+  const live = h("span", { class: "ma-offscreen" });
+  live.setAttribute("aria-live", "polite");
+  const runner = w.action !== undefined ? runnerFor(ctx, w.action, dot.set) : undefined;
+  let flash: ReturnType<typeof setTimeout> | undefined;
+  const copied = () => {
+    btn.textContent = "Copied";
+    live.textContent = "Copied to the clipboard";
+    clearTimeout(flash);
+    flash = setTimeout(() => {
+      btn.textContent = w.label;
+      live.textContent = "";
+    }, 1500);
+  };
+  btn.addEventListener("click", () => {
+    void clickButton(w, {
+      template: ctx.template,
+      get: (p) => ctx.store.get(p),
+      confirm: (text) => confirmDialog(text, w.label, style),
+      copy: async (text) => {
+        if ((await copyToClipboard(text, domCopyEnv())) === "copied") copied();
+      },
+      send: runner ? (args) => runner.send(args) : undefined,
+    });
+  });
+  const el = h("div", { class: "control w-button" }, btn, runner ? dot.el : null, live);
+  return { el, destroy: () => (clearTimeout(flash), runner?.dispose()) };
 }
 
 function toggle(w: ToggleWidget, ctx: RenderContext): Mounted {
@@ -304,7 +414,7 @@ function list(w: ListWidget, ctx: RenderContext): Mounted {
     };
     setLabels();
     const widgets = (w.item.widgets ?? []).map((x) => interpolateWidget(x, tctx()));
-    const cleanup = renderWidgets(widgets, controls, ctx);
+    const cleanup = renderWidgets(widgets, controls, { ...ctx, template: tctx });
     const staleSync = () => markStale(node, ctx.store.isStale(path));
     staleSync();
     return {

@@ -106,6 +106,18 @@ button, input, select { font: inherit; color: inherit; }
 .btn.small { padding: 2px 9px; font-size: 0.9em; }
 .btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
 .btn[hidden] { display: none; }
+.ma-dialog .btn.danger { background: var(--err); color: var(--accent-fg); border-color: var(--err); }
+
+/* dialogs (button confirm, manual copy) */
+.ma-dialog {
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--fg);
+  padding: 16px 18px; max-width: min(460px, calc(100vw - 32px)); box-shadow: 0 8px 30px rgb(0 0 0 / 0.25);
+}
+.ma-dialog::backdrop { background: rgb(0 0 0 / 0.35); }
+.ma-dialog-text { margin: 0 0 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ma-dialog-copy { width: 100%; margin-bottom: 14px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); font-family: ui-monospace, monospace; }
+.ma-dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.ma-offscreen { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
 .range { width: min(320px, 50vw); accent-color: var(--accent); }
 .range-value { min-width: 3.5em; font-variant-numeric: tabular-nums; }
 .switch { width: 18px; height: 18px; accent-color: var(--accent); }

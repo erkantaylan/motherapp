@@ -75,6 +75,7 @@ GNOME 48 unless its author updates it.
 | Branching | **Work directly on `main`.** No feature branches. |
 | Audio backend (Q9) | **PipeWire CLI route**: `pw-dump --monitor` for events, `wpctl` for default/volume/mute, `pw-play`/`pw-record` for the tests. No `pactl`, no GObject bindings. Built in `tools/audio/` (`audioctl`). |
 | Build order | 1. Core infra (manager). 2. A **log service in the core** that every extension uses, plus its logs page (§ 4.12). 3. The **audio tool**: audio-switch parity plus per-app volume and mute. This replaces § 4.4. |
+| tmux tool | `tools/tmux/` per issue #6: polled every 2 s, copy and kill-with-confirm per session. |
 
 ## 4. Details
 
@@ -90,7 +91,9 @@ Two tiers:
   a state path and name an action. Layout/state split means a volume change is a tiny state
   delta, not a re-render. Pros: any language, consistent look, phone-friendly for free, zero
   frontend code per tool. Cons: we own a widget vocabulary, every new widget type is core work.
-  Starting vocabulary: list, radio, slider, toggle, meter, button, text.
+  Starting vocabulary: list, radio, slider, toggle, meter, button, text. Buttons later gained
+  `copy` (client-side clipboard copy) and `confirm` (an in-page confirm dialog), for tmux (#6)
+  and other tools (#8).
 - **Custom page (escape hatch).** The extension ships a TS module the shell mounts in the content
   area, with a client bound to its tool (subscribe to state, call actions) and the shared theme.
   Pros: anything goes (log viewer with live tail and filters, storage charts). Cons: TS only,
