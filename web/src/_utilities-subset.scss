@@ -1,0 +1,63 @@
+// A subset of Bootstrap's utility classes, generated the way bootstrap-grid.scss narrows
+// `$utilities`: only the groups listed here are emitted. Add a group name to make its
+// classes available to the shell and to custom pages.
+@use "sass:list";
+@use "sass:map";
+@use "bootstrap/scss/config" as *;
+@use "bootstrap/scss/functions" as *;
+@use "bootstrap/scss/utilities" as *;
+@use "bootstrap/scss/mixins/utilities" as *;
+
+$subset: map-get-multiple(
+  $utilities,
+  (
+    "display",
+    "flex",
+    "flex-direction",
+    "flex-grow",
+    "flex-shrink",
+    "flex-wrap",
+    "justify-content",
+    "align-items",
+    "align-self",
+    "gap",
+    "margin",
+    "margin-x",
+    "margin-y",
+    "margin-top",
+    "margin-end",
+    "margin-bottom",
+    "margin-start",
+    "padding",
+    "padding-x",
+    "padding-y",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "text-align",
+    "text-wrap",
+    "word-wrap",
+    "fg",
+    "bg-color",
+    "border",
+    "border-radius",
+    "width",
+    "overflow",
+    "user-select"
+  )
+);
+
+// Responsive variants (`md:d-none`) only for layout groups; each responsive group costs six
+// copies of itself.
+$responsive: ("display", "flex-direction", "flex-wrap", "gap", "justify-content", "align-items");
+@each $key, $utility in $subset {
+  @if not list.index($responsive, $key) {
+    $subset: map.set($subset, $key, map.merge($utility, (responsive: false)));
+  }
+}
+
+@include generate-utility-at-properties($subset);
+
+@layer utilities {
+  @include generate-utilities-loop($subset, $breakpoints);
+}

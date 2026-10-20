@@ -13,6 +13,14 @@ const STATUS_TEXT: Record<ToolInfo["status"], string> = {
   failed: "Failed",
 };
 
+const STATUS_THEME: Record<ToolInfo["status"], string> = {
+  stopped: "theme-secondary",
+  starting: "theme-warning",
+  running: "theme-success",
+  down: "theme-danger",
+  failed: "theme-danger",
+};
+
 export function renderContext(app: App, toolId: string): RenderContext {
   return {
     toolId,
@@ -42,8 +50,8 @@ function pageContext(app: App, toolId: string): PageContext {
 
 export function mountToolPage(app: App, toolId: string, root: HTMLElement): () => void {
   const title = h("h2");
-  const statusEl = h("span", { class: "tool-status" });
-  const restart = h("button", { class: "btn small", text: "Restart" });
+  const statusEl = h("span", { class: "tool-status badge badge-subtle" });
+  const restart = h("button", { class: "btn-outline theme-secondary btn-sm", text: "Restart" });
   restart.type = "button";
   const restartErr = h("span", { class: "muted" });
   restart.addEventListener("click", () => {
@@ -105,6 +113,7 @@ export function mountToolPage(app: App, toolId: string, root: HTMLElement): () =
     title.textContent = info.title;
     statusEl.textContent = STATUS_TEXT[info.status];
     statusEl.dataset.status = info.status;
+    statusEl.className = `tool-status badge badge-subtle ${STATUS_THEME[info.status]}`;
     restart.hidden = !info.enabled;
     let msg = "";
     if (!info.enabled) msg = "This tool is disabled. Enable it on the Settings page.";

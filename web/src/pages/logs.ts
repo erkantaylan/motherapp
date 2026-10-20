@@ -20,7 +20,7 @@ export class LogsPage extends HTMLElement {
   private entries: LogEntry[] = [];
   private filter: LogFilter = { ...defaultFilter };
   private rows = h("div", { class: "log-rows" });
-  private toolSelect = h("select");
+  private toolSelect = h("select", { class: "form-control form-control-sm" });
   private count = h("span", { class: "muted" });
   private follow = true;
   private cleanups: (() => void)[] = [];
@@ -30,11 +30,11 @@ export class LogsPage extends HTMLElement {
     if (!app) return;
     this.toolSelect.setAttribute("aria-label", "Tool");
     this.toolSelect.addEventListener("change", () => this.setFilter({ tool: this.toolSelect.value }));
-    const levelSelect = h("select");
+    const levelSelect = h("select", { class: "form-control form-control-sm" });
     levelSelect.setAttribute("aria-label", "Minimum level");
     for (const l of LOG_LEVELS) levelSelect.append(new Option(l === "debug" ? "all levels" : `${l}+`, l));
     levelSelect.addEventListener("change", () => this.setFilter({ level: levelSelect.value as LogLevel }));
-    const search = h("input");
+    const search = h("input", { class: "form-control form-control-sm" });
     search.type = "search";
     search.placeholder = "Search";
     search.setAttribute("aria-label", "Search logs");
@@ -43,7 +43,7 @@ export class LogsPage extends HTMLElement {
       clearTimeout(t);
       t = setTimeout(() => this.setFilter({ text: search.value }), 150);
     });
-    const clear = h("button", { class: "btn small", text: "Clear view" });
+    const clear = h("button", { class: "btn-outline theme-secondary btn-sm", text: "Clear view" });
     clear.type = "button";
     clear.addEventListener("click", () => {
       this.entries = [];
