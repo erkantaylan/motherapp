@@ -1,5 +1,6 @@
 // One tool's serve process: spawn, handshake (describe + state.get), state cache, action
-// forwarding, stream ref-counting, stderr capture and crash restarts (DESIGN.md § 4.6–4.9).
+// forwarding, stream ref-counting, viewer counting (`watch` edges), stderr capture and crash
+// restarts (DESIGN.md § 4.6–4.9).
 import { spawn as nodeSpawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import * as path from "node:path";
@@ -67,7 +68,11 @@ export interface ToolHostOptions {
   actionTimeoutMs?: number;
   /** Grace period between SIGTERM and SIGKILL when stopping. Default 3 s. */
   killGraceMs?: number;
+  /** How long the last viewer must be gone before the tool hears `watch {watching: false}`. Default 5 s. */
+  unwatchDelayMs?: number;
 }
+
+export const UNWATCH_DELAY_MS = 5000;
 
 const defaultSpawn: SpawnFn = (cmd, args, opts) =>
   nodeSpawn(cmd, args, { cwd: opts.cwd, env: opts.env, stdio: ["pipe", "pipe", "pipe"] });
@@ -105,6 +110,11 @@ export class ToolHost {
   private exitWaiters: (() => void)[] = [];
   private streamRefs = new Map<string, number>();
   private progress = new Map<RpcId, (p: ProgressParams) => void>();
+  /** Visible browser tabs showing this tool's page. */
+  private viewers = 0;
+  /** What the current process was last told (it starts unwatched). */
+  private watchSent = false;
+  private unwatchTimer: unknown;
 
   constructor(opts: ToolHostOptions) {
     this.opts = opts;
@@ -158,6 +168,7 @@ export class ToolHost {
   /** Stops the tool (disable or shutdown). Resolves once the process has exited. */
   stop(): Promise<void> {
     this.cancelRestartTimer();
+    this.cancelUnwatchTimer();
     if (!this.child) {
       if (this.status !== "stopped") this.setStatus("stopped");
       return Promise.resolve();
@@ -253,6 +264,8 @@ export class ToolHost {
       this.log("info", "started", { pid: this.child?.pid ?? null });
       this.opts.events.snapshot(this);
       for (const [name, n] of this.streamRefs) if (n > 0) this.sendStream("stream.open", name);
+      this.watchSent = false;
+      if (this.viewers > 0) this.sendWatch(true);
     } catch (e) {
       if (gen !== this.generation || !this.child) return;
       this.log("error", `handshake failed: ${(e as Error).message}`);
@@ -267,6 +280,7 @@ export class ToolHost {
     this.peer?.close({ code: ErrorCode.ToolUnavailable, message: "tool exited" });
     this.peer = undefined;
     this.progress.clear();
+    this.watchSent = false; // the next process starts unwatched
     const how = error ? `failed to start: ${error.message}` : signal ? `killed by ${signal}` : `exited with code ${code}`;
     const intent = this.intent;
     this.intent = null;
@@ -362,6 +376,50 @@ export class ToolHost {
     }
     this.streamRefs.delete(name);
     if (n === 0 && this.running) this.sendStream("stream.close", name);
+  }
+
+  /** Number of viewers right now (visible tabs on this tool's page). */
+  get viewerCount(): number {
+    return this.viewers;
+  }
+
+  /** True when the tool was told it is watched (the 1→0 edge waits for the debounce). */
+  get watched(): boolean {
+    return this.watchSent;
+  }
+
+  /** A visible tab opened this tool's page. 0→1 tells the tool at once. */
+  addViewer(): void {
+    this.viewers++;
+    this.cancelUnwatchTimer();
+    if (this.viewers === 1) this.sendWatch(true);
+  }
+
+  /**
+   * A tab left the page, was hidden or closed. 1→0 tells the tool only after the debounce, so a
+   * quick tab switch doesn't stop and restart its polling.
+   */
+  removeViewer(): void {
+    if (this.viewers === 0) return;
+    this.viewers--;
+    if (this.viewers > 0 || !this.watchSent) return;
+    this.cancelUnwatchTimer();
+    this.unwatchTimer = this.clock.setTimeout(() => {
+      this.unwatchTimer = undefined;
+      if (this.viewers === 0) this.sendWatch(false);
+    }, this.opts.unwatchDelayMs ?? UNWATCH_DELAY_MS);
+  }
+
+  private cancelUnwatchTimer(): void {
+    if (this.unwatchTimer !== undefined) this.clock.clearTimeout(this.unwatchTimer);
+    this.unwatchTimer = undefined;
+  }
+
+  private sendWatch(watching: boolean): void {
+    if (watching === this.watchSent || !this.running || !this.peer) return;
+    this.watchSent = watching;
+    this.peer.notify("watch", { watching });
+    this.log("debug", watching ? "watched" : "unwatched");
   }
 
   private sendStream(method: "stream.open" | "stream.close", name: string): void {

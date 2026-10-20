@@ -113,3 +113,20 @@ export interface ToolNotifications {
   stream: StreamParams;
   log: LogParams;
 }
+
+// ---- notifications (core -> tool) ----
+
+/**
+ * Whether anyone is looking at the tool's page: a browser tab that has it open and visible.
+ * Sent on edges only: `true` when the first viewer arrives (and after a (re)start while
+ * someone is watching), `false` a few seconds after the last one left. A tool starts
+ * unwatched. Tools that poll should poll only while watched (docs/extension-contract.md § 3).
+ * A tool may ignore it.
+ */
+export interface WatchParams {
+  watching: boolean;
+}
+
+export interface CoreNotifications {
+  watch: WatchParams;
+}

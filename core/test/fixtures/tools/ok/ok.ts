@@ -28,4 +28,6 @@ tool
     const t = setInterval(() => emit(1), 20);
     return () => clearInterval(t);
   });
+// The SDK's view of the core's `watch` edges, for core/test/watch.test.ts.
+tool.onWatch((w) => tool.set("watching", w));
 await tool.serve();

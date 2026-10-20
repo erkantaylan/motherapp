@@ -89,6 +89,12 @@ export interface UiRequests {
   action: { params: { tool: string; name: string; args?: JsonObject }; result: JsonValue };
   "stream.open": { params: { tool: string; name: string }; result: null };
   "stream.close": { params: { tool: string; name: string }; result: null };
+  /**
+   * The tool whose page this tab shows while the tab is visible, or null (another page, a
+   * hidden tab). Replaces the tab's previous value; closing the socket counts as null. The
+   * core turns the viewer count into `watch` edges for the tool.
+   */
+  "tool.watch": { params: { tool: string | null }; result: null };
   /** Returns the backlog (oldest first) and starts live `log` notifications to this client. */
   "logs.subscribe": { params: { limit?: number }; result: { entries: LogEntry[] } };
   "logs.unsubscribe": { params: Record<string, never>; result: null };

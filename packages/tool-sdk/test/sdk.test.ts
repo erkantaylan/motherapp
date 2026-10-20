@@ -137,3 +137,38 @@ test("persistence: a corrupt file is ignored with a warning", async () => {
   await h.done;
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("watch: tool.watching and onWatch follow the core's edges; repeats, bad params and unknown notifications are ignored", async () => {
+  const h = harness({ id: "w", title: "W", persist: false });
+  const seen: boolean[] = [];
+  const off = h.tool.onWatch((w) => seen.push(w));
+  h.tool.onWatch(() => {
+    throw new Error("a broken listener doesn't stop the others");
+  });
+  const note = (method: string, params?: unknown) => h.input.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+  // Lines are handled in order, so the notifications before this request were handled by its reply.
+  const flush = () => h.call("state.get");
+  assert.equal(h.tool.watching, false, "a tool starts unwatched");
+  note("watch", { watching: true });
+  await flush();
+  assert.equal(h.tool.watching, true);
+  assert.deepEqual(seen, [true]);
+  note("watch", { watching: true }); // not an edge
+  note("watch", { watching: "yes" });
+  note("watch");
+  note("something.new", { x: 1 });
+  await flush();
+  assert.deepEqual(seen, [true]);
+  note("watch", { watching: false });
+  await flush();
+  assert.equal(h.tool.watching, false);
+  assert.deepEqual(seen, [true, false]);
+  assert.ok(h.notes("log").some((l) => /watch listener failed: a broken listener/.test(String((l as { msg: string }).msg))));
+  off();
+  note("watch", { watching: true });
+  await flush();
+  assert.equal(h.tool.watching, true);
+  assert.deepEqual(seen, [true, false], "unsubscribed");
+  h.input.end();
+  await h.done;
+});

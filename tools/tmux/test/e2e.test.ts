@@ -101,6 +101,11 @@ test("core + tmux tool with a fake tmux: live list, rename in place, kill", asyn
   const info = c.notes("tools").at(-1).tools.find((x: any) => x.id === "tmux");
   assert.equal(info.page, "declarative");
   assert.equal(info.title, "tmux");
+  // Nobody has the page open yet: no tmux call at all, over more than one 2 s poll interval.
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.deepEqual(calls(), [], "no polling while unwatched");
+  // The tab shows the tmux page: an immediate list, then every 2 s.
+  assert.equal((await c.call("tool.watch", { tool: "tmux" })).error, undefined);
   // the first poll lands in the snapshot or as a delta
   const hasRow = (key: string, name: string) =>
     c.notes("snapshot").some((s) => s.tool === "tmux" && s.state.sessions?.[key]?.name === name) ||

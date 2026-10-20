@@ -8,9 +8,20 @@ import { LogsPage } from "./pages/logs.ts";
 import { mountSettings } from "./pages/settings.ts";
 import { mountToolPage } from "./pages/toolPage.ts";
 import { h } from "./renderer.ts";
+import { WatchTracker } from "./watch.ts";
 
 const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
 const app = new App(wsUrl);
+
+// Tells the core which tool's page this tab shows while it is visible, so tools poll only
+// while someone looks (docs/extension-contract.md § 3, "poll only while watched").
+const watch = new WatchTracker((tool) => {
+  if (app.conn.connected) app.conn.request("tool.watch", { tool }).catch(() => {});
+}, document.visibilityState);
+document.addEventListener("visibilitychange", () => watch.setVisibility(document.visibilityState));
+window.addEventListener("pagehide", () => watch.hide());
+window.addEventListener("pageshow", () => watch.setVisibility(document.visibilityState));
+app.conn.onOpen(() => watch.connected());
 
 // ---- layout ----
 const toolNav = h("nav", { class: "nav nav-tools" });
@@ -102,6 +113,7 @@ function route(): void {
   }
   if (hash === current) return;
   current = hash;
+  watch.setRoute(hash.startsWith("#/tool/") ? decodeURIComponent(hash.slice("#/tool/".length)) : null);
   unmount();
   content.replaceChildren();
   if (hash === "#/logs") {
