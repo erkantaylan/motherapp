@@ -11,7 +11,7 @@ import { FakeTimers, FakeTmux, session, tick, waitFor } from "./fakes.ts";
 
 type Msg = { id?: number; method?: string; params?: any; error?: { code: number; message: string } };
 
-function setup() {
+function setup(opts: { watched?: boolean } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   const tool = createTool({ id: "tmux", title: "tmux", layout, initialState: INITIAL_STATE, persist: false, captureConsole: false, input, output });
@@ -47,12 +47,15 @@ function setup() {
     await settle();
   };
   const done = tool.serve();
+  /** The core's `watch` notification (a visible tab opened or left the page). */
+  const watch = (watching: boolean) => input.write(JSON.stringify({ jsonrpc: "2.0", method: "watch", params: { watching } }) + "\n");
+  if (opts.watched !== false) watch(true);
   const end = async () => {
     service.stop();
     input.end();
     await done;
   };
-  return { tool, fake, timers, service, action, changes, settle, nextPoll, end };
+  return { tool, fake, timers, service, action, changes, settle, nextPoll, watch, end };
 }
 
 test("first poll publishes the whole map fresh, then only deltas; rename keeps the row", async () => {
@@ -174,4 +177,52 @@ test("layout: Copy and Kill on each row; kill confirm says whether it is attache
   assert.equal(kill.action, "kill");
   assert.deepEqual(kill.args, { id: "{key}" });
   assert.equal(kill.confirm, "Kill tmux session '{name}'?{attachedNote}");
+});
+
+test("unwatched: no tmux calls at all over 60 s; watching lists at once, then every 2 s", async () => {
+  const t = setup({ watched: false });
+  t.fake.server = { sessions: [session(0, "work")] };
+  t.service.start();
+  await t.settle();
+  for (let i = 0; i < 30; i++) await t.nextPoll(); // 60 fake seconds
+  assert.deepEqual(t.fake.lines(), [], "nothing runs while nobody looks");
+  assert.equal(t.timers.pending(), 0, "no timer either");
+  assert.equal(t.tool.isStale("sessions"), true, "the (empty) list is stale until someone looks");
+
+  t.watch(true);
+  await t.settle();
+  assert.equal(t.fake.lines().length, 1, "an immediate list when the page opens");
+  assert.equal(t.tool.isStale("sessions"), false);
+  assert.deepEqual(Object.keys(t.tool.get("sessions") as object), ["0"]);
+  for (let i = 0; i < 5; i++) await t.nextPoll();
+  assert.equal(t.fake.lines().length, 6, "every 2 s while watched");
+
+  t.watch(false);
+  await t.settle();
+  assert.equal(t.tool.isStale("sessions"), true, "kept, but stale while nobody refreshes it");
+  assert.deepEqual(Object.keys(t.tool.get("sessions") as object), ["0"]);
+  for (let i = 0; i < 30; i++) await t.nextPoll();
+  assert.equal(t.fake.lines().length, 6, "stops when the last viewer leaves");
+
+  // actions still read fresh while unwatched
+  const r = await t.action("kill", { id: "0" });
+  assert.equal(r.error, undefined);
+  await t.settle();
+  assert.equal(t.fake.lines()[6], "kill-session -t $0");
+  assert.match(t.fake.lines()[7]!, /^list-sessions /, "the row goes away now: a fresh list");
+  assert.deepEqual(t.tool.get("sessions"), {});
+  for (let i = 0; i < 30; i++) await t.nextPoll();
+  assert.equal(t.fake.lines().length, 8, "and no polling starts from it");
+
+  // watch again: one immediate list, one loop (a quick false/true never runs two loops)
+  t.watch(true);
+  t.watch(false);
+  t.watch(true);
+  await t.settle();
+  await t.nextPoll();
+  await t.nextPoll();
+  const lists = t.fake.lines().slice(8).filter((l) => l.startsWith("list-sessions")).length;
+  assert.ok(lists >= 3 && lists <= 4, `one loop, got ${lists} lists`);
+  assert.equal(t.timers.pending(), 1, "exactly one timer");
+  await t.end();
 });

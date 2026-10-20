@@ -1,7 +1,9 @@
-// Serve mode. Every 3 s one `dconf dump` of the media-keys dir tells whether anything
-// changed (GNOME Settings, shortcutsctl, another tab); only then are the shortcuts re-read.
-// GNOME's built-in bindings are re-read every minute. Without dconf, everything is re-read
-// every 12 s. Rows are keyed by the dconf path's last segment.
+// Serve mode. Only while the page is watched (a visible tab shows it): every 3 s one
+// `dconf dump` of the media-keys dir tells whether anything changed (GNOME Settings,
+// shortcutsctl, another tab); only then are the shortcuts re-read. GNOME's built-in bindings
+// are re-read every minute. Without dconf, everything is re-read every 12 s. Unwatched, nothing
+// runs and the list is marked stale; opening the page re-reads it at once. Actions read fresh.
+// Rows are keyed by the dconf path's last segment.
 import { RpcError } from "@motherapp/tool-sdk";
 import type { JsonObject, JsonValue, Tool } from "@motherapp/tool-sdk";
 import { accelLabel } from "./accel.ts";
@@ -88,6 +90,9 @@ export class ShortcutsService {
   private timers: Timers;
   private timer: unknown;
   private running = false;
+  /** Bumped on every watch edge, so a loop from an earlier watch period stops. */
+  private loop = 0;
+  private offWatch: (() => void) | undefined;
   private inflight: Promise<void> | undefined;
   private lastSnapshot: string | null | undefined;
   private lastFull = -Infinity;
@@ -109,13 +114,35 @@ export class ShortcutsService {
     this.running = true;
     if (!this.tool.isStale("shortcuts")) this.tool.markStale("shortcuts");
     this.loadSuggestions();
-    void this.tick();
+    this.offWatch = this.tool.onWatch((w) => this.onWatch(w));
+    if (this.tool.watching) this.onWatch(true);
   }
 
   stop(): void {
     this.running = false;
+    this.offWatch?.();
+    this.offWatch = undefined;
+    this.loop++;
+    this.clearTimer();
+  }
+
+  private clearTimer(): void {
     if (this.timer !== undefined) this.timers.clearTimeout(this.timer);
     this.timer = undefined;
+  }
+
+  /** Watched: read now (stale, so a full list), then every 3 s. Unwatched: stop and mark stale. */
+  private onWatch(watching: boolean): void {
+    if (!this.running) return;
+    const gen = ++this.loop;
+    this.clearTimer();
+    if (watching) {
+      void this.tick(gen);
+      return;
+    }
+    void (this.inflight ?? Promise.resolve()).then(() => {
+      if (gen === this.loop && !this.tool.isStale("shortcuts")) this.tool.markStale("shortcuts");
+    });
   }
 
   private loadSuggestions(): void {
@@ -134,9 +161,9 @@ export class ShortcutsService {
     this.setIfChanged("binTools", this.tools.binTools);
   }
 
-  private async tick(): Promise<void> {
+  private async tick(gen: number): Promise<void> {
     await this.poll();
-    if (this.running) this.timer = this.timers.setTimeout(() => void this.tick(), POLL_MS);
+    if (this.running && gen === this.loop) this.timer = this.timers.setTimeout(() => void this.tick(gen), POLL_MS);
   }
 
   /** One poll: a full read when something changed, a minute passed, or `force`. */

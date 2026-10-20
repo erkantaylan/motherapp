@@ -1,4 +1,7 @@
 // Serve mode: lists Claude panes, owns the links, the inbox listener, the tunnel and the queue.
+// The pane list (`tmux list-panes`) is refreshed only while the page is watched (a visible tab
+// shows it), at once when it opens and every 3 s after; unwatched it is marked stale. Delivery,
+// `create` and the other actions always list the panes themselves.
 //
 // State published to the core (and so to every page): panes, links (id, label, pane, expiry,
 // uses, the waiting messages, last 4 characters of the token), the delivery log, tunnel and
@@ -67,7 +70,7 @@ export interface ServiceOptions {
   timers?: Timers;
   sleep?: (ms: number) => Promise<void>;
   home?: string | undefined;
-  /** Pane list refresh. Default 3 s. */
+  /** Pane list refresh while the page is watched. Default 3 s. */
   pollMs?: number;
   /** Queue retry. Default 1 s. */
   pumpMs?: number;
@@ -113,6 +116,11 @@ export class InboxService {
   private running = false;
   private pumping = false;
   private lastPaneProblem = "";
+  /** Bumped on every watch edge, so a pane loop from an earlier watch period stops. */
+  private paneLoop = 0;
+  private paneTimer: unknown;
+  private panesInflight: Promise<void> | undefined;
+  private offWatch: (() => void) | undefined;
 
   constructor(opts: ServiceOptions) {
     this.opts = opts;
@@ -163,14 +171,19 @@ export class InboxService {
       this.tool.log.warn(`${active.length} inbox link(s) active`, { ids: active.map((l) => l.id).join(",") });
       if (this.server) this.tunnel.start();
     }
-    void this.pollPanes();
-    this.every(this.opts.pollMs ?? 3000, () => this.pollPanes());
+    if (!this.tool.isStale("panes")) this.tool.markStale("panes"); // until someone looks
+    this.offWatch = this.tool.onWatch((w) => this.onWatch(w));
+    if (this.tool.watching) this.onWatch(true);
     this.every(this.opts.pumpMs ?? 1000, () => this.pump());
     this.every(this.opts.sweepMs ?? 15_000, async () => this.sweep());
   }
 
   async stop(): Promise<void> {
     this.running = false;
+    this.offWatch?.();
+    this.offWatch = undefined;
+    this.paneLoop++;
+    this.clearPaneTimer();
     for (const t of this.timersOn) this.timers.clearTimeout(t);
     this.timersOn = [];
     this.tunnel.stop();
@@ -194,11 +207,40 @@ export class InboxService {
 
   // ---- panes ----
 
+  private clearPaneTimer(): void {
+    if (this.paneTimer !== undefined) this.timers.clearTimeout(this.paneTimer);
+    this.paneTimer = undefined;
+  }
+
+  /** Watched: list the panes now, then every 3 s. Unwatched: stop, the list is stale. */
+  private onWatch(watching: boolean): void {
+    if (!this.running) return;
+    const gen = ++this.paneLoop;
+    this.clearPaneTimer();
+    if (!watching) {
+      void (this.panesInflight ?? Promise.resolve()).then(() => {
+        if (gen === this.paneLoop && !this.tool.isStale("panes")) this.tool.markStale("panes");
+      });
+      return;
+    }
+    const loop = async () => {
+      await this.pollPanes().catch((e: Error) => this.tool.log.warn(e.message));
+      if (this.running && gen === this.paneLoop) this.paneTimer = this.timers.setTimeout(() => void loop(), this.opts.pollMs ?? 3000);
+    };
+    void loop();
+  }
+
   private isClaude(p: Pane): boolean {
     return isClaudeCommand(p.command, this.settings.paneCommands);
   }
 
-  async pollPanes(): Promise<void> {
+  /** Lists the panes now and publishes them. A call while one runs shares it. */
+  pollPanes(): Promise<void> {
+    this.panesInflight ??= this.listPanes().finally(() => (this.panesInflight = undefined));
+    return this.panesInflight;
+  }
+
+  private async listPanes(): Promise<void> {
     let list: PaneList;
     try {
       list = await this.panes.list();
@@ -226,7 +268,7 @@ export class InboxService {
     }
     this.setIfChanged("panesStatus", list.kind === "none" ? list.reason : Object.keys(rows).length === 0 ? "No tmux pane is running Claude." : "");
     const cur = this.tool.get("panes") as Record<string, JsonValue> | undefined;
-    if (JSON.stringify(cur ?? {}) !== JSON.stringify(rows)) this.tool.set("panes", rows as JsonObject);
+    if (this.tool.isStale("panes") || JSON.stringify(cur ?? {}) !== JSON.stringify(rows)) this.tool.set("panes", rows as JsonObject);
   }
 
   private setIfChanged(path: string, value: string): void {
@@ -563,6 +605,12 @@ export class InboxService {
     t.action("refresh", async () => {
       await this.pollPanes();
       return null;
+    });
+
+    // `inboxctl panes` through the core: a fresh list, whether the page is open or not.
+    t.action("panes", async () => {
+      await this.pollPanes();
+      return Object.values((t.get("panes") as JsonObject | undefined) ?? {});
     });
   }
 }

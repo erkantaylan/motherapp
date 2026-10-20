@@ -199,6 +199,8 @@ class Client {
   private log: LogService;
   private peer: RpcPeer;
   private streams = new Set<string>();
+  /** The tool whose page this tab shows while visible (`tool.watch`). */
+  private watching: string | undefined;
   private unsubscribeLogs: (() => void) | undefined;
   private version: VersionSource | undefined;
 
@@ -263,6 +265,13 @@ class Client {
         if (this.streams.delete(key)) this.manager.hosts.get(tool)?.closeStream(name);
         return null;
       }
+      case "tool.watch": {
+        const tool = p.tool;
+        if (tool !== null && typeof tool !== "string") throw new RpcError(ErrorCode.InvalidParams, `${method}: "tool" must be a string or null`);
+        if (tool !== null) this.manager.host(tool); // unknown tool -> error, nothing changes
+        this.setWatching(tool ?? undefined);
+        return null;
+      }
       case "logs.subscribe": {
         this.unsubscribeLogs?.();
         const limit = typeof p.limit === "number" ? p.limit : undefined;
@@ -297,7 +306,16 @@ class Client {
     }
   }
 
+  private setWatching(tool: string | undefined): void {
+    if (tool === this.watching) return;
+    const before = this.watching;
+    this.watching = tool;
+    if (tool !== undefined) this.manager.hosts.get(tool)?.addViewer();
+    if (before !== undefined) this.manager.hosts.get(before)?.removeViewer();
+  }
+
   dispose(): void {
+    this.setWatching(undefined);
     this.unsubscribeLogs?.();
     this.unsubscribeLogs = undefined;
     for (const key of this.streams) {

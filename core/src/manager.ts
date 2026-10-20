@@ -21,6 +21,8 @@ export interface ManagerOptions {
   spawn?: SpawnFn;
   policy?: RestartPolicyOptions;
   actionTimeoutMs?: number;
+  /** Debounce of the last viewer leaving a tool's page (ToolHost `unwatchDelayMs`). */
+  unwatchDelayMs?: number;
 }
 
 export interface ManagerEvents {
@@ -69,6 +71,7 @@ export class Manager extends EventEmitter<ManagerEvents> {
       ...(this.opts.spawn ? { spawn: this.opts.spawn } : {}),
       ...(this.opts.policy ? { policy: this.opts.policy } : {}),
       ...(this.opts.actionTimeoutMs ? { actionTimeoutMs: this.opts.actionTimeoutMs } : {}),
+      ...(this.opts.unwatchDelayMs !== undefined ? { unwatchDelayMs: this.opts.unwatchDelayMs } : {}),
       events: {
         status: () => this.emit("tools"),
         snapshot: (h) => this.emit("snapshot", h),

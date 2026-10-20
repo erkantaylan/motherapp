@@ -41,6 +41,12 @@ test("list: sorted by name, windows, attached, relative times", async () => {
   );
 });
 
+test("list reads tmux itself every time (the serve process polls only while its page is watched)", async () => {
+  const r = await cli(two(), "list");
+  assert.equal(r.lines.length, 1);
+  assert.match(r.lines[0]!, /^list-sessions -F /);
+});
+
 test("list --json: raw fields plus the attach command", async () => {
   const r = await cli(two(), "list", "--json");
   assert.equal(r.code, 0);

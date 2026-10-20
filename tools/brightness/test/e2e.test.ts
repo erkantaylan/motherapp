@@ -144,6 +144,14 @@ test("core + brightness tool: fallback to a fake ddcutil, brightctl through the 
   const list = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", brightctl, "list"], { env: cliEnv, encoding: "utf8", timeout: 20_000 });
   assert.equal(list.status, 0, list.stderr);
   assert.equal(list.stdout, "Acer X34 P   DP-2   80%\nMSI G274QPF  DP-1   80%\n");
+  // Nobody watches the page here, so nothing re-reads in the background; `list` reads itself:
+  // a change made on the monitor's own buttons shows up at once.
+  ddc.patch(3, { value: 33 });
+  const fresh = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", brightctl, "list"], { env: cliEnv, encoding: "utf8", timeout: 20_000 });
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.equal(fresh.stdout, "Acer X34 P   DP-2   33%\nMSI G274QPF  DP-1   80%\n");
+  const one = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", brightctl, "get", "DP-2"], { env: cliEnv, encoding: "utf8", timeout: 20_000 });
+  assert.equal(one.stdout, "33\n", one.stderr);
 
   // A monitor that is switched off: the action fails with a message for the dot.
   ddc.patch(3, { off: true });

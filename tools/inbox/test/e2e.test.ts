@@ -139,6 +139,8 @@ test("core + inbox tool: link over the WebSocket and inboxctl, delivery, revoke,
   await waitFor(() => c.state().listener?.port > 0, "inbox listener", 10_000);
   const inboxPort = c.state().listener.port as number;
   assert.notEqual(inboxPort, corePortNum);
+  // The page is open and visible: the pane list refreshes (it doesn't while nobody looks).
+  assert.equal((await c.call("tool.watch", { tool: "inbox" })).error, undefined);
   await waitFor(() => c.state().panes?.["0"]?.target === "motherapp:0.0", "pane list", 10_000);
   assert.equal(c.state().panes["1"], undefined, "the bash pane isn't listed");
 

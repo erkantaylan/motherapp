@@ -51,13 +51,15 @@ function setup(backend: FakeBackend, opts: Partial<ServiceOptions> & { stateDir?
     return received.find((m) => m.id === id)!;
   };
   const action = (name: string, args: JsonObject = {}) => call("action", { name, args });
+  /** The core's `watch` notification (a visible tab opened or left the page). */
+  const watch = (watching: boolean) => input.write(JSON.stringify({ jsonrpc: "2.0", method: "watch", params: { watching } }) + "\n");
   const serving = tool.serve();
   const done = async () => {
     await service.stop();
     input.end();
     await serving;
   };
-  return { tool, service, received, call, action, done };
+  return { tool, service, received, call, action, watch, done };
 }
 
 const two = () => new FakeBackend({ info: MSI, value: 48 }, { info: ACER, value: 52 });
@@ -352,5 +354,47 @@ test("invalid action arguments are rejected as invalid params", async () => {
   assert.equal((await s.action("setBrightness", { id: MSI_KEY, value: "x" })).error?.code, -32602);
   assert.equal((await s.action("setBrightness", { value: 3 })).error?.code, -32602);
   assert.match((await s.action("setBrightness", { id: "nope", value: 3 })).error!.message, /gone/);
+  await s.done();
+});
+
+test("background re-reads only while the page is watched; once at once when it opens; writes still confirm", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const b = two();
+  const s = setup(b, { pollMs: 2000 });
+  await s.service.start();
+  await waitFor(() => s.tool.get(`monitors.${MSI_KEY}.brightness`) === 48 && s.tool.get(`monitors.${ACER_KEY}.brightness`) === 52, "first reads");
+  const reads = () => b.calls.filter((c) => c.startsWith("read")).length;
+  const atStart = reads();
+  for (let i = 0; i < 30; i++) t.mock.timers.tick(2000); // 60 s
+  await sleep(30);
+  assert.equal(reads(), atStart, "no getvcp while nobody looks");
+
+  // The monitor's own buttons changed it; opening the page reads both now.
+  b.mon(1).value = 30;
+  s.watch(true);
+  await waitFor(() => reads() === atStart + 2, "a read of each monitor when the page opens");
+  await waitFor(() => s.tool.get(`monitors.${MSI_KEY}.brightness`) === 30, "fresh value");
+  await sleep(20); // the reads' queues settle
+  t.mock.timers.tick(2000);
+  await waitFor(() => reads() === atStart + 4, "the normal cadence while watched");
+  await sleep(20);
+  t.mock.timers.tick(2000);
+  await waitFor(() => reads() === atStart + 6, "and again");
+
+  s.watch(false);
+  await sleep(20);
+  const off = reads();
+  for (let i = 0; i < 30; i++) t.mock.timers.tick(2000);
+  await sleep(30);
+  assert.equal(reads(), off, "stops when the last viewer leaves");
+
+  // Unwatched, a write still gets its confirming read, and `read` (brightctl get) reads now.
+  assert.equal((await s.action("setBrightness", { id: MSI_KEY, value: 60 })).error, undefined);
+  await waitFor(() => reads() === off + 1, "confirming read after the write");
+  b.mon(3).value = 11;
+  const r = await s.action("read", { target: "DP-2" });
+  assert.equal(r.result[0].brightness, 11);
+  const l = await s.action("list");
+  assert.deepEqual(l.result.map((x: { brightness: number }) => x.brightness).sort(), [11, 60]);
   await s.done();
 });

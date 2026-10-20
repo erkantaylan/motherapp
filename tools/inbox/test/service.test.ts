@@ -368,3 +368,38 @@ test("no token in any line the tool emitted, across every kind of request", asyn
   assert.equal(h.out.filter((l) => l.includes(r.token)).length, 1, "only the create reply carries it");
 });
 
+
+test("the pane list: no tmux list-panes over 60 s while nobody looks; at once and every 3 s while watched; delivery unaffected", async (t) => {
+  const h = await harness();
+  t.after(() => h.close());
+  const lists = () => h.runner.tmux.calls.filter((c) => c.includes("list-panes")).length;
+  const advance = async (ms: number) => {
+    h.timers.advance(ms);
+    for (let i = 0; i < 10; i++) await tick();
+  };
+  for (let i = 0; i < 60; i++) await advance(1000);
+  assert.equal(lists(), 0, "nothing runs while the page is closed");
+  assert.equal(h.tool.isStale("panes"), true);
+
+  h.watch(true);
+  await waitFor(() => lists() === 1, "a list when the page opens");
+  await waitFor(() => !h.tool.isStale("panes"), "fresh");
+  assert.deepEqual(Object.keys(h.tool.get("panes") as object), ["1"]);
+  await advance(3000);
+  await advance(3000);
+  assert.equal(lists(), 3, "every 3 s while watched");
+
+  h.watch(false);
+  await waitFor(() => h.tool.isStale("panes"), "stale once nobody looks");
+  for (let i = 0; i < 60; i++) await advance(1000);
+  assert.equal(lists(), 3, "stops when the last viewer leaves");
+
+  // Links, delivery and `inboxctl panes` (the `panes` action) still list the panes themselves.
+  const r = await create(h);
+  const res = await post(h, r.token, { text: "hello" });
+  assert.equal(res.status, 200, res.body);
+  assert.deepEqual(h.runner.tmux.panes[0]!.submitted, ["[inbox: cloud] hello"]);
+  const p = await h.call("panes");
+  assert.deepEqual(p.result.map((x: { id: string }) => x.id), ["%1"]);
+  assert.ok(lists() > 3);
+});
