@@ -9,6 +9,7 @@
 // 3. the same program: argv[0] (or sh -c's first word), shown by its file name. Launchers
 //    such as env or flatpak don't count, since they say nothing about what runs.
 // Everything else is a single row. Groups and rows are sorted by name.
+// Rule 1 runs across motherapp's own and the others' (layoutShortcuts, #27); 2 and 3 per card.
 // Browser-safe (page.ts uses it): imports only accel.ts and command.ts.
 import { accelParts } from "./accel.ts";
 import { commandProgram } from "./command.ts";
@@ -213,6 +214,65 @@ export function groupShortcuts<T extends Groupable>(items: readonly T[], binTool
   for (const it of left) entries.push({ kind: "single", item: it, label: it.name });
   const nameOf = (e: Entry<T>) => (e.kind === "group" ? e.name : e.label);
   return entries.sort((a, b) => byName(nameOf(a), nameOf(b)));
+}
+
+export interface Layout<T> {
+  /** Name-prefix groups with members from both sides (#27): motherapp's own and the others'. */
+  shared: Group<T>[];
+  /** Everything else of motherapp's own (the "motherapp shortcuts" card). */
+  own: Entry<T>[];
+  /** Everything else (the read-only "Other custom shortcuts" card). */
+  other: Entry<T>[];
+}
+
+/**
+ * The page's and `shortcutsctl list`'s grouping of all shortcuts. Rule 1 (the "Group: " name
+ * prefix) spans both cards: a motherapp shortcut named "Dead Cells map: x" joins the user's
+ * own "Dead Cells map: …" ones in one shared group, even though it's the only motherapp one
+ * (#27). A prefix used on one side only, and rules 2 and 3 (the tool is motherapp-only by
+ * definition), still group within each card, as `groupShortcuts` does.
+ */
+export function layoutShortcuts<T extends Groupable>(items: readonly T[], binTools: Readonly<Record<string, string>> = {}): Layout<T> {
+  const sides = new Map<string, { owned: boolean; other: boolean; n: number }>();
+  for (const it of items) {
+    const p = splitPrefix(it.name);
+    if (!p) continue;
+    const k = p.group.toLowerCase();
+    const s = sides.get(k) ?? { owned: false, other: false, n: 0 };
+    if (it.owned) s.owned = true;
+    else s.other = true;
+    s.n++;
+    sides.set(k, s);
+  }
+  const isShared = (it: T) => {
+    const p = splitPrefix(it.name);
+    const s = p ? sides.get(p.group.toLowerCase()) : undefined;
+    return !!s && s.owned && s.other && s.n >= MIN_GROUP;
+  };
+  const shared = groupShortcuts(items.filter(isShared)).filter((e): e is Group<T> => e.kind === "group");
+  const rest = items.filter((it) => !isShared(it));
+  return {
+    shared,
+    own: groupShortcuts(rest.filter((r) => r.owned), binTools),
+    other: groupShortcuts(rest.filter((r) => !r.owned), binTools),
+  };
+}
+
+/**
+ * Names for the Group field: the "Group: " prefixes in use on any row, owned or not. Putting
+ * a shortcut in one of these always joins a group (now that prefixes span both cards). Group
+ * names from the tool or program rules aren't offered, since a "Name: " prefix alone doesn't
+ * put a shortcut in them. `exceptId`: the shortcut being edited, whose own prefix counts only
+ * if another row has it too.
+ */
+export function joinableGroups(items: readonly Groupable[], exceptId?: string): string[] {
+  const names = new Map<string, string>();
+  for (const it of items) {
+    if (it.id === exceptId) continue;
+    const p = splitPrefix(it.name);
+    if (p && !names.has(p.group.toLowerCase())) names.set(p.group.toLowerCase(), p.group);
+  }
+  return [...names.values()].sort(byName);
 }
 
 /** The group each item ended up in (by id), for `list --json`. */

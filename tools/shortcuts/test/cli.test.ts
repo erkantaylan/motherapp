@@ -172,6 +172,26 @@ test("list: grouped like the page (#19), headers with count and keys; --json has
   assert.equal(j2.find((x) => x.name === "Louder")!.group, "Audio");
 });
 
+test("#27: add --group 'Dead Cells map' joins the user's 7: one group of 8 in list and --json", async () => {
+  const fake = new FakeGnome(machineStore(MACHINE_19));
+  const a = await cli(fake, "add", "--group", "Dead Cells map", "x", "<Super><Alt>F7", "--", "brightctl", "list");
+  assert.equal(a.code, 0, a.err);
+  const j = JSON.parse((await cli(fake, "list", "--json")).out) as { name: string; owned: boolean; group: string | null }[];
+  const dc = j.filter((x) => x.name.startsWith("Dead Cells map: "));
+  assert.equal(dc.length, 8);
+  assert.deepEqual([...new Set(dc.map((x) => x.group))], ["Dead Cells map"]);
+  assert.equal(dc.find((x) => x.name === "Dead Cells map: x")!.owned, true);
+  assert.equal(j.find((x) => x.name === "CopyQ")!.group, null);
+  const out = (await cli(fake, "list")).out.split("\n");
+  // the shared group comes first; its header has no * (not all motherapp's), its rows have their own mark
+  assert.match(out[0]!, /^ {2}Dead Cells map {2}\(8 shortcuts, /);
+  assert.equal(out.filter((l) => /Dead Cells map {2}\(/.test(l)).length, 1, "one header, not a second group or row");
+  const rows = out.slice(1, 9);
+  assert.deepEqual(rows.map((l) => l[0]), [" ", " ", " ", " ", " ", "*", " ", " "]); // "x" sorts after "whole level"
+  assert.match(rows[5]!, /^\* {3}x +<Super><Alt>F7 +\/home\/u\/\.local\/bin\/brightctl list$/);
+  assert.match(out[9]!, /^ {2}CopyQ /);
+});
+
 test("add/edit --group writes the 'Group: ' prefix; --group \"\" takes it out", async () => {
   const fake = new FakeGnome(machineStore(MACHINE_19));
   const a = await cli(fake, "add", "--group", "Dead Cells map", "reset", "<Control><Shift>F12", "--", "/home/erkan/.local/bin/dc-map", "reset");
@@ -179,7 +199,7 @@ test("add/edit --group writes the 'Group: ' prefix; --group \"\" takes it out", 
   assert.match(a.out, /^added 'Dead Cells map: reset' /);
   assert.equal(fake.store.values[`${DIR}motherapp-dead-cells-map-reset/name`], "Dead Cells map: reset");
   const mine = async () => (JSON.parse((await cli(fake, "list", "--json")).out) as { id: string; name: string; group: string | null }[]).find((x) => x.id === "motherapp-dead-cells-map-reset")!;
-  assert.equal((await mine()).group, null, "motherapp's own are grouped apart from the others, and one alone is no group");
+  assert.equal((await mine()).group, "Dead Cells map", "a name prefix groups across motherapp's own and the others (#27)");
   // only the group changes: the old prefix is replaced
   assert.equal((await cli(fake, "edit", "Dead Cells map: reset", "--group", "Map")).code, 0);
   assert.equal((await mine()).name, "Map: reset");

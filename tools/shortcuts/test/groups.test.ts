@@ -1,7 +1,7 @@
 // Grouping rules (issue #19), with the machine's 8 shortcuts as the fixture.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { groupOf, groupProblem, groupShortcuts, joinGroup, keysSummary, splitPrefix } from "../src/groups.ts";
+import { groupOf, groupProblem, groupShortcuts, joinGroup, joinableGroups, keysSummary, layoutShortcuts, splitPrefix } from "../src/groups.ts";
 import type { Entry, Groupable } from "../src/groups.ts";
 import { readToolCommands } from "../src/suggestions.ts";
 import { MACHINE, MACHINE_19, REPO_TOOLS } from "./fakes.ts";
@@ -30,6 +30,54 @@ test("the machine's 8 (#19): Dead Cells map by name prefix, CopyQ stays a plain 
   assert.deepEqual(g.members.map((m) => m.item.binding).slice(0, 2), ["<Control><Shift>F10", "<Control>F10"]);
   assert.equal(groupOf(es).get("custom3"), "Dead Cells map");
   assert.equal(groupOf(es).has("custom7"), false);
+});
+
+test("#27: a lone motherapp 'Dead Cells map: x' joins the user's 7 in one shared group of 8", () => {
+  const all = [...items(MACHINE_19), own("motherapp-dead-cells-map-x", "Dead Cells map: x", `${BIN}/brightctl list`, "<Super><Alt>F7")];
+  const { binTools } = readToolCommands(REPO_TOOLS, BIN, () => true);
+  const l = layoutShortcuts(all, binTools);
+  assert.deepEqual(view(l.shared), ["Dead Cells map[prefix]: follow the hero, opacity, show / hide, take clicks, whole level, x, zoom in, zoom out"]);
+  const g = l.shared[0]!;
+  assert.equal(g.members.length, 8);
+  assert.deepEqual(g.members.filter((m) => m.item.owned).map((m) => m.label), ["x"], "Edit/Remove go on the owned row only");
+  assert.deepEqual(l.own, [], "not also a plain row (or a Brightness tool group) in the motherapp card");
+  assert.deepEqual(view(l.other), ["CopyQ"]);
+  const group = groupOf([...l.shared, ...l.own, ...l.other]);
+  for (const it of all.filter((x) => x.name.startsWith("Dead Cells map: "))) assert.equal(group.get(it.id), "Dead Cells map", it.name);
+  assert.equal(group.has("custom7"), false);
+});
+
+test("layoutShortcuts: one-sided prefixes and the tool/program rules stay per card", () => {
+  const { binTools } = readToolCommands(REPO_TOOLS, BIN, () => true);
+  const all = [
+    ...items(MACHINE_19),
+    own("m1", "Mute Firefox", `${BIN}/audioctl app-mute firefox toggle`),
+    own("m2", "Volume up", `${BIN}/audioctl volume +5`),
+    own("m3", "Work: lights", `${BIN}/brightctl set all 100`),
+    own("m4", "Work: sound", `${BIN}/audioctl volume 30`),
+    // a user's audioctl shortcut doesn't join motherapp's Audio tool group
+    { id: "u1", name: "my volume", command: `${BIN}/audioctl volume 50`, binding: "", owned: false, conflicts: "" },
+  ];
+  const l = layoutShortcuts(all, binTools);
+  assert.deepEqual(l.shared, []);
+  assert.deepEqual(view(l.own), ["Audio[tool]: Mute Firefox, Volume up", "Work[prefix]: lights, sound"]);
+  assert.deepEqual(view(l.other), ["CopyQ", "Dead Cells map[prefix]: follow the hero, opacity, show / hide, take clicks, whole level, zoom in, zoom out", "my volume"]);
+  // a prefix with one row on each side is a shared group of 2 (case doesn't matter)
+  const two = layoutShortcuts([own("a", "Clip: mine", "/x"), { ...items(MACHINE_19)[7]!, name: "clip: CopyQ" }]);
+  assert.deepEqual(view(two.shared), ["Clip[prefix]: CopyQ, mine"]);
+  assert.deepEqual([two.own, two.other], [[], []]);
+});
+
+test("joinableGroups: only prefixes in use, on either side; never a tool or program group name", () => {
+  const { binTools } = readToolCommands(REPO_TOOLS, BIN, () => true);
+  const all = [...items(MACHINE), ...items(MACHINE_19).slice(0, 2).map((x) => ({ ...x, id: `p-${x.id}` })), own("m1", "Mute Firefox", `${BIN}/audioctl app-mute firefox toggle`), own("m2", "Volume up", `${BIN}/audioctl volume +5`), own("m3", "Solo: one", "/x")];
+  // "Audio" (tool) and "dc-map" (program) are groups on the page, but a prefix alone doesn't join them
+  const l = layoutShortcuts(all, binTools);
+  assert.ok([...l.own, ...l.other].some((e) => e.kind === "group" && e.name === "Audio"));
+  assert.ok([...l.own, ...l.other].some((e) => e.kind === "group" && e.name === "dc-map"));
+  assert.deepEqual(joinableGroups(all), ["Dead Cells map", "Solo"]);
+  // while editing the only "Solo: " row, its own prefix isn't something to join
+  assert.deepEqual(joinableGroups(all, "m3"), ["Dead Cells map"]);
 });
 
 test("without a prefix: the same program groups, shown by its file name", () => {

@@ -1,7 +1,8 @@
 /// <reference lib="dom" />
 // The shortcuts tool's custom page (a light-DOM custom element, docs/extension-contract.md § 6).
 // A form to add or edit a motherapp shortcut (suggested command, name, command, key capture,
-// live conflict warnings), then the motherapp shortcuts and the read-only rest, both in
+// live conflict warnings), then the shared groups (a "Group: " prefix used by motherapp's own
+// and others' shortcuts, #27), the motherapp shortcuts and the read-only rest, all in
 // collapsible groups (src/groups.ts; which groups are open is remembered per browser). Styled
 // with the documented theme variables plus Bootstrap 6 badges. Remove buttons come from
 // ctx.render, so they get the shell's confirm dialog and status dot.
@@ -11,7 +12,7 @@ import { accelLabel, bindingProblem, bindingWarning, captureKey } from "./src/ac
 import { commandFromLine } from "./src/command.ts";
 import { conflictsFor } from "./src/conflicts.ts";
 import type { BindingUse } from "./src/conflicts.ts";
-import { COLLAPSE_AT, groupProblem, groupShortcuts, plural, splitPrefix } from "./src/groups.ts";
+import { COLLAPSE_AT, groupProblem, joinableGroups, layoutShortcuts, plural, splitPrefix } from "./src/groups.ts";
 import type { Entry, Group } from "./src/groups.ts";
 
 interface Row {
@@ -156,6 +157,8 @@ export default class ShortcutsPage extends HTMLElement {
   private submit = button("Add shortcut", "msc-primary");
   private cancel = button("Cancel");
   private result = el("span");
+  private shared = el("div");
+  private sharedCard = el("section", { class: "msc-card" });
   private owned = el("div");
   private foreign = el("div");
 
@@ -212,6 +215,12 @@ export default class ShortcutsPage extends HTMLElement {
       this.notes,
       el("div", { class: "msc-actions" }, this.submit, this.cancel, this.result),
     );
+    this.sharedCard.append(
+      el("h3", { text: "Shared groups" }),
+      el("p", { class: "msc-muted", text: "Groups whose name prefix is used both by motherapp shortcuts and by ones made elsewhere. Rows marked motherapp can be edited; the others are read-only." }),
+      this.shared,
+    );
+    this.sharedCard.hidden = true;
     const ownedCard = el("section", { class: "msc-card" }, el("h3", { text: "motherapp shortcuts" }), this.owned);
     const foreignCard = el(
       "section",
@@ -222,7 +231,7 @@ export default class ShortcutsPage extends HTMLElement {
     );
     const style = el("style", { text: STYLE });
     this.status.hidden = true;
-    this.root.append(style, this.status, form, ownedCard, foreignCard);
+    this.root.append(style, this.status, form, this.sharedCard, ownedCard, foreignCard);
     this.append(this.root);
 
     this.suggest.addEventListener("change", () => this.pickSuggestion());
@@ -393,6 +402,7 @@ export default class ShortcutsPage extends HTMLElement {
     this.group.value = "";
     this.command.value = "";
     this.accel.value = "";
+    this.fillGroupList();
     this.validate();
   }
 
@@ -409,6 +419,7 @@ export default class ShortcutsPage extends HTMLElement {
     this.command.value = row.command;
     this.accel.value = row.binding;
     this.result.textContent = "";
+    this.fillGroupList();
     this.validate();
     this.name.focus();
   }
@@ -454,23 +465,24 @@ export default class ShortcutsPage extends HTMLElement {
     const rows = Object.entries(asMap<Row>(ctx.get("shortcuts"))).map(([id, r]) => ({ ...r, id }));
     const binTools = asMap<string>(ctx.get("binTools"));
     const stale = ctx.isStale("shortcuts");
-    this.owned.classList.toggle("msc-stale", stale);
-    this.foreign.classList.toggle("msc-stale", stale);
-    const mine = groupShortcuts(rows.filter((r) => r.owned), binTools);
-    const theirs = groupShortcuts(rows.filter((r) => !r.owned), binTools);
-    this.owned.replaceChildren(...(mine.length ? mine.map((e) => this.entry("own", e, (r, label) => this.ownedRow(r.id, r, label))) : [el("p", { class: "msc-muted", text: "None yet. Add one above." })]));
-    this.foreign.replaceChildren(...(theirs.length ? theirs.map((e) => this.entry("other", e, (r, label) => this.foreignRow(r, label))) : [el("p", { class: "msc-muted", text: "None." })]));
-    // Every group name and prefix in use, for the form's Group field.
-    const names = new Set<string>();
-    for (const e of [...mine, ...theirs]) if (e.kind === "group") names.add(e.name);
-    for (const r of rows) {
-      const p = splitPrefix(r.name);
-      if (p) names.add(p.group);
-    }
-    this.groupList.replaceChildren(...[...names].sort((a, b) => a.localeCompare(b)).map((n) => new Option(n)));
+    for (const d of [this.shared, this.owned, this.foreign]) d.classList.toggle("msc-stale", stale);
+    const { shared, own: mine, other: theirs } = layoutShortcuts(rows, binTools);
+    this.sharedCard.hidden = shared.length === 0;
+    this.shared.replaceChildren(...shared.map((g) => this.entry("shared", g, (r, label) => (r.owned ? this.ownedRow(r.id, r, label, true) : this.foreignRow(r, label)))));
+    // "None yet" only when there are none at all, not when the only ones sit in a shared group
+    const ownedShared = shared.some((g) => g.members.some((m) => m.item.owned));
+    this.owned.replaceChildren(...(mine.length ? mine.map((e) => this.entry("own", e, (r, label) => this.ownedRow(r.id, r, label))) : [el("p", { class: "msc-muted", text: ownedShared ? "No others; see Shared groups above." : "None yet. Add one above." })]));
+    this.foreign.replaceChildren(...(theirs.length ? theirs.map((e) => this.entry("other", e, (r, label) => this.foreignRow(r, label))) : [el("p", { class: "msc-muted", text: shared.length ? "No others; see Shared groups above." : "None." })]));
+    this.fillGroupList(rows);
     if (focused) this.querySelector<HTMLElement>(`[data-group="${CSS.escape(focused)}"]`)?.focus();
     if (this.editing && !rows.some((r) => r.owned && r.id === this.editing)) this.resetForm();
     else this.validate();
+  }
+
+  /** The Group field's suggestions: only prefixes a new or edited shortcut would really join. */
+  private fillGroupList(rows?: Row[]): void {
+    const all = rows ?? Object.entries(asMap<Row>(this.ctx!.get("shortcuts"))).map(([id, r]) => ({ ...r, id }));
+    this.groupList.replaceChildren(...joinableGroups(all, this.editing).map((n) => new Option(n)));
   }
 
   private entry(card: string, e: Entry<Row>, row: (r: Row, label: string) => HTMLElement): HTMLElement {
@@ -520,7 +532,7 @@ export default class ShortcutsPage extends HTMLElement {
     return [...out, el("span", { class: "msc-grow" }), el("div", { class: "msc-full" }, ...full)];
   }
 
-  private ownedRow(id: string, r: Row, label?: string): HTMLElement {
+  private ownedRow(id: string, r: Row, label?: string, mark = false): HTMLElement {
     const edit = button("Edit");
     edit.addEventListener("click", () => this.startEdit(id, r));
     const remove = el("span");
@@ -539,7 +551,9 @@ export default class ShortcutsPage extends HTMLElement {
       ),
     );
     const [name, kbd, grow, full] = this.common(r, label);
-    return el("div", { class: "msc-row" }, name!, kbd!, grow!, el("span", { class: "msc-buttons" }, edit, remove), full!);
+    // In a shared group, tell motherapp's own rows from the read-only ones at a glance.
+    const badge = mark ? [el("span", { class: "badge badge-subtle theme-primary", text: "motherapp" })] : [];
+    return el("div", { class: "msc-row" }, name!, ...badge, kbd!, grow!, el("span", { class: "msc-buttons" }, edit, remove), full!);
   }
 
   private foreignRow(r: Row, label?: string): HTMLElement {

@@ -4,7 +4,7 @@ import type { Writable } from "node:stream";
 import { accelLabel } from "./accel.ts";
 import { bindingUses, conflictsFor } from "./conflicts.ts";
 import { Gnome, GnomeError } from "./gnome.ts";
-import { groupOf, groupShortcuts, plural } from "./groups.ts";
+import { groupOf, layoutShortcuts, plural } from "./groups.ts";
 import type { Shortcut } from "./gnome.ts";
 import { buildCommand, checkBinding, commandContext, groupedName, loadTools, warningsFor } from "./ops.ts";
 import type { Env } from "./ops.ts";
@@ -14,8 +14,9 @@ export const USAGE = `usage: shortcutsctl <command> [args]
 
   list [--flat] [--json]                every GNOME custom shortcut: name, key, command
                                         (* = made by motherapp, editable; the rest are read-only),
-                                        grouped like the page: a "Group: " name prefix, the
-                                        tool, or the same program. --flat: ungrouped, in GNOME's
+                                        grouped like the page: a "Group: " name prefix (shared
+                                        with the read-only ones), the tool, or the same
+                                        program. --flat: ungrouped, in GNOME's
                                         order. --json: each one gets "group" (a name or null)
   add [--group <g>] <name> <binding> -- <command…>
                                         add a motherapp shortcut; --group names it "<g>: <name>"
@@ -87,10 +88,10 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         const rows = list.map((s) => ({ ...s, conflicts: conflictsFor(s.binding, uses, s.id) }));
         type R = (typeof rows)[number];
         const { binTools } = loadTools(io.env);
-        const mine = groupShortcuts(rows.filter((r) => r.owned), binTools);
-        const theirs = groupShortcuts(rows.filter((r) => !r.owned), binTools);
+        const { shared, own, other } = layoutShortcuts(rows, binTools);
+        const entries = [...shared, ...own, ...other];
         if (args.includes("--json")) {
-          const group = new Map([...groupOf(mine), ...groupOf(theirs)]);
+          const group = groupOf(entries);
           line(io.stdout, JSON.stringify(rows.map((r) => ({ ...r, group: group.get(r.id) ?? null })), null, 2));
           return 0;
         }
@@ -99,18 +100,20 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
           return 0;
         }
         const tail = (s: R) => (s.error ? `  (can't read: ${s.error})` : s.conflicts.length ? `  (also: ${s.conflicts.join(", ")})` : "");
-        // --flat: GNOME's order, as before. Otherwise motherapp's own first, then the rest, each
-        // group's rows indented under a header line.
+        // --flat: GNOME's order, as before. Otherwise like the page: the shared groups (a name
+        // prefix used by motherapp's own and others' shortcuts), then motherapp's own, then the
+        // rest, each group's rows indented under a header line. The header's * means every row
+        // in it is motherapp's; each row has its own mark.
         const out: ({ head: string } | { row: R; label: string })[] = [];
         if (args.includes("--flat")) out.push(...rows.map((row) => ({ row, label: row.name })));
         else {
-          for (const e of [...mine, ...theirs]) {
+          for (const e of entries) {
             if (e.kind === "single") {
               out.push({ row: e.item, label: e.label });
               continue;
             }
             const extra = [plural(e.members.length, "shortcut"), e.keys, e.conflicts ? plural(e.conflicts, "conflict") : ""].filter(Boolean);
-            out.push({ head: `${e.members[0]!.item.owned ? "*" : " "} ${e.name}  (${extra.join(", ")})` });
+            out.push({ head: `${e.members.every((m) => m.item.owned) ? "*" : " "} ${e.name}  (${extra.join(", ")})` });
             for (const m of e.members) out.push({ row: m.item, label: `  ${m.label}` });
           }
         }
