@@ -154,6 +154,7 @@ if (process.argv[2] === "serve") {
   tool.log.info("serving");       // log after serve(): before it, logs go to stderr
   await serving;
 } else {
+  exitOnBrokenPipe();             // `<tool> list | head -1` exits 0, no EPIPE stack trace
   // plain CLI subcommands here (they must work without the core)
 }
 ```
@@ -170,6 +171,7 @@ if (process.argv[2] === "serve") {
 | `tool.watching` / `tool.onWatch((watching) => …)` | Whether a visible tab shows the tool's page; `onWatch` is called on every change and returns an unsubscribe function. Starts `false`. |
 | `tool.save()` | Write the state file now (otherwise debounced 500 ms, and on shutdown). |
 | `readPersistedState(id)` | For plain CLI subcommands that want the last known state. |
+| `exitOnBrokenPipe(...streams)` | Plain CLI subcommands only, never `serve`: an EPIPE on stdout/stderr (default) or the given streams exits 0 quietly; other errors still throw. |
 
 **Poll only while watched.** Nothing should run every N seconds while nobody looks. The core
 counts viewers per tool: a browser tab that has the tool's page open **and** visible (Page

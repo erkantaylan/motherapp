@@ -4,7 +4,7 @@
 // that exposes only the inbox's own 127.0.0.1 listener. `inboxctl serve` is the mode the core
 // starts; the other subcommands work from a terminal (`inboxctl help`).
 import * as path from "node:path";
-import { createTool, defaultStateDir } from "@motherapp/tool-sdk";
+import { createTool, defaultStateDir, exitOnBrokenPipe } from "@motherapp/tool-sdk";
 import { RealRunner } from "../tmux/src/runner.ts";
 import { runCli } from "./src/cli.ts";
 import { TmuxPanes } from "./src/panes.ts";
@@ -31,5 +31,6 @@ if (process.argv[2] === "serve") {
   await serving;
   await service.stop();
 } else {
+  exitOnBrokenPipe(); // `inboxctl log | head -1`
   process.exitCode = await runCli(process.argv.slice(2), { stdout: process.stdout, stderr: process.stderr, stateDir, panes: { runner } });
 }

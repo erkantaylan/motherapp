@@ -435,6 +435,23 @@ export function createTool(opts: ToolOptions): Tool {
   return new Tool(opts);
 }
 
+/**
+ * For plain CLI subcommands, never for `serve` (there stdout is the JSON-RPC channel and the
+ * core handles a dead pipe). When the reader goes away early (`audioctl list | head -1`), the
+ * next write fails with EPIPE, and an unhandled stream `error` would end the CLI with a stack
+ * trace and exit 1. Exit 0 quietly instead, like a coreutils tool killed by SIGPIPE does in a
+ * pipeline. Any other stream error is still thrown. Defaults to process.stdout and stderr.
+ */
+export function exitOnBrokenPipe(...streams: Writable[]): void {
+  const list = streams.length > 0 ? streams : [process.stdout, process.stderr];
+  for (const s of list) {
+    s.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code === "EPIPE") process.exit(0);
+      throw e;
+    });
+  }
+}
+
 /** Reads a tool's persisted state without starting it (for plain CLI subcommands). */
 export function readPersistedState(id: string, stateDir = defaultStateDir()): StateObject | undefined {
   try {

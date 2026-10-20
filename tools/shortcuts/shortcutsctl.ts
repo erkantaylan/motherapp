@@ -3,7 +3,7 @@
 // edits and removes the ones motherapp owns (dconf paths …/custom-keybindings/motherapp-*/).
 // `shortcutsctl serve` is the mode the core starts; every other subcommand works on its own
 // from a terminal (`shortcutsctl help`).
-import { createTool } from "@motherapp/tool-sdk";
+import { createTool, exitOnBrokenPipe } from "@motherapp/tool-sdk";
 import { runCli } from "./src/cli.ts";
 import { Gnome } from "./src/gnome.ts";
 import { defaultEnv } from "./src/ops.ts";
@@ -23,5 +23,6 @@ if (process.argv[2] === "serve") {
   await serving;
   service.stop();
 } else {
+  exitOnBrokenPipe(); // `shortcutsctl list | head -1`
   process.exitCode = await runCli(process.argv.slice(2), { runner, env, stdout: process.stdout, stderr: process.stderr });
 }
