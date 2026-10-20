@@ -66,6 +66,7 @@ GNOME 48 unless its author updates it.
 | Audio scope, first version | **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
 | Per-app rows | **One row per app.** All of an app's streams are grouped, e.g. one Firefox row. |
 | Audio test tools | **Keep audio-switch's**: L/R test, live mic meter, record-and-playback. |
+| Device volume | **Master sliders only** (default output + default mic, #13). No volume slider on each device row: tried as a mockup (Option B) and rejected as too crowded. |
 | Brightness UI | **Both**: a slider per monitor plus a linked "all monitors" slider. |
 | Brightness backend | **`libddcutil` kept loaded** in the brightness tool's serve process. It needs installing on the machine. |
 | Brightness FFI | **`koffi`** (npm, prebuilt binaries, so no compiler or dev headers on the machine) loads `libddcutil.so.4` by soname. All libddcutil calls run on one `worker_threads` worker, because they block and the library keeps per-thread state; the serve loop never waits on DDC/CI. Before the library loads, fd 1 is pointed at stderr, because libddcutil 1.4 prints to C stdout from its constructor. If the library can't be loaded, the tool falls back to the `ddcutil` command and shows a warning. Built in `tools/brightness/` (`brightctl`). |
