@@ -105,6 +105,7 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
         info = next;
         title.textContent = `${next.icon ? next.icon + " " : ""}${next.title}`;
         sub.textContent = `${next.id} · ${next.status}${next.statusText ? ` · ${next.statusText}` : ""}`;
+        sub.title = sub.textContent; // .row-sub is one line, cut with an ellipsis
         enabled.checked = next.enabled;
         restart.hidden = !next.enabled;
       };

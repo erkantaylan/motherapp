@@ -56,7 +56,7 @@ GNOME 48 unless its author updates it.
 | Cockpit-style pages | **Write actions from the start**, not read-only first. |
 | Network switch scope | **All or none.** When it is on, everything is reachable from the LAN. No per-action local-only flag for now. |
 | Network pairing | QR + one-time-token pairing is **nice to have**, not required for the first version. **No auto-off**: no timeout, nothing on screen lock. |
-| Control feedback | The UI shows the last known value immediately (the brightness tool holds its last set value). Each control has a **small status dot**: setting / set / failed. |
+| Control feedback | The UI shows the last known value immediately (the brightness tool holds its last set value). Each control has a **small status dot**: setting / set / failed. Set is shown for ~2 s, then fades; failed stays until the next success. |
 | Retiring predecessors | Retire audio-switch and the Per App Volume extension once the audio tool ships. **The user decides when.** |
 | UI model | **Hybrid** (§ 4.1, § 4.5): declarative pages by default, TS custom pages as the escape hatch. |
 | Protocol, contract, discovery, crashes | As written in **§ 4.6–4.9**, accepted 2026-10-19. |

@@ -154,7 +154,7 @@ an action. When the user changes a control, the action is called with `{ ...args
 
 | Widget | Fields |
 |---|---|
-| `text` | `text?` (static), `bind?` (shown value), `style?: "heading" \| "body" \| "muted"` |
+| `text` | `text?` (static), `bind?` (shown value), `style?: "heading" \| "body" \| "muted"`, `reserve?` (with `bind`, default `true`: keep one line of space while the value is absent) |
 | `button` | `label`, `action?`, `args?`, `style?: "default" \| "primary" \| "danger"`, `confirm?`, `copy?` — sends `args`. `action` is required unless `copy` is set. See "Buttons: confirm and copy" below. |
 | `toggle` | `label?`, `bind`, `action`, `args?` — `value: boolean` |
 | `slider` | `label?`, `bind`, `action`, `min`, `max`, `step?`, `unit?`, `args?` — `value: number` |
@@ -162,9 +162,29 @@ an action. When the user changes a control, the action is called with `{ ...args
 | `meter` | `label?`, `stream?` or `bind?`, `min?` (0), `max?` (1), `manual?` (shows a Monitor button; the stream is only open while it is on). Without `manual` the stream is open while the meter is on screen. |
 | `list` | `label?`, `bind`, `item: { label?, sublabel?, widgets? }`, `sort?` (item field), `empty?` |
 
+**A control under the pointer must never move while it's being dragged.** Anything that
+appears, vanishes or changes height above a control while values change pushes it away from
+the pointer. So:
+
+- A bound `text` keeps one line of space while its value is absent (`reserve` defaults to
+  `true`). That's the default because a value that comes and goes is the usual case; opt out
+  with `reserve: false` only for text that changes when no control can be in use, such as a
+  warning set at startup or a status shown only while a list is empty.
+- One reserved line doesn't stop text that wraps onto two lines from growing. Keep text that
+  changes while controls are used short, or put it below the controls (the brightness page puts
+  its "shows the average" note last).
+- A list row's `sublabel` is always one line (cut with an ellipsis, full text on hover), so a
+  note added to it doesn't make the row taller. An empty `sublabel` still hides the line, so
+  keep a row's sublabel either always empty or never empty if it changes while in use.
+- Status dots keep their space when they fade out.
+
 **Lists** bind to an **object map** `{ [key]: item }`. Rows are keyed by the map key and
 updated in place: a volume change on one row touches only that slider; rows appearing or
-vanishing don't rebuild the others; a slider being dragged is never overwritten. Inside `item`,
+vanishing don't rebuild the others; a slider being dragged is never overwritten. When a row's
+widgets hold exactly one radio and it is the one-button form (`value`), the row's label and
+sublabel become that radio's `<label>`: clicking them selects the row (and sends the action),
+and the label names the radio for screen readers. The row's other controls don't select it.
+Inside `item`,
 every string may use `{key}`, `{path}` (`<bind>.<key>`) and `{field}` (a field of the item):
 
 ```json
@@ -207,8 +227,9 @@ shell-quoted command) belongs in a state field, e.g. `copy: { bind: "sessions.{k
 
 `tools/demo/` uses all three forms; `tools/tmux/` uses `copy: { bind }` and `confirm`.
 
-**Status dots** come for free: *setting* while the request is out, *set* on success, *failed*
-on error (message on hover). Slider values sent while a request is in flight are coalesced:
+**Status dots** come for free: *setting* while the request is out, *set* on success (shown for
+~2 s, then it fades out), *failed* on error (message on hover; it stays until the next
+success). The dot keeps its space when hidden. Slider values sent while a request is in flight are coalesced:
 only the newest is sent when the reply arrives, so slow devices aren't flooded. Reply only
 after the change is applied (or failed); then publish the real value via `set`.
 

@@ -19,6 +19,12 @@ export interface TextWidget {
   /** State path whose value is shown. */
   bind?: string;
   style?: "heading" | "body" | "muted";
+  /**
+   * With `bind`: keep one line of space while the value is absent, so a value that comes and
+   * goes doesn't move the controls below it. Default `true` for a bound text; set `false` for
+   * text that only changes when no control can be in use (e.g. a message at startup).
+   */
+  reserve?: boolean;
 }
 
 /**
