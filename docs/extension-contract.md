@@ -88,6 +88,13 @@ action/method; the core itself uses `-32001` timeout, `-32002` tool unavailable,
 - **Stale**: `stale: true` on a change marks the value unconfirmed; a change without it
   confirms it. A stale path covers everything below it. While a tool is down or the UI is
   disconnected, the UI shows everything as stale anyway.
+- Stale means **"we don't know the real value right now"**: cached from before a restart and not
+  re-read yet, or a read or write failed. It does **not** mean "the user's own change is still on
+  its way": publish the value the user just set (and values that follow from it, like a linked
+  slider) without `stale`. The control's status dot already shows `setting` until the action
+  returns. Marking every pending write stale doubled the signal and made the page flicker
+  (issue #12). The page shows stale as dimmed controls (opacity only, so nothing moves) with a
+  "Not confirmed yet" tooltip.
 - The core caches the full state; page loads never reach the tool. After a crash the cache is
   kept (shown stale) until the restarted tool's `state.get` replaces it.
 

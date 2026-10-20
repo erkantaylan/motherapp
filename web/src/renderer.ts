@@ -75,10 +75,16 @@ export function statusDot(): { el: HTMLElement; set(status: ControlStatus, error
   return { el, set: (status, error) => state.set(status, error), dispose: () => state.cancel() };
 }
 
+const STALE_HINT = "Not confirmed yet";
+
+/**
+ * Dims a control whose value is stale (styles.scss: opacity only, so nothing moves) and explains
+ * it on hover. Leaves a title the element had for another reason alone.
+ */
 function markStale(el: HTMLElement, stale: boolean): void {
   el.classList.toggle("stale", stale);
-  if (stale) el.dataset.staleHint = "not confirmed yet";
-  else delete el.dataset.staleHint;
+  if (stale && !el.title) el.title = STALE_HINT;
+  else if (!stale && el.title === STALE_HINT) el.removeAttribute("title");
 }
 
 /** A labelled control row. With `target`, the label is a `<label for>` that names that input. */

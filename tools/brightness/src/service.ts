@@ -386,8 +386,10 @@ export class BrightnessService {
     m.writeSeq++;
     m.lastWriteAt = Date.now();
     if (m.confirmTimer) clearTimeout(m.confirmTimer);
-    // Show the new value now (unconfirmed), so the other sliders follow.
-    this.publishBrightness(m, pct, true);
+    // Show the new value now, so the other sliders follow. Not stale: stale means "cached, not
+    // re-read yet" (docs/extension-contract.md § 2). The page's status dot already shows that
+    // this write is on its way, and a stale mark per write made the sliders jump (issue #12).
+    this.publishBrightness(m, pct, false);
     return m.queue.run("write", async () => {
       const value = m.target ?? pct;
       const seq = m.writeSeq;

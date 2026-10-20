@@ -172,11 +172,10 @@
     to { opacity: 1; }
   }
 
-  // stale values
+  // Stale values (cached, not re-read yet): dimmed, with a "Not confirmed yet" tooltip
+  // (renderer.ts markStale). Opacity only: a stale mark must never take space, or the controls
+  // around it move whenever it comes and goes (issue #12: a "stale" word after every slider).
   .stale { opacity: .6; }
-  .stale::after { margin-inline-start: 6px; font-size: .72rem; font-style: italic; color: var(--warn); content: "stale"; }
-  .list-row.stale::after { display: none; }
-  .w-text.stale::after { vertical-align: middle; }
 
   // lists
   .w-list { display: flex; flex-direction: column; gap: var(--bs-spacer-2); }

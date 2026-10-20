@@ -158,7 +158,30 @@ test("linked slider sets every monitor; shows the common value, or the average w
   assert.equal(s.tool.get("allNote"), undefined);
   // per-monitor sliders followed while the linked one moved
   const changes = s.received.flatMap((m) => (m.method === "state" ? m.params.changes : []));
-  assert.ok(changes.some((c: any) => c.path === `monitors.${ACER_KEY}.brightness` && c.value === 65 && c.stale));
+  assert.ok(changes.some((c: any) => c.path === `monitors.${ACER_KEY}.brightness` && c.value === 65 && !c.stale));
+  await s.done();
+});
+
+test("a write in flight is not stale: neither the value the user set nor the linked slider (issue #12)", async () => {
+  const b = two();
+  const s = setup(b);
+  await s.service.start();
+  await waitFor(() => !s.tool.isStale("all.brightness") && s.tool.get("all.brightness") === 50, "first reads");
+  b.delayMs = 200;
+  const from = s.received.length;
+  const one = s.action("setBrightness", { id: MSI_KEY, value: 30 });
+  await waitFor(() => s.tool.get(`monitors.${MSI_KEY}.brightness`) === 30, "pending value shown");
+  assert.equal(b.mon(1).value, 48, "the write is still on its way");
+  assert.equal(s.tool.isStale(`monitors.${MSI_KEY}.brightness`), false);
+  assert.equal(s.tool.isStale("all.brightness"), false);
+  assert.equal((await one).error, undefined);
+  const all = s.action("setAll", { value: 70 });
+  await waitFor(() => s.tool.get(`monitors.${ACER_KEY}.brightness`) === 70 && s.tool.get(`monitors.${MSI_KEY}.brightness`) === 70, "pending values shown");
+  assert.notEqual(b.mon(3).value, 70, "the writes are still on their way");
+  for (const p of [`monitors.${MSI_KEY}.brightness`, `monitors.${ACER_KEY}.brightness`, "all.brightness"]) assert.equal(s.tool.isStale(p), false, p);
+  assert.equal((await all).error, undefined);
+  const changes = s.received.slice(from).flatMap((m) => (m.method === "state" ? m.params.changes : []));
+  assert.deepEqual(changes.filter((c: any) => c.stale), [], "nothing was published stale while setting");
   await s.done();
 });
 
