@@ -12,7 +12,7 @@ import { DIR, FakeGnome, FakeTimers, LIST, MACHINE, MACHINE_19, MACHINE_PATHS, m
 
 type Msg = { id?: number; method?: string; params?: any; result?: any; error?: { code: number; message: string } };
 
-function setup(fake = new FakeGnome()) {
+function setup(fake = new FakeGnome(), opts: { watched?: boolean } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   const tool = createTool({ id: "shortcuts", title: "Shortcuts", page: "custom", initialState: INITIAL_STATE, persist: false, captureConsole: false, input, output });
@@ -36,12 +36,15 @@ function setup(fake = new FakeGnome()) {
   };
   const rows = () => tool.get("shortcuts") as Record<string, Row>;
   const done = tool.serve();
+  /** The core's `watch` notification (a visible tab opened or left the page). */
+  const watch = (watching: boolean) => input.write(JSON.stringify({ jsonrpc: "2.0", method: "watch", params: { watching } }) + "\n");
+  if (opts.watched !== false) watch(true);
   const end = async () => {
     service.stop();
     input.end();
     await done;
   };
-  return { tool, fake, timers, service, action, settle, rows, received, end };
+  return { tool, fake, timers, service, action, settle, rows, received, watch, end };
 }
 
 test("start: all 8 rows (read-only), suggestions, bindings for the page", async () => {
@@ -231,4 +234,51 @@ test("groups (#19): add/edit take a group and write 'Group: name'; renaming out 
   const bad2 = await t.action("edit", { id: b.result.id, group: 5 });
   assert.match(bad2.error?.message ?? "", /group must be a string/);
   await t.end();
+});
+
+test("unwatched: no gsettings or dconf calls over 60 s; opening the page reads at once, then every 3 s", async () => {
+  for (const noDconf of [false, true]) {
+    const fake = new FakeGnome();
+    if (noDconf) fake.missing.add("dconf");
+    const t = setup(fake, { watched: false });
+    t.service.start();
+    await t.settle();
+    for (let i = 0; i < 20; i++) {
+      t.timers.advance(POLL_MS);
+      await t.settle();
+    }
+    assert.equal(t.fake.calls.length, 0, `nothing runs while nobody looks (dconf ${noDconf ? "missing" : "present"})`);
+    assert.equal(t.tool.isStale("shortcuts"), true);
+
+    t.watch(true);
+    await t.settle();
+    assert.equal(Object.keys(t.rows()).length, 8, "read at once");
+    assert.equal(t.tool.isStale("shortcuts"), false);
+    const first = t.fake.calls.length;
+    assert.ok(first > 0);
+    for (let i = 0; i < 4; i++) {
+      t.timers.advance(POLL_MS);
+      await t.settle();
+    }
+    assert.ok(t.fake.calls.length > first, "keeps polling while watched");
+    if (!noDconf) assert.equal(t.fake.calls.slice(first).filter((c) => c.startsWith("dconf dump")).length, 4, "one dump every 3 s");
+
+    t.watch(false);
+    await t.settle();
+    assert.equal(t.tool.isStale("shortcuts"), true, "rows kept, stale");
+    const stopped = t.fake.calls.length;
+    for (let i = 0; i < 20; i++) {
+      t.timers.advance(POLL_MS);
+      await t.settle();
+    }
+    assert.equal(t.fake.calls.length, stopped, "stops when the last viewer leaves");
+
+    // an action still reads GNOME's current list while nobody looks
+    t.fake.store.values[`${DIR}custom0/name`] = "Renamed elsewhere";
+    const r = await t.action("refresh", {});
+    assert.equal(r.error, undefined);
+    assert.equal(t.rows()["custom0"]!.name, "Renamed elsewhere");
+    assert.equal(t.fake.writes().length, 0);
+    await t.end();
+  }
 });

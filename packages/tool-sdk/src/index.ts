@@ -107,6 +107,8 @@ export class Tool {
   private out: Writable | undefined;
   private stopped = false;
   private loadError: string | undefined;
+  private isWatched = false;
+  private watchListeners = new Set<(watching: boolean) => void>();
 
   constructor(opts: ToolOptions) {
     this.opts = opts;
@@ -275,6 +277,7 @@ export class Tool {
         output.write(JSON.stringify(msg) + "\n");
       },
       onRequest: (method, params, ctx) => this.handle(method, params, ctx.id),
+      onNotification: (method, params) => this.onNotification(method, params),
       onInvalid: (raw, reason) => process.stderr.write(`${this.id}: ignoring input (${reason}): ${raw.slice(0, 200)}\n`),
       timeoutMs: 0,
     });
@@ -317,6 +320,36 @@ export class Tool {
     this.openStreams.clear();
     this.save();
     this.stopped = true;
+  }
+
+  // ---- watching ----
+
+  /**
+   * True while a visible browser tab shows this tool's page (the core's `watch` notification).
+   * Poll only while this is true; actions and CLIs read fresh on their own.
+   */
+  get watching(): boolean {
+    return this.isWatched;
+  }
+
+  /** Called on every change of `watching` (edges only). Returns a function that unsubscribes. */
+  onWatch(listener: (watching: boolean) => void): () => void {
+    this.watchListeners.add(listener);
+    return () => this.watchListeners.delete(listener);
+  }
+
+  private onNotification(method: string, params: unknown): void {
+    if (method !== "watch") return; // unknown notifications from the core are ignored
+    const w = (params as { watching?: unknown } | undefined)?.watching;
+    if (typeof w !== "boolean" || w === this.isWatched || this.stopped) return;
+    this.isWatched = w;
+    for (const l of [...this.watchListeners]) {
+      try {
+        l(w);
+      } catch (e) {
+        this.log.error(`watch listener failed: ${(e as Error).message}`);
+      }
+    }
   }
 
   private async handle(method: string, params: unknown, id: RpcId): Promise<unknown> {

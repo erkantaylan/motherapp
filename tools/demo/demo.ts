@@ -156,6 +156,17 @@ if (cmd === "serve") {
   // "level" pretends to live on a slow device: show the persisted value as stale, re-read it.
   if (!tool.isStale("level")) tool.markStale("level");
   setTimeout(() => tool.set("level", tool.get("level") as number), 1500);
+  // Poll only while watched (docs/extension-contract.md § 3): the "device" is re-read once when
+  // a visible tab opens the page, then every 10 s while one shows it, and never otherwise.
+  let poll: ReturnType<typeof setInterval> | undefined;
+  tool.onWatch((watching) => {
+    clearInterval(poll);
+    poll = undefined;
+    if (!watching) return;
+    const reread = () => tool.set("level", tool.get("level") as number);
+    reread();
+    poll = setInterval(reread, 10_000);
+  });
   const serving = tool.serve();
   tool.log.info("demo tool serving"); // after serve(): logs go over the channel, not stderr
   await serving;

@@ -235,6 +235,8 @@ export interface Harness {
   call(name: string, args?: Record<string, unknown>): Promise<{ result?: any; error?: { code: number; message: string } }>;
   logs(): { level: string; msg: string; fields?: Record<string, unknown> }[];
   url(p: string): string;
+  /** The core's `watch` notification (a visible tab opened or left the page). */
+  watch(watching: boolean): void;
   close(): Promise<void>;
 }
 
@@ -292,6 +294,9 @@ export async function harness(opts: { settings?: Partial<Settings>; service?: Pa
     },
     url(p) {
       return `http://127.0.0.1:${service.port}${p}`;
+    },
+    watch(watching) {
+      input.write(JSON.stringify({ jsonrpc: "2.0", method: "watch", params: { watching } }) + "\n");
     },
     async close() {
       await service.stop();

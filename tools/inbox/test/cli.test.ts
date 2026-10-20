@@ -115,10 +115,11 @@ test("new: refuses to print a link into captured output unless --print", async (
 test("links, panes and revoke through the core", async () => {
   const core = fakeCore(
     {
-      panes: { "3": { id: "%3", target: "m:0.0", path: "~/p", attached: "detached" } },
+      // what the page last saw; `inboxctl panes` must not print this cached list
+      panes: { "9": { id: "%9", target: "old:0.0", path: "~/old", attached: "detached" } },
       links: { ab: { id: "ab", label: "cloud", pane: "m:0.0", expires: NOW + 600_000, uses: 2, pending: 1, held: "Claude is working", last4: "wxyz" } },
     },
-    { revoke: (a) => ({ id: a.id }) },
+    { revoke: (a) => ({ id: a.id }), panes: () => [{ id: "%3", target: "m:0.0", path: "~/p", attached: "detached" }] },
   );
   const connect = async () => core.conn;
   assert.equal((await cli(["links"], { connect })).out, "ab  …wxyz  cloud  → m:0.0  expires in 10 min, 2 messages, 1 pending (Claude is working)\n");

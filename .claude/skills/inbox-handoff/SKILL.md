@@ -33,12 +33,16 @@ a fresh link**. This skill makes one and hands it over.
    ```
    It prints the `https://….trycloudflare.com/inbox/<token>` URL once. If it fails because the
    tunnel isn't up, check `motherapp status` and `motherapp logs`, then retry once.
-4. **Check it works from here:** `curl -sS -o /dev/null -w '%{http_code}\n' '<url>'` should give
-   `200`.
+4. **Check it works from here, and wait until it does:** `curl -sS -o /dev/null -w '%{http_code}\n' '<url>'`
+   should give `200`. Right after `inboxctl new`, a new quick-tunnel host often fails DNS
+   ("Could not resolve host", code 000) for a few seconds. Retry every 5 s for up to a minute
+   before handing the link over. After a restart, the *old* host answers `530`.
 5. **Hand it to the user to paste into the cloud session's chat.** Show the link and expiry in one
    short line. SendMessage to the cloud session (`session_01EFxPjjS9Wk2VY1spHAdLEj`, "motherAPp")
-   **does not reach it while it's idle**: twice it reported "sent" and nothing arrived, and the
-   cloud session isn't woken by it. You may still send it there too, but don't rely on it.
+   **does not reach it while it's idle**: it only queues the message, and an idle cloud session
+   never starts the turn that would read it (#23, three tries, 2026-10-20). You may still send it
+   there too (it's read on the cloud's next turn, e.g. once the user types anything there), but
+   don't rely on it.
 6. **Wait for the cloud to confirm.** Once it has the link, it POSTs a short
    `[inbox: cloud] got your link …` line through it, so the confirmation shows up in this pane.
 

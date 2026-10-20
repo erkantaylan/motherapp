@@ -95,6 +95,8 @@ test("core + shortcuts tool with fake gsettings/dconf: list, add, conflict, remo
   const info = c.notes("tools").at(-1).tools.find((x: any) => x.id === "shortcuts");
   assert.equal(info.page, "custom");
   assert.equal(info.title, "Shortcuts");
+  // The tab shows the Shortcuts page (unwatched, the tool reads nothing).
+  assert.equal((await c.call("tool.watch", { tool: "shortcuts" })).error, undefined);
 
   // the 8 rows arrive (snapshot or delta)
   const rows = () => {

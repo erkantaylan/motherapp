@@ -56,7 +56,7 @@ are core pages and always sit at the bottom of the sidebar. Unknown manifest fie
 ## 2. Serve mode: messages
 
 One JSON-RPC 2.0 message per line. Requests go core → tool and must be answered; notifications
-go tool → core. **Nothing else may be written to stdout.** stderr is fine: every stderr line
+go tool → core, except `watch` (core → tool). **Nothing else may be written to stdout.** stderr is fine: every stderr line
 becomes a log entry with level `error`.
 
 | Message | Kind | Params → result |
@@ -69,6 +69,7 @@ becomes a log entry with level `error`.
 | `progress` | notification | `{ id, text, fraction? }`, `id` = the action request's id |
 | `stream` | notification | `{ name, value }`, only while open, never cached, ≤ ~20 Hz |
 | `log` | notification | `{ level: "debug"\|"info"\|"warn"\|"error", msg, fields? }` |
+| `watch` | notification, core → tool | `{ watching: boolean }`: whether a visible browser tab shows the tool's page (see "Poll only while watched" in § 3). No reply. Ignore it if you don't poll. |
 
 Startup: the core sends `describe`, then `state.get` (10 s timeout each; failure counts as a
 crash). Only then is the tool `running`. Actions time out after 30 s. Error message strings are
@@ -166,8 +167,44 @@ if (process.argv[2] === "serve") {
 | `tool.action(name, handler)` | `handler(args, { id, progress })`; return value is the result, a throw is the error. |
 | `tool.stream(name, handler)` | See above. |
 | `tool.log.debug/info/warn/error(msg, fields?)` | `log` notification. While serving, `console.log/info/debug/warn` are routed here too; `console.error` goes to stderr (→ level error). |
+| `tool.watching` / `tool.onWatch((watching) => …)` | Whether a visible tab shows the tool's page; `onWatch` is called on every change and returns an unsubscribe function. Starts `false`. |
 | `tool.save()` | Write the state file now (otherwise debounced 500 ms, and on shutdown). |
 | `readPersistedState(id)` | For plain CLI subcommands that want the last known state. |
+
+**Poll only while watched.** Nothing should run every N seconds while nobody looks. The core
+counts viewers per tool: a browser tab that has the tool's page open **and** visible (Page
+Visibility API; a hidden tab, another page or a closed socket doesn't count). On 0→1 it sends
+the tool `watch {watching: true}` at once; on 1→0 it waits 5 s (so a quick tab switch doesn't
+stop and restart anything) and sends `{watching: false}`. Only edges are sent; after a restart
+the new process starts unwatched and hears `true` again if someone is looking. So a tool that
+polls:
+
+- polls only while `tool.watching`, and **refreshes immediately** when it turns true, so the
+  page never shows old data for long. The page may get the core's cached state first; mark
+  polled values stale when watching stops (they aren't kept current any more), and the
+  immediate refresh makes them fresh again. Stale is opacity only, so nothing moves;
+- keeps every action, CLI and keyboard shortcut working unwatched, each doing **its own fresh
+  read** when it needs one. Never answer a CLI from the cached state of a tool that polls: give
+  it an action that reads (`brightctl list` → the `list` action, `inboxctl panes` → `panes`),
+  or let the CLI read directly (`tmuxctl list`, `shortcutsctl list`);
+- keeps event-driven sources running (audio's `pw-dump --monitor` costs nothing while idle and
+  keeps the master volume current for the volume keys), and work that isn't polling (the
+  brightness confirm read after a write, inbox delivery).
+
+```ts
+let timer: ReturnType<typeof setInterval> | undefined;
+tool.onWatch((watching) => {
+  clearInterval(timer);
+  timer = undefined;
+  if (!watching) return tool.markStale("items");
+  void refresh();                         // at once: the page just opened
+  timer = setInterval(() => void refresh(), 2000);
+});
+```
+
+`tools/demo/` does exactly this; `tools/tmux/`, `tools/shortcuts/`, `tools/brightness/` and
+`tools/inbox/` (its pane list) do it with injectable timers so their tests can assert that no
+`tmux`/`gsettings`/`getvcp` call happens while unwatched.
 
 **Persistence.** On construction the SDK loads `$XDG_STATE_HOME/motherapp/<id>.json`
 (default `~/.local/state/motherapp/`) over `initialState` and **marks every loaded top-level key

@@ -1,5 +1,7 @@
-// Serve mode: polls `tmux list-sessions` every 2 s and publishes only what changed. Rows are
-// keyed by session id ($3 → "3"), so a rename updates its row in place.
+// Serve mode: while the page is watched (a visible tab shows it), polls `tmux list-sessions`
+// every 2 s and publishes only what changed; unwatched it runs nothing and marks the list
+// stale. Rows are keyed by session id ($3 → "3"), so a rename updates its row in place.
+// Actions and `tmuxctl` always read tmux themselves.
 import { RpcError } from "@motherapp/tool-sdk";
 import type { JsonObject, JsonValue, Tool } from "@motherapp/tool-sdk";
 import { diffState } from "./diff.ts";
@@ -38,6 +40,9 @@ export class TmuxService {
   private timer: unknown;
   private inflight: Promise<void> | undefined;
   private running = false;
+  /** Bumped on every watch edge, so a loop from an earlier watch period stops. */
+  private loop = 0;
+  private offWatch: (() => void) | undefined;
   private lastProblem = "";
 
   constructor(opts: ServiceOptions) {
@@ -52,18 +57,40 @@ export class TmuxService {
   start(): void {
     this.running = true;
     if (!this.tool.isStale("sessions")) this.tool.markStale("sessions"); // until the first poll
-    void this.tick();
+    this.offWatch = this.tool.onWatch((w) => this.onWatch(w));
+    if (this.tool.watching) this.onWatch(true);
   }
 
   stop(): void {
     this.running = false;
+    this.offWatch?.();
+    this.offWatch = undefined;
+    this.loop++;
+    this.clearTimer();
+  }
+
+  private clearTimer(): void {
     if (this.timer !== undefined) this.timers.clearTimeout(this.timer);
     this.timer = undefined;
   }
 
-  private async tick(): Promise<void> {
+  /** Watched: list now, then every 2 s. Unwatched: stop, and the list is stale until the next look. */
+  private onWatch(watching: boolean): void {
+    if (!this.running) return;
+    const gen = ++this.loop;
+    this.clearTimer();
+    if (watching) {
+      void this.tick(gen);
+      return;
+    }
+    void (this.inflight ?? Promise.resolve()).then(() => {
+      if (gen === this.loop && !this.tool.isStale("sessions")) this.tool.markStale("sessions");
+    });
+  }
+
+  private async tick(gen: number): Promise<void> {
     await this.poll();
-    if (this.running) this.timer = this.timers.setTimeout(() => void this.tick(), this.intervalMs);
+    if (this.running && gen === this.loop) this.timer = this.timers.setTimeout(() => void this.tick(gen), this.intervalMs);
   }
 
   /** One poll. A call while one is running shares it. */

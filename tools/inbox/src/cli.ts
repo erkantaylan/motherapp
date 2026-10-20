@@ -130,7 +130,8 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         const c = await open();
         let rows: { id: string; target: string; path: string; attached: string }[];
         if (c) {
-          rows = Object.values((c.state.panes ?? {}) as Record<string, { id: string; target: string; path: string; attached: string }>);
+          // Read now: the serve process refreshes its list only while the page is watched.
+          rows = (await c.action("panes")) as { id: string; target: string; path: string; attached: string }[];
         } else {
           const extra = loadSettings(settingsFile(env), env).settings.paneCommands;
           const list = await new TmuxPanes(io.panes).list();

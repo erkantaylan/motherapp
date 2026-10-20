@@ -4,7 +4,7 @@
 import { createTool, readPersistedState } from "@motherapp/tool-sdk";
 import type { JsonObject, Logger } from "@motherapp/tool-sdk";
 import type { Writable } from "node:stream";
-import { TOOL_ID, connectCore, corePort, isStalePath } from "./coreClient.ts";
+import { TOOL_ID, connectCore, corePort } from "./coreClient.ts";
 import type { CoreConnection } from "./coreClient.ts";
 import { parseValueSpec } from "./model.ts";
 import { selectBackend } from "./select.ts";
@@ -70,18 +70,6 @@ function printRows(out: Writable, rows: Row[]): void {
   }
 }
 
-function rowsFromSnapshot(state: Record<string, unknown>, stale: string[]): Row[] {
-  const monitors = (state.monitors ?? {}) as Record<string, Record<string, unknown>>;
-  return Object.entries(monitors)
-    .map(([id, m]) => {
-      const r: Row = { id, title: String(m.title ?? id), bus: Number(m.bus), present: m.present !== false, stale: isStalePath(stale, `monitors.${id}.brightness`) };
-      if (typeof m.connector === "string") r.connector = m.connector;
-      if (typeof m.brightness === "number") r.brightness = m.brightness;
-      return r;
-    })
-    .sort((a, b) => a.title.localeCompare(b.title));
-}
-
 const asRows = (v: unknown) => (v as Row[]).slice().sort((a, b) => a.title.localeCompare(b.title));
 
 /** The same operations, either through the core or on a local service. */
@@ -93,7 +81,8 @@ interface Session {
 
 function coreSession(c: CoreConnection): Session {
   return {
-    list: async () => rowsFromSnapshot(c.snapshot.state, c.snapshot.stale),
+    // A fresh read: the serve process re-reads only while its page is watched.
+    list: async () => asRows(await c.action("list", {})),
     action: (name, args) => c.action(name, args),
     close: async () => c.close(),
   };

@@ -3,7 +3,10 @@
 // - the last known values come from the state file (stale) and are re-read in the background;
 // - detection runs once at start, then only on demand or after a failure;
 // - calls are serialized per monitor and slider writes are coalesced (newest value wins);
-// - every call has a timeout, so a monitor that is off or unplugged fails with a message.
+// - every call has a timeout, so a monitor that is off or unplugged fails with a message;
+// - the background re-read (every 2 min) runs only while the page is watched, and once right
+//   when it opens. The confirming read after a write, actions and `brightctl get`/`list` read
+//   on their own whether anyone looks or not.
 import { RpcError } from "@motherapp/tool-sdk";
 import type { JsonObject, JsonValue, Logger, Tool } from "@motherapp/tool-sdk";
 import { BackendError } from "./backend.ts";
@@ -25,7 +28,7 @@ export interface ServiceOptions {
   detectTimeoutMs?: number;
   /** Re-read a monitor this long after its last write, to confirm it. Default 1.5 s. */
   confirmDelayMs?: number;
-  /** Background re-read of every monitor. Default 2 min; 0 turns it off. */
+  /** Background re-read of every monitor while the page is watched. Default 2 min; 0 turns it off. */
   pollMs?: number;
   /** While a known monitor is missing, re-detect after this long, doubling up to 30 min. Default 60 s. */
   missingRetryMs?: number;
@@ -71,6 +74,7 @@ export class BrightnessService {
   private missingTimer: ReturnType<typeof setTimeout> | undefined;
   private missingDelay: number;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private offWatch: (() => void) | undefined;
   private stopped = false;
   private handlers = new Map<string, (args: JsonObject) => Promise<JsonValue | void>>();
   private log: Logger;
@@ -138,16 +142,27 @@ export class BrightnessService {
         return undefined;
       },
     );
-    const pollMs = this.opts.pollMs ?? 120_000;
-    if (pollMs > 0) {
-      this.pollTimer = setInterval(() => void this.poll(), pollMs);
-      this.pollTimer.unref?.();
+    if ((this.opts.pollMs ?? 120_000) > 0) {
+      this.offWatch = t.onWatch((w) => this.onWatch(w));
+      if (t.watching) this.onWatch(true);
     }
     return this.detect(false).catch(() => {});
   }
 
+  /** Watched: re-read now, then every `pollMs`. Unwatched: no periodic reads (the worker stays loaded). */
+  private onWatch(watching: boolean): void {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = undefined;
+    if (!watching || this.stopped) return;
+    void this.poll(true);
+    this.pollTimer = setInterval(() => void this.poll(), this.opts.pollMs ?? 120_000);
+    this.pollTimer.unref?.();
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
+    this.offWatch?.();
+    this.offWatch = undefined;
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.missingTimer) clearTimeout(this.missingTimer);
     for (const m of this.monitors.values()) if (m.confirmTimer) clearTimeout(m.confirmTimer);
@@ -426,10 +441,11 @@ export class BrightnessService {
     m.confirmTimer.unref?.();
   }
 
-  private async poll(): Promise<void> {
+  /** Re-reads every idle monitor; `opening` (the page just opened) also reads recently set ones. */
+  private async poll(opening = false): Promise<void> {
     if (this.stopped || this.detecting) return;
     for (const m of this.monitors.values()) {
-      if (!m.present || !m.queue.idle || Date.now() - m.lastWriteAt < 30_000) continue;
+      if (!m.present || !m.queue.idle || (!opening && Date.now() - m.lastWriteAt < 30_000)) continue;
       void this.read(m).catch(() => {});
     }
   }
@@ -562,6 +578,12 @@ export class BrightnessService {
       const errors = results.filter((r): r is PromiseRejectedResult => r.status === "rejected").map((r) => (r.reason as Error).message);
       if (errors.length > 0 && errors.length === ms.length) throw new Error(errors.join("; "));
       return ms.map((m) => this.summary(m));
+    });
+
+    // `brightctl list` through the core: every monitor, each present one read now.
+    reg("list", async () => {
+      await Promise.allSettled(this.list().filter((m) => m.present).map((m) => this.read(m)));
+      return this.list().map((m) => this.summary(m));
     });
 
     reg("redetect", async () => {
