@@ -11,6 +11,15 @@
   delivered`), as long as the quick tunnel that made the link is still up. After a restart the old
   host returns Cloudflare **error 1033** (HTTP 530): the tunnel is gone and a new link is needed.
 
+- [both] **It isn't about idleness either.** On 2026-10-21 the local agent sent a SendMessage while the
+  cloud session had two background agents running, and nothing arrived. The cloud's notification
+  queue was still empty after the user's next message. → Treat local → cloud SendMessage as
+  **not working**. What does work for local → cloud: **GitHub issue comments** (the cloud session
+  checks issues every 5 minutes while its loop runs), and the user pasting into the cloud chat. Never
+  use GitHub for secrets such as inbox links; those go only through the user.
+
 ## Open
 
-- Whether SendMessage reaches the cloud session while it is mid-turn (not idle). Untested.
+- Why SendMessage doesn't arrive: a wrong session id, a permission the local session lacks, or
+  delivery to cloud sessions not being supported. Check what the local side's SendMessage result
+  actually says.
