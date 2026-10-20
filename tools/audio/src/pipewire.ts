@@ -142,9 +142,9 @@ export interface Device {
   kind: "sink" | "source";
   /** node.name: what `pw-play/pw-record --target` and the default metadata use. */
   name: string;
-  /** Row title, as audio-switch: node.nick, else the description. */
+  /** Row title: node.description, as `wpctl status` and GNOME show it (see deviceTitles). */
   title: string;
-  /** Second line: node.description, else node.name. */
+  /** Second line: node.nick when it adds something to the title (e.g. an HDMI monitor's name), else "". */
   subtitle: string;
 }
 
@@ -210,6 +210,28 @@ function metadataName(v: Json): string | undefined {
   return undefined;
 }
 
+/**
+ * ALSA PCM names that end up in node.nick when there is nothing better. They say nothing about
+ * the device: "USB Audio #1" is the second PCM of any USB card (issue #5).
+ */
+const GENERIC_NICK = /^(USB Audio|HDMI|DisplayPort|Digital|Analog|S\/PDIF|IEC958)( #?\d+)?$|^subdevice #\d+$/i;
+
+/**
+ * Title and second line of an output or input. The title is node.description, which is what
+ * `wpctl status` and GNOME show, and which tells a headset's Chat and Game PCMs apart.
+ * audio-switch titled rows with node.nick because it is shorter and, on HDMI, names the monitor
+ * ("X34 P"). But on a USB card with several PCMs the nick is the card name on one PCM and a
+ * generic PCM name ("USB Audio #1") on the next. So the nick only becomes the second line, and
+ * only when it isn't generic and isn't already part of the title.
+ */
+export function deviceTitles(p: Dict, name: string): { title: string; subtitle: string } {
+  const nick = str(p["node.nick"]);
+  const useful = nick !== undefined && !GENERIC_NICK.test(nick.trim()) ? nick : undefined;
+  const title = str(p["node.description"]) ?? useful ?? name;
+  const subtitle = useful !== undefined && !title.toLowerCase().includes(useful.toLowerCase()) ? useful : "";
+  return { title, subtitle };
+}
+
 export function buildView(objects: Iterable<PwObject>, opts: ViewOptions = {}): AudioView {
   const view: AudioView = { sinks: [], sources: [], apps: [] };
   const apps = new Map<string, AppGroup>();
@@ -231,8 +253,8 @@ export function buildView(objects: Iterable<PwObject>, opts: ViewOptions = {}): 
     if (cls === "Audio/Sink" || cls === "Audio/Source") {
       const name = str(p["node.name"]);
       if (!name) continue;
-      const desc = str(p["node.description"]) ?? name;
-      const dev: Device = { id: o.id, kind: cls === "Audio/Sink" ? "sink" : "source", name, title: str(p["node.nick"]) ?? desc, subtitle: desc };
+      const { title, subtitle } = deviceTitles(p, name);
+      const dev: Device = { id: o.id, kind: cls === "Audio/Sink" ? "sink" : "source", name, title, subtitle };
       (dev.kind === "sink" ? view.sinks : view.sources).push(dev);
     } else if (cls === "Stream/Output/Audio") {
       const role = str(p["media.role"]);

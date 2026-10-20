@@ -9,6 +9,8 @@ import type { Timers } from "../src/monitor.ts";
 
 export const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 export const dumpText = () => fs.readFileSync(path.join(fixtures, "pw-dump.json"), "utf8");
+/** A SteelSeries Arctis Pro Wireless alone: one USB card with Chat and Game PCMs (issue #5). */
+export const arctisText = () => fs.readFileSync(path.join(fixtures, "pw-dump-arctis.json"), "utf8");
 export const monitorText = () => fs.readFileSync(path.join(fixtures, "pw-dump-monitor.txt"), "utf8");
 /** The monitor fixture as parsed batches: [0] is the initial full dump. */
 export function monitorBatches(): unknown[][] {

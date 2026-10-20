@@ -20,7 +20,7 @@ export const USAGE = `usage: audioctl <command> [args]
   serve                           JSON-RPC serve mode (started by the motherapp core)
 
 <app> is the app's name (e.g. Firefox), its binary or a unique part of either.
-<name> is a node name, the description shown by "list", or a unique part of it.`;
+<name> is a node name, the title shown by "list", or a unique part of it.`;
 
 export interface CliIO {
   runner: Runner;
@@ -64,7 +64,7 @@ function printDevices(out: Writable, title: string, list: Device[], defaultName:
   if (list.length === 0) line(out, "    (none)");
   for (const d of list) {
     const mark = d.name === defaultName ? "*" : " ";
-    const sub = d.subtitle !== d.title ? `  (${d.subtitle})` : "";
+    const sub = d.subtitle && d.subtitle !== d.title ? `  (${d.subtitle})` : "";
     line(out, `  ${mark} ${String(d.id).padStart(4)}  ${d.title}${sub}`);
   }
 }

@@ -1,0 +1,589 @@
+[
+  {
+    "id": 0,
+    "type": "PipeWire:Interface:Core",
+    "version": 4,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "cookie": 1880421,
+      "user-name": "kappa",
+      "host-name": "kappa-desktop",
+      "version": "1.0.5",
+      "name": "pipewire-0",
+      "change-mask": [
+        "props"
+      ],
+      "props": {
+        "config.name": "pipewire.conf",
+        "core.daemon": true,
+        "core.name": "pipewire-0",
+        "default.clock.rate": 48000,
+        "object.id": 0,
+        "object.serial": 0
+      }
+    }
+  },
+  {
+    "id": 52,
+    "type": "PipeWire:Interface:Device",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "change-mask": [
+        "props",
+        "params"
+      ],
+      "props": {
+        "alsa.card": 3,
+        "alsa.card_name": "Arctis Pro Wireless",
+        "api.alsa.card": 3,
+        "api.alsa.path": "hw:3",
+        "device.api": "alsa",
+        "device.bus": "usb",
+        "device.description": "Arctis Pro Wireless",
+        "device.name": "alsa_card.usb-SteelSeries_Arctis_Pro_Wireless-00",
+        "device.nick": "Arctis Pro Wireless",
+        "factory.id": 14,
+        "media.class": "Audio/Device",
+        "object.id": 52,
+        "object.serial": 52,
+        "client.id": 33
+      },
+      "params": {
+        "EnumProfile": [],
+        "Profile": [
+          {
+            "index": 1,
+            "name": "output:analog-stereo+input:analog-stereo",
+            "description": "Analog Stereo Duplex",
+            "priority": 6565,
+            "available": "yes"
+          }
+        ],
+        "EnumRoute": [],
+        "Route": []
+      }
+    }
+  },
+  {
+    "id": 40,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "max-input-ports": 65,
+      "max-output-ports": 0,
+      "change-mask": [
+        "input-ports",
+        "output-ports",
+        "state",
+        "props",
+        "params"
+      ],
+      "n-input-ports": 1,
+      "n-output-ports": 1,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "alsa.card": 3,
+        "alsa.card_name": "Arctis Pro Wireless",
+        "alsa.class": "generic",
+        "alsa.device": 0,
+        "alsa.driver_name": "snd_usb_audio",
+        "alsa.id": "Arctis Pro Wireless",
+        "alsa.name": "Arctis Pro Wireless",
+        "alsa.resolution_bits": 16,
+        "alsa.subclass": "generic-mix",
+        "alsa.subdevice": 0,
+        "alsa.subdevice_name": "subdevice #0",
+        "api.alsa.card.name": "Arctis Pro Wireless",
+        "api.alsa.path": "hw:3,0",
+        "api.alsa.pcm.card": 3,
+        "api.alsa.pcm.stream": "playback",
+        "audio.channels": 1,
+        "audio.position": "MONO",
+        "card.profile.device": 9,
+        "client.id": 33,
+        "device.api": "alsa",
+        "device.class": "sound",
+        "device.id": 52,
+        "device.profile.description": "Chat Output",
+        "device.profile.name": "mono-chat",
+        "device.routes": 1,
+        "factory.id": 18,
+        "factory.mode": "merge",
+        "factory.name": "api.alsa.pcm.sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "node.description": "Arctis Pro Wireless Chat",
+        "node.driver": true,
+        "node.name": "alsa_output.usb-SteelSeries_Arctis_Pro_Wireless-00.mono-chat",
+        "node.nick": "Arctis Pro Wireless",
+        "node.pause-on-idle": false,
+        "object.path": "alsa:pcm:3:hw:3,0:playback",
+        "object.serial": 40,
+        "port.group": "playback",
+        "priority.driver": 1009,
+        "priority.session": 1009,
+        "object.id": 40
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": {
+              "default": "F32P",
+              "alt1": [
+                "F32P",
+                "F32"
+              ]
+            },
+            "rate": {
+              "default": 48000,
+              "min": 1,
+              "max": 2147483647
+            },
+            "channels": 1
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": {
+              "default": 1,
+              "min": 0,
+              "max": 10
+            }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": false
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1,
+            "mute": false,
+            "channelVolumes": [
+              1
+            ],
+            "volumeBase": 1,
+            "volumeStep": 0.000015,
+            "channelMap": [
+              "MONO"
+            ],
+            "softMute": false,
+            "softVolumes": [
+              1
+            ],
+            "monitorMute": false,
+            "monitorVolumes": [
+              1
+            ]
+          },
+          {
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.normalize",
+              false,
+              "resample.quality",
+              4
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32P",
+            "rate": 48000,
+            "channels": 1,
+            "position": [
+              "MONO"
+            ]
+          }
+        ],
+        "EnumPortConfig": [],
+        "PortConfig": [],
+        "Latency": [],
+        "ProcessLatency": [],
+        "Tag": []
+      }
+    }
+  },
+  {
+    "id": 41,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "max-input-ports": 65,
+      "max-output-ports": 0,
+      "change-mask": [
+        "input-ports",
+        "output-ports",
+        "state",
+        "props",
+        "params"
+      ],
+      "n-input-ports": 2,
+      "n-output-ports": 2,
+      "state": "running",
+      "error": null,
+      "props": {
+        "alsa.card": 3,
+        "alsa.card_name": "Arctis Pro Wireless",
+        "alsa.class": "generic",
+        "alsa.device": 1,
+        "alsa.driver_name": "snd_usb_audio",
+        "alsa.id": "USB Audio #1",
+        "alsa.name": "USB Audio #1",
+        "alsa.resolution_bits": 16,
+        "alsa.subclass": "generic-mix",
+        "alsa.subdevice": 0,
+        "alsa.subdevice_name": "subdevice #0",
+        "api.alsa.card.name": "Arctis Pro Wireless",
+        "api.alsa.path": "hw:3,1",
+        "api.alsa.pcm.card": 3,
+        "api.alsa.pcm.stream": "playback",
+        "audio.channels": 2,
+        "audio.position": "FL,FR",
+        "card.profile.device": 9,
+        "client.id": 33,
+        "device.api": "alsa",
+        "device.class": "sound",
+        "device.id": 52,
+        "device.profile.description": "Game Output",
+        "device.profile.name": "stereo-game",
+        "device.routes": 1,
+        "factory.id": 18,
+        "factory.mode": "merge",
+        "factory.name": "api.alsa.pcm.sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "node.description": "Arctis Pro Wireless Game",
+        "node.driver": true,
+        "node.name": "alsa_output.usb-SteelSeries_Arctis_Pro_Wireless-00.stereo-game",
+        "node.nick": "USB Audio #1",
+        "node.pause-on-idle": false,
+        "object.path": "alsa:pcm:3:hw:3,1:playback",
+        "object.serial": 41,
+        "port.group": "playback",
+        "priority.driver": 1009,
+        "priority.session": 1009,
+        "object.id": 41
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": {
+              "default": "F32P",
+              "alt1": [
+                "F32P",
+                "F32"
+              ]
+            },
+            "rate": {
+              "default": 48000,
+              "min": 1,
+              "max": 2147483647
+            },
+            "channels": 2
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": {
+              "default": 1,
+              "min": 0,
+              "max": 10
+            }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": false
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1,
+            "mute": false,
+            "channelVolumes": [
+              1,
+              1
+            ],
+            "volumeBase": 1,
+            "volumeStep": 0.000015,
+            "channelMap": [
+              "FL",
+              "FR"
+            ],
+            "softMute": false,
+            "softVolumes": [
+              1,
+              1
+            ],
+            "monitorMute": false,
+            "monitorVolumes": [
+              1,
+              1
+            ]
+          },
+          {
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.normalize",
+              false,
+              "resample.quality",
+              4
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32P",
+            "rate": 48000,
+            "channels": 2,
+            "position": [
+              "FL",
+              "FR"
+            ]
+          }
+        ],
+        "EnumPortConfig": [],
+        "PortConfig": [],
+        "Latency": [],
+        "ProcessLatency": [],
+        "Tag": []
+      }
+    }
+  },
+  {
+    "id": 43,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 65,
+      "change-mask": [
+        "input-ports",
+        "output-ports",
+        "state",
+        "props",
+        "params"
+      ],
+      "n-input-ports": 0,
+      "n-output-ports": 1,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "alsa.card": 3,
+        "alsa.card_name": "Arctis Pro Wireless",
+        "alsa.class": "generic",
+        "alsa.device": 0,
+        "alsa.driver_name": "snd_usb_audio",
+        "alsa.id": "Arctis Pro Wireless",
+        "alsa.name": "Arctis Pro Wireless",
+        "alsa.resolution_bits": 16,
+        "alsa.subclass": "generic-mix",
+        "alsa.subdevice": 0,
+        "alsa.subdevice_name": "subdevice #0",
+        "api.alsa.card.name": "Arctis Pro Wireless",
+        "api.alsa.path": "hw:3,0",
+        "api.alsa.pcm.card": 3,
+        "api.alsa.pcm.stream": "capture",
+        "audio.channels": 1,
+        "audio.position": "MONO",
+        "card.profile.device": 10,
+        "client.id": 33,
+        "device.api": "alsa",
+        "device.class": "sound",
+        "device.id": 52,
+        "device.profile.description": "Chat Input",
+        "device.profile.name": "mono-chat",
+        "device.routes": 1,
+        "factory.id": 18,
+        "factory.mode": "merge",
+        "factory.name": "api.alsa.pcm.source",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Source",
+        "node.description": "Arctis Pro Wireless Chat",
+        "node.driver": true,
+        "node.name": "alsa_input.usb-SteelSeries_Arctis_Pro_Wireless-00.mono-chat",
+        "node.nick": "Arctis Pro Wireless",
+        "node.pause-on-idle": false,
+        "object.path": "alsa:pcm:3:hw:3,0:capture",
+        "object.serial": 43,
+        "port.group": "capture",
+        "priority.driver": 2009,
+        "priority.session": 2009,
+        "object.id": 43
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": {
+              "default": "F32P",
+              "alt1": [
+                "F32P",
+                "F32"
+              ]
+            },
+            "rate": {
+              "default": 48000,
+              "min": 1,
+              "max": 2147483647
+            },
+            "channels": 1
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": {
+              "default": 1,
+              "min": 0,
+              "max": 10
+            }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": false
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1,
+            "mute": false,
+            "channelVolumes": [
+              1
+            ],
+            "volumeBase": 1,
+            "volumeStep": 0.000015,
+            "channelMap": [
+              "MONO"
+            ],
+            "softMute": false,
+            "softVolumes": [
+              1
+            ],
+            "monitorMute": false,
+            "monitorVolumes": [
+              1
+            ]
+          },
+          {
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.normalize",
+              false,
+              "resample.quality",
+              4
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32P",
+            "rate": 48000,
+            "channels": 1,
+            "position": [
+              "MONO"
+            ]
+          }
+        ],
+        "EnumPortConfig": [],
+        "PortConfig": [],
+        "Latency": [],
+        "ProcessLatency": [],
+        "Tag": []
+      }
+    }
+  },
+  {
+    "id": 34,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "props": {
+      "client.id": 33,
+      "factory.id": 13,
+      "metadata.name": "default",
+      "object.serial": 34
+    },
+    "metadata": [
+      {
+        "subject": 0,
+        "key": "default.audio.sink",
+        "type": "Spa:String:JSON",
+        "value": {
+          "name": "alsa_output.usb-SteelSeries_Arctis_Pro_Wireless-00.stereo-game"
+        }
+      },
+      {
+        "subject": 0,
+        "key": "default.audio.source",
+        "type": "Spa:String:JSON",
+        "value": {
+          "name": "alsa_input.usb-SteelSeries_Arctis_Pro_Wireless-00.mono-chat"
+        }
+      }
+    ]
+  }
+]
