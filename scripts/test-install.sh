@@ -921,7 +921,8 @@ run_motherapp install
 check "pull: exit 0" exit_is 0
 check "pull: fast-forwarded" test "$(head_of "$R")" = "$(head_of "$SEED")"
 check "pull: ran git pull --ff-only" out_has '\+ git pull --ff-only origin main'
-check "pull: ran ./install.sh --yes --allow-removals (no questions)" calls_has "install.sh --yes --allow-removals"
+check "pull: ran ./install.sh --yes, never --allow-removals" calls_has "install.sh --yes"
+check "pull: no --allow-removals" calls_lacks "allow-removals"
 check "pull: old -> new" out_has "^    v1-$H1 → v1-$H3\$"
 check "pull: commit list, newest first" \
   bash -c 'grep -A2 "^    commits:" "$1" | sed -n "2,3p" | sed -E "s/^      [0-9a-f]{7,} //" | tr "\n" "," | grep -qx "fix bug B,add feature A,"' _ "$OUT"
