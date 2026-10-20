@@ -36,17 +36,15 @@ a fresh link**. This skill makes one and hands it over.
 4. **Check it works from here, and wait until it does:** `curl -sS -o /dev/null -w '%{http_code}\n' '<url>'`
    should give `200`. Right after `inboxctl new`, a new quick-tunnel host often fails DNS
    ("Could not resolve host", code 000) for a few seconds. Retry every 5 s for up to a minute
-   before sending the link. After a restart, the *old* host answers `530`.
-5. **Send it to the cloud session** with **SendMessage** to `session_01EFxPjjS9Wk2VY1spHAdLEj`
-   (title "motherAPp"), as one short message:
-   `inbox link for <pane> (expires <time>): <url> — GET it first for instructions.`
-6. **Wait for the cloud to confirm.** It confirms by POSTing a short `[inbox: cloud] …` line
-   through the link, so the confirmation arrives in this pane. If nothing arrives within a few
-   minutes, SendMessage didn't reach it. That's the normal case when the cloud session is
-   **idle**: SendMessage only queues the message, and a cloud session reads its queue on its
-   next turn, which an idle session never starts by itself (#23, verified 2026-10-20). Then tell
-   the user, in one line, to **paste the link into the cloud session's chat** (or type anything
-   there, so it takes a turn and reads the queued message).
+   before handing the link over. After a restart, the *old* host answers `530`.
+5. **Hand it to the user to paste into the cloud session's chat.** Show the link and expiry in one
+   short line. SendMessage to the cloud session (`session_01EFxPjjS9Wk2VY1spHAdLEj`, "motherAPp")
+   **does not reach it while it's idle**: it only queues the message, and an idle cloud session
+   never starts the turn that would read it (#23, three tries, 2026-10-20). You may still send it
+   there too (it's read on the cloud's next turn, e.g. once the user types anything there), but
+   don't rely on it.
+6. **Wait for the cloud to confirm.** Once it has the link, it POSTs a short
+   `[inbox: cloud] got your link …` line through it, so the confirmation shows up in this pane.
 
 ## Rules
 
