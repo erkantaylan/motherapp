@@ -4,13 +4,13 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DEFAULTS, linkOptions, parseDuration } from "../src/limits.ts";
+import { linkOptions, parseDuration } from "../src/limits.ts";
 import { RateLimiter } from "../src/ratelimit.ts";
 import { LOG_MAX, Store, TOKEN_RE, hashToken, linkStatus, newToken } from "../src/store.ts";
 import { tmpDir } from "./fakes.ts";
 
 const pane = { id: "%1", target: "motherapp:0.0", pid: 1001, path: "/home/u/p" };
-const opts = { ...DEFAULTS, label: "cloud", pane, host: "a.trycloudflare.com" };
+const opts = { expiresMs: 24 * 3600_000, label: "cloud", pane, host: "a.trycloudflare.com" };
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 
 test("tokens: 32 random bytes, base64url, 43 characters, all different", () => {
@@ -47,22 +47,21 @@ test("only the SHA-256 is stored, in a 0700 directory and 0600 files", () => {
   assert.equal(new Store(dir).verify(token, 2000)?.id, link.id);
 });
 
-test("verify: unknown, malformed, revoked, expired and used-up tokens all give undefined", () => {
+test("verify: unknown, malformed, revoked and expired tokens all give undefined", () => {
   const s = new Store(tmpDir("verify"));
   const live = s.create(opts, 0);
   const revoked = s.create(opts, 0);
   const expired = s.create({ ...opts, expiresMs: 1000 }, 0);
-  const used = s.create({ ...opts, maxUses: 1 }, 0);
   s.revoke(revoked.link.id, 10);
-  s.recordUse(used.link.id);
+  s.recordUse(live.link.id);
   const now = 5000;
   assert.equal(s.verify(live.token, now)?.id, live.link.id);
-  for (const t of [newToken(), revoked.token, expired.token, used.token, "", "short", live.token + "x", live.token.slice(0, -1) + "?", "../../etc/passwd"]) {
+  for (const t of [newToken(), revoked.token, expired.token, "", "short", live.token + "x", live.token.slice(0, -1) + "?", "../../etc/passwd"]) {
     assert.equal(s.verify(t, now), undefined, t);
   }
   assert.equal(linkStatus(s.get(revoked.link.id)!, now), "revoked");
   assert.equal(linkStatus(s.get(expired.link.id)!, now), "expired");
-  assert.equal(linkStatus(s.get(used.link.id)!, now), "used up");
+  assert.equal(s.get(live.link.id)!.uses, 1);
   assert.deepEqual(s.active(now).map((l) => l.id), [live.link.id]);
   assert.equal(s.revoke(revoked.link.id, now), false, "revoking twice fails");
   assert.equal(s.revoke("nope", now), false);
@@ -81,6 +80,36 @@ test("prune forgets links a week after they ended; the delivery log is capped", 
   assert.equal(d.at(-1)!.seq, LOG_MAX + 5);
 });
 
+test("links stored with the old maxUses/maxLen fields still load; the fields are dropped", () => {
+  const dir = tmpDir("old");
+  const tokens = [newToken(), newToken(), newToken()];
+  const old = (i: number, more: Record<string, unknown>) => ({
+    id: `old${i}`,
+    hash: hashToken(tokens[i]!),
+    last4: tokens[i]!.slice(-4),
+    label: "cloud",
+    pane,
+    host: "a.trycloudflare.com",
+    created: 1000,
+    expires: 1000 + 86_400_000,
+    ...more,
+  });
+  const links = [old(0, { maxUses: 20, uses: 3, maxLen: 500 }), old(1, { maxUses: 2, uses: 2, maxLen: 100 }), old(2, {})];
+  fs.writeFileSync(path.join(dir, "links.json"), JSON.stringify({ version: 1, links }));
+  const s = new Store(dir);
+  assert.deepEqual(s.problems, []);
+  const a = s.verify(tokens[0]!, 5000)!;
+  assert.equal(a.id, "old0");
+  assert.equal(a.uses, 3);
+  assert.ok(!("maxUses" in a) && !("maxLen" in a), "old limits are ignored");
+  assert.equal(s.verify(tokens[1]!, 5000), undefined, "a link that had used up its messages stays ended");
+  assert.equal(linkStatus(s.get("old1")!, 5000), "revoked");
+  assert.equal(s.verify(tokens[2]!, 5000)?.uses, 0, "no uses field: 0");
+  s.recordUse("old0");
+  const saved = fs.readFileSync(s.linksFile, "utf8");
+  assert.ok(!saved.includes("maxUses") && !saved.includes("maxLen"), "dropped on the next write");
+});
+
 test("an unreadable links file is reported, not fatal", () => {
   const dir = tmpDir("bad");
   fs.writeFileSync(path.join(dir, "links.json"), "{nope");
@@ -89,12 +118,16 @@ test("an unreadable links file is reported, not fatal", () => {
   assert.match(s.problems[0]!, /cannot read/);
 });
 
-test("link options: defaults 24 h / 20 uses / 500 chars, bounds, durations", () => {
-  assert.deepEqual(linkOptions({}), { expiresMs: 86_400_000, maxUses: 20, maxLen: 500 });
-  assert.deepEqual(linkOptions({ expires: "90m", maxUses: "3", maxLen: 100 }), { expiresMs: 5_400_000, maxUses: 3, maxLen: 100 });
+test("link options: only the expiry, in hours (default 24), bounds, durations", () => {
+  assert.deepEqual(linkOptions({}), { expiresMs: 86_400_000 });
+  assert.deepEqual(linkOptions({ hours: "1.5" }), { expiresMs: 5_400_000 });
+  assert.deepEqual(linkOptions({ hours: 2 }), { expiresMs: 7_200_000 });
+  assert.deepEqual(linkOptions({ expires: "90m" }), { expiresMs: 5_400_000 });
+  assert.deepEqual(linkOptions({ expires: "48" }), { expiresMs: 48 * 3600_000 });
+  assert.deepEqual(linkOptions({ maxUses: 3, maxLen: 100 } as never), { expiresMs: 86_400_000 }, "old options are ignored");
   assert.equal(parseDuration("1h30m"), 5_400_000);
   assert.equal(parseDuration("7d"), 604_800_000);
-  for (const bad of [{ expires: "forever" }, { expires: "10s" }, { expires: "31d" }, { maxUses: 0 }, { maxUses: "1.5" }, { maxLen: 5000 }, { expires: true }]) {
+  for (const bad of [{ expires: "forever" }, { expires: "10s" }, { expires: "31d" }, { hours: 0 }, { hours: "-1" }, { hours: 721 }, { hours: "abc" }, { expires: true }]) {
     assert.throws(() => linkOptions(bad), JSON.stringify(bad));
   }
 });

@@ -110,10 +110,10 @@ test("real tmux: idle detection from the real screen; typing and working are bus
   await waitIdle(id);
   tmux("send-keys", "-t", id, "-l", "--", "the user is typing");
   await realSleep(100);
-  assert.deepEqual(idleState(await panes().capture(id), false), { idle: false, reason: "someone is typing in the pane" });
+  assert.deepEqual(idleState(await panes().capture(id), false), { idle: false, reason: "someone is typing in the pane (input not empty)", check: "input-not-empty" });
   tmux("send-keys", "-t", id, "Enter");
   await realSleep(100);
-  assert.deepEqual(idleState(await panes().capture(id), false), { idle: false, reason: "Claude is working" });
+  assert.equal((idleState(await panes().capture(id), false) as { check: string }).check, "busy-marker");
   await waitIdle(id);
   assert.deepEqual(logLines(log), ["the user is typing"]);
 });
@@ -144,7 +144,7 @@ test("real tmux + service: POST while the user types is held, then delivered and
     tool: h.tool,
     panes: panes(),
     store: new Store(h.stateDir),
-    settings: { port: 0, tunnel: { mode: "quick" }, sendDelayMs: 200, verifyDelayMs: 300, paneCommands: [] },
+    settings: { port: 0, sendDelayMs: 200, verifyDelayMs: 300, paneCommands: [] },
     runner: mixedRunner(h.runner),
     stateDir: h.stateDir,
     timers: h.timers,

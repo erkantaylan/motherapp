@@ -9,6 +9,11 @@
 //   4. send-keys -t <pane> Enter
 //   5. wait `verifyDelayMs`, capture-pane again: if our line is still in the input box, press
 //      Enter once more and record "submitted: retried". Never more than that.
+//
+// "Deliver now" (`force`, a person's override on the page when the idle check says busy): the
+// same two calls, but the input box may not be recognised, so step 3 instead checks that the
+// start of our line appears on screen more often than before typing, and there is no retry in
+// step 5 (a submitted line stays visible in the transcript, so it can't tell).
 import { analyseScreen } from "./idle.ts";
 
 export interface KeySender {
@@ -22,9 +27,16 @@ export interface DeliverOptions {
   sleep: (ms: number) => Promise<void>;
   delayMs: number;
   verifyDelayMs: number;
+  /** "Deliver now": don't rely on recognising the input box (see above). */
+  force?: boolean;
 }
 
-export type DeliveryResult = "submitted" | "submitted: retried" | "not submitted: text not seen in Claude's input box";
+export type DeliveryResult =
+  | "submitted"
+  | "submitted: retried"
+  | "submitted (delivered now by hand)"
+  | "not submitted: text not seen in Claude's input box"
+  | "not submitted: text not seen on screen (delivered now by hand)";
 
 export interface Delivery {
   result: DeliveryResult;
@@ -40,7 +52,32 @@ export function showsOurLine(capture: string): boolean {
   return squashed.includes("[inbox:") || /^\[Pasted text #\d+/.test(s.input);
 }
 
+const squash = (s: string) => s.replace(/[\s\u00A0│]+/gu, "");
+
+/** How often the start of `line` (whitespace and box borders ignored) appears in `capture`. */
+export function countOnScreen(capture: string, line: string): number {
+  const needle = squash(line).slice(0, 40);
+  if (needle === "") return 0;
+  const hay = squash(capture);
+  let n = 0;
+  for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + needle.length)) n++;
+  return n;
+}
+
+async function forceSubmit(opts: DeliverOptions, paneId: string, line: string): Promise<Delivery> {
+  const { keys, sleep } = opts;
+  const before = countOnScreen(await keys.capture(paneId), line);
+  await keys.sendLiteral(paneId, line);
+  await sleep(opts.delayMs);
+  if (countOnScreen(await keys.capture(paneId), line) <= before) {
+    return { result: "not submitted: text not seen on screen (delivered now by hand)", submitted: false };
+  }
+  await keys.sendEnter(paneId);
+  return { result: "submitted (delivered now by hand)", submitted: true };
+}
+
 export async function typeAndSubmit(opts: DeliverOptions, paneId: string, line: string): Promise<Delivery> {
+  if (opts.force) return forceSubmit(opts, paneId, line);
   const { keys, sleep } = opts;
   await keys.sendLiteral(paneId, line);
   await sleep(opts.delayMs);

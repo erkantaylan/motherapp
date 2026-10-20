@@ -1,26 +1,18 @@
-// cloudflared as a child of the inbox serve process, pointed only at the inbox listener.
-//
-// - quick (default): `cloudflared tunnel --no-autoupdate --url http://127.0.0.1:<port>`; the
-//   `https://<random>.trycloudflare.com` URL is parsed from its output. The URL changes every
-//   time cloudflared restarts, which breaks links made before.
-// - named: the user ran `cloudflared tunnel login` and `cloudflared tunnel create <name>` and
-//   routed a hostname to it. We write a config whose only ingress rule sends that hostname's
-//   `/inbox/` paths to the inbox port (everything else: 404) and run
-//   `cloudflared tunnel --no-autoupdate --config <file> run <name>`.
+// cloudflared as a child of the inbox serve process, pointed only at the inbox listener:
+// always a quick tunnel, `cloudflared tunnel --no-autoupdate --url http://127.0.0.1:<port>`
+// (no account; the user's decision, 2026-10-20: never named tunnels). The
+// `https://<random>.trycloudflare.com` URL is parsed from its output. It changes every time
+// cloudflared restarts, which breaks links made before.
 //
 // Started on demand, stopped when no active links remain, restarted with backoff
 // (1 s, 2 s, 4 s … 30 s; reset after a run of 60 s) when it exits on its own.
 // cloudflared's own output is not forwarded to the log; only state changes are.
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { Proc, Runner } from "../../tmux/src/runner.ts";
-import type { TunnelSettings } from "./settings.ts";
 
 export type TunnelStatus = "stopped" | "starting" | "running" | "restarting" | "failed";
 
 export interface TunnelInfo {
   status: TunnelStatus;
-  mode: "quick" | "named";
   /** Public host, once known. */
   host: string;
   /** cloudflared reported a registered connection. */
@@ -42,10 +34,7 @@ export interface TunnelLog {
 export interface TunnelOptions {
   runner: Runner;
   timers: TunnelTimers;
-  settings: TunnelSettings;
   port: number;
-  /** Where the named-tunnel config is written (the inbox state dir, 0700). */
-  stateDir: string;
   log: TunnelLog;
   onChange: (info: TunnelInfo) => void;
   /** The cloudflared command. Default "cloudflared". */
@@ -67,19 +56,6 @@ export function redactPaths(s: string): string {
   return s.replace(/\/inbox\/[^\s"'&?#]*/g, "/inbox/…");
 }
 
-export function namedConfig(name: string, hostname: string, port: number): string {
-  return [
-    "# Written by motherapp's inbox tool. Only the inbox listener is exposed, and only /inbox/.",
-    `tunnel: ${name}`,
-    "ingress:",
-    `  - hostname: ${hostname}`,
-    '    path: "^/inbox/"',
-    `    service: http://127.0.0.1:${port}`,
-    "  - service: http_status:404",
-    "",
-  ].join("\n");
-}
-
 export const BACKOFF_MAX_MS = 30_000;
 
 export class Tunnel {
@@ -95,7 +71,7 @@ export class Tunnel {
 
   constructor(opts: TunnelOptions) {
     this.opts = opts;
-    this.state = { status: "stopped", mode: opts.settings.mode, host: "", connected: false, error: "" };
+    this.state = { status: "stopped", host: "", connected: false, error: "" };
   }
 
   info(): TunnelInfo {
@@ -131,17 +107,17 @@ export class Tunnel {
     this.gen++;
     p?.kill("SIGTERM");
     if (this.state.status !== "stopped" || this.state.host) {
-      if (p) this.opts.log.info("tunnel stopped", { mode: this.state.mode });
-      this.update({ status: "stopped", host: this.state.mode === "named" ? this.state.host : "", connected: false, error: "" });
+      if (p) this.opts.log.info("tunnel stopped");
+      this.update({ status: "stopped", host: "", connected: false, error: "" });
     }
   }
 
-  /** New settings (or port): restarts cloudflared if it was running. */
-  reconfigure(settings: TunnelSettings, port: number): void {
+  /** A new port: restarts cloudflared if it was running. */
+  reconfigure(port: number): void {
     const was = this.wanted;
     this.stop();
-    this.opts = { ...this.opts, settings, port };
-    this.update({ mode: settings.mode, host: "", error: "" });
+    this.opts = { ...this.opts, port };
+    this.update({ host: "", error: "" });
     if (was) this.start();
   }
 
@@ -173,17 +149,11 @@ export class Tunnel {
   }
 
   private args(): string[] {
-    const s = this.opts.settings;
-    if (s.mode === "quick") return ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${this.opts.port}`];
-    const file = path.join(this.opts.stateDir, `cloudflared-${s.name}.yml`);
-    fs.mkdirSync(this.opts.stateDir, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(file, namedConfig(s.name, s.hostname, this.opts.port), { mode: 0o600 });
-    return ["tunnel", "--no-autoupdate", "--config", file, "run", s.name];
+    return ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${this.opts.port}`];
   }
 
   private spawn(): void {
     const gen = ++this.gen;
-    const s = this.opts.settings;
     const cmd = this.opts.command ?? "cloudflared";
     let proc: Proc;
     try {
@@ -194,8 +164,8 @@ export class Tunnel {
     }
     this.proc = proc;
     this.startedAt = this.opts.timers.now();
-    this.update({ status: "starting", mode: s.mode, host: s.mode === "named" ? s.hostname : "", connected: false, error: "" });
-    this.opts.log.info("tunnel starting", { mode: s.mode });
+    this.update({ status: "starting", host: "", connected: false, error: "" });
+    this.opts.log.info("tunnel starting");
     let buf = "";
     const onData = (chunk: string) => {
       if (gen !== this.gen) return;
@@ -220,20 +190,17 @@ export class Tunnel {
     // cloudflared may name a request path in an error; a path can hold a token.
     const line = redactPaths(raw);
     const patch: Partial<TunnelInfo> = {};
-    if (this.state.mode === "quick" && !this.state.host) {
+    if (!this.state.host) {
       const host = parseQuickHost(line);
       if (host) patch.host = host;
     }
     if (CONNECTED.test(line) && !this.state.connected) patch.connected = true;
     else if (ERROR_LINE.test(line) && !this.state.connected) patch.error = line.replace(/^\S+\s+(?:ERR|WRN|INF)\s+/, "").trim().slice(0, 300);
     const host = patch.host ?? this.state.host;
-    const connected = patch.connected ?? this.state.connected;
-    // quick: running once the URL is known (it is printed before the connection registers);
-    // named: running once a connection is registered.
-    const up = this.state.mode === "quick" ? host !== "" : connected;
-    if (up && this.state.status !== "running") {
+    // Running once the URL is known (it is printed before the connection registers).
+    if (host !== "" && this.state.status !== "running") {
       patch.status = "running";
-      this.opts.log.info("tunnel up", { mode: this.state.mode, host });
+      this.opts.log.info("tunnel up", { host });
     }
     if (Object.keys(patch).length > 0) this.update(patch);
   }
@@ -246,10 +213,10 @@ export class Tunnel {
     const now = this.opts.timers.now();
     if (now - this.startedAt >= 60_000) this.attempts = 0;
     const delay = Math.min(BACKOFF_MAX_MS, 1000 * 2 ** this.attempts++);
-    this.opts.log.warn(`tunnel down: ${why}; restarting in ${delay / 1000} s`, { mode: this.state.mode });
+    this.opts.log.warn(`tunnel down: ${why}; restarting in ${delay / 1000} s`);
     this.update({
       status: "restarting",
-      host: this.state.mode === "named" ? this.state.host : "",
+      host: "",
       connected: false,
       error: this.state.error ? `${why}: ${this.state.error}` : why,
     });

@@ -1,7 +1,7 @@
 // Typing into a pane: text and Enter as two separate tmux calls, the one retry, and the pane list.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { typeAndSubmit } from "../src/deliver.ts";
+import { countOnScreen, typeAndSubmit } from "../src/deliver.ts";
 import { PANE_FORMAT, TmuxPanes, isClaudeCommand, parsePanes, resolvePane } from "../src/panes.ts";
 import { FakeTmux, claudePane } from "./fakes.ts";
 
@@ -54,6 +54,21 @@ test("text that didn't reach the input box: no Enter at all", async () => {
   const r = await typeAndSubmit(opts, "%1", "[inbox: cloud] hi");
   assert.deepEqual(r, { result: "not submitted: text not seen in Claude's input box", submitted: false });
   assert.deepEqual(fake.sends(), [["-l", "--", "[inbox: cloud] hi"]]);
+});
+
+test("force (Deliver now): two calls, no box needed, Enter only once the line appears on screen", async () => {
+  const { fake, opts, sleeps, pane } = setup({ working: true });
+  const r = await typeAndSubmit({ ...opts, force: true }, "%1", "[inbox: cloud] now");
+  assert.deepEqual(r, { result: "submitted (delivered now by hand)", submitted: true });
+  assert.deepEqual(fake.calls.map((c) => c.join(" ")), ["capture-pane -p -t %1", "send-keys -t %1 -l -- [inbox: cloud] now", "capture-pane -p -t %1", "send-keys -t %1 Enter"]);
+  assert.deepEqual(sleeps, [200], "the delay between text and Enter; no retry");
+  assert.deepEqual(pane.submitted, ["[inbox: cloud] now"]);
+  // the same line already on screen (an earlier one in the transcript) doesn't count
+  const eaten = setup({ eatText: true, input: "[inbox: cloud] now" });
+  const e = await typeAndSubmit({ ...eaten.opts, force: true }, "%1", "[inbox: cloud] now");
+  assert.equal(e.submitted, false);
+  assert.deepEqual(eaten.fake.sends(), [["-l", "--", "[inbox: cloud] now"]], "no Enter");
+  assert.equal(countOnScreen("│ > [inbox: cl\n│ oud] now  │\n> [inbox: cloud] now", "[inbox: cloud] now"), 2, "wrapped and boxed lines count");
 });
 
 test("a trailing ; survives tmux's command separator rule", async () => {

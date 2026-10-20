@@ -29,9 +29,8 @@ export interface LinkRecord {
   host: string;
   created: number;
   expires: number;
-  maxUses: number;
+  /** Messages accepted so far (informational; there is no per-link limit). */
   uses: number;
-  maxLen: number;
   revoked?: number;
 }
 
@@ -70,13 +69,25 @@ export function newToken(): string {
   return crypto.randomBytes(32).toString("base64url");
 }
 
-export type LinkStatus = "active" | "revoked" | "expired" | "used up";
+export type LinkStatus = "active" | "revoked" | "expired";
 
 export function linkStatus(l: LinkRecord, now: number): LinkStatus {
   if (l.revoked !== undefined) return "revoked";
   if (now >= l.expires) return "expired";
-  if (l.uses >= l.maxUses) return "used up";
   return "active";
+}
+
+/**
+ * A stored link as written by any version. Links from before 2026-10-20 carry `maxUses` and
+ * `maxLen`; those fields are dropped (no per-link limits any more), except that a link that
+ * had already used up its messages stays ended (as revoked when it was made) rather than
+ * coming back to life.
+ */
+export function normalizeLink(raw: LinkRecord & { maxUses?: unknown; maxLen?: unknown }): LinkRecord {
+  const { maxUses, maxLen: _maxLen, ...l } = raw;
+  l.uses = Number.isInteger(l.uses) && l.uses >= 0 ? l.uses : 0;
+  if (l.revoked === undefined && typeof maxUses === "number" && l.uses >= maxUses) l.revoked = l.created;
+  return l;
 }
 
 /** Writes `data` to `file` atomically, mode 0600. */
@@ -116,7 +127,7 @@ export class Store {
     this.links = [];
     try {
       const f = JSON.parse(fs.readFileSync(this.linksFile, "utf8")) as LinksFile;
-      if (Array.isArray(f.links)) this.links = f.links.filter((l) => l && typeof l.hash === "string" && /^[0-9a-f]{64}$/.test(l.hash));
+      if (Array.isArray(f.links)) this.links = f.links.filter((l) => l && typeof l.hash === "string" && /^[0-9a-f]{64}$/.test(l.hash)).map(normalizeLink);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") this.problems.push(`cannot read ${this.linksFile}: ${(e as Error).message}`);
     }
@@ -167,9 +178,7 @@ export class Store {
       host: opts.host,
       created: now,
       expires: now + opts.expiresMs,
-      maxUses: opts.maxUses,
       uses: 0,
-      maxLen: opts.maxLen,
     };
     this.prune(now);
     this.links.push(link);
@@ -178,7 +187,7 @@ export class Store {
   }
 
   /**
-   * The active link for this token, or undefined: unknown, revoked, expired and used-up tokens
+   * The active link for this token, or undefined: unknown, revoked and expired tokens
    * all look the same. The hash is compared with every stored hash in constant time.
    */
   verify(token: string, now: number): LinkRecord | undefined {

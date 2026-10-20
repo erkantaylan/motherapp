@@ -172,7 +172,7 @@ test("core + inbox tool: link over the WebSocket and inboxctl, delivery, revoke,
   const cliEnv = { ...env, MOTHERAPP_PORT: String(corePortNum) };
   const links = await run(process.execPath, ["--disable-warning=ExperimentalWarning", ctl, "links"], cliEnv);
   assert.equal(links.code, 0, links.err);
-  assert.match(links.out, new RegExp(`^${created.result.id}  …${token.slice(-4)}  cloud  → motherapp:0\\.0  expires in 24 h, used 1/20\\n$`));
+  assert.match(links.out, new RegExp(`^${created.result.id}  …${token.slice(-4)}  cloud  → motherapp:0\\.0  expires in 24 h, 1 message\\n$`));
   const refused = await run(process.execPath, ["--disable-warning=ExperimentalWarning", ctl, "new", "--pane", "motherapp:0.0", "--label", "second"], cliEnv);
   assert.equal(refused.code, 2, "stdout is a pipe here");
   assert.equal(refused.out, "");

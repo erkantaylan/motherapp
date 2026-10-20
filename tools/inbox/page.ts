@@ -1,13 +1,14 @@
 /// <reference lib="dom" />
 // The inbox tool's custom page (a light-DOM custom element, docs/extension-contract.md § 6):
-// active links first (so a forgotten one is noticed), the tunnel, Claude panes with "Create
-// link", the one-time link display, and the delivery log.
+// active links first (so a forgotten one is noticed) with their waiting messages and "Deliver
+// now", the tunnel, Claude panes with "Create link" and "Save screen", the one-time link
+// display, and the delivery log.
 //
 // Everything a link holder sent (the log) is shown with textContent only, never as HTML.
 // The full link exists only in this page's memory after `create` returns, until "Hide".
 import type { JsonValue } from "@motherapp/protocol";
 import type { PageContext } from "@motherapp/protocol/page";
-import { BOUNDS, DEFAULTS, remaining } from "./src/limits.ts";
+import { DEFAULT_HOURS, remaining } from "./src/limits.ts";
 
 interface PaneRow {
   id: string;
@@ -22,11 +23,12 @@ interface LinkRow {
   pane: string;
   expires: number;
   uses: number;
-  maxUses: number;
-  maxLen: number;
   last4: string;
   pending: number;
   held: string;
+  /** Which idle check holds the messages (idle.ts HoldCheck), "" when none wait. */
+  check: string;
+  queued: { qid: number; received: number; text: string }[];
   hostChanged: boolean;
 }
 
@@ -43,7 +45,6 @@ interface LogRow {
 
 interface TunnelRow {
   status: string;
-  mode: "quick" | "named";
   host: string;
   connected: boolean;
   error: string;
@@ -118,6 +119,8 @@ export default class InboxPage extends HTMLElement {
   private formFor: string | undefined;
   private form: { pane: string; el: HTMLElement } | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
+  /** "Save screen" results, by pane id: shown until the page is left. */
+  private screenNotes = new Map<string, { text: string; error: boolean }>();
 
   private root = el("div", { class: "mib" });
   private banner = el("div", { class: "mib-card mib-banner" });
@@ -145,6 +148,7 @@ export default class InboxPage extends HTMLElement {
     for (const list of this.cleanups.values()) list.forEach((f) => f());
     this.cleanups.clear();
     this.seen.clear();
+    this.screenNotes.clear();
     if (this.timer) clearInterval(this.timer);
     // The one-time link is gone once the page is left.
     this.secret.replaceChildren();
@@ -179,7 +183,7 @@ export default class InboxPage extends HTMLElement {
       );
     });
     this.section("links", links, (track) => this.renderLinks(links, track), clock);
-    this.section("panes", [panes, panesStatus, listener, this.formFor], () => this.renderPanes(panes, panesStatus, listener));
+    this.section("panes", [panes, panesStatus, listener, this.formFor, [...this.screenNotes]], () => this.renderPanes(panes, panesStatus, listener));
     this.section("tunnel", tunnel ?? null, () => this.renderTunnel(tunnel));
     this.section("log", log, () => this.renderLog(log), clock);
   }
@@ -199,10 +203,22 @@ export default class InboxPage extends HTMLElement {
         el("div", {}, el("span", { class: "mib-name", text: l.label }), ` → ${l.pane}`),
         el("div", {
           class: "mib-muted",
-          text: `id ${l.id} · …${l.last4} · expires in ${remaining(l.expires, now)} · used ${l.uses}/${l.maxUses} · up to ${l.maxLen} chars`,
+          text: `id ${l.id} · …${l.last4} · expires in ${remaining(l.expires, now)} · ${plural(l.uses, "message")}`,
         }),
       );
-      if (l.pending > 0) info.append(el("div", { class: "mib-warn", text: `${plural(l.pending, "message")} waiting${l.held ? `: ${l.held}` : ""}` }));
+      if (l.pending > 0) {
+        info.append(el("div", { class: "mib-warn", text: `${plural(l.pending, "message")} waiting${l.held ? `: ${l.held}` : ""}${l.check ? ` [check: ${l.check}]` : ""}` }));
+        for (const q of l.queued ?? []) {
+          const deliver = el("div", { class: "mib-buttons" });
+          track(
+            ctx.render(
+              [{ type: "button", label: "Deliver now", action: "deliverNow", args: { id: l.id, qid: q.qid }, confirm: noPlaceholders("Type this into the pane now even though it doesn't look idle?") }],
+              deliver,
+            ),
+          );
+          info.append(el("div", { class: "mib-row" }, el("div", { class: "mib-grow" }, el("div", { class: "mib-muted", text: `waiting since ${time(q.received)}` }), el("div", { class: "mib-text", text: q.text })), deliver));
+        }
+      }
       if (l.hostChanged) info.append(el("div", { class: "mib-err", text: "The quick tunnel's URL changed since this link was made, so the link no longer reaches here. Revoke it and make a new one." }));
       const buttons = el("div", { class: "mib-buttons" });
       track(
@@ -229,11 +245,32 @@ export default class InboxPage extends HTMLElement {
         if (this.formFor === undefined) this.form = undefined;
         this.update();
       });
+      // For idle-detector fixtures: saves `tmux capture-pane -p` of this pane to a file.
+      const shot = button("Save screen");
+      shot.title = "Save what this pane shows to ~/.local/state/motherapp/inbox/screens/";
+      shot.addEventListener("click", () => {
+        shot.disabled = true;
+        this.ctx!
+          .action("saveScreen", { pane: p.id })
+          .then((r) => {
+            const res = r as { file: string; verdict: string };
+            this.screenNotes.set(p.id, { text: `Saved ${res.file}. The idle detector says: ${res.verdict}`, error: false });
+          })
+          .catch((e: Error) => this.screenNotes.set(p.id, { text: e.message, error: true }))
+          .finally(() => this.update());
+      });
+      const note = this.screenNotes.get(p.id);
       const row = el(
         "div",
         { class: "mib-row" },
-        el("div", { class: "mib-grow" }, el("div", { class: "mib-name", text: p.target }), el("div", { class: "mib-muted", text: `${p.path} · ${p.attached} · ${p.id}` })),
-        el("div", { class: "mib-buttons" }, make),
+        el(
+          "div",
+          { class: "mib-grow" },
+          el("div", { class: "mib-name", text: p.target }),
+          el("div", { class: "mib-muted", text: `${p.path} · ${p.attached} · ${p.id}` }),
+          ...(note ? [el("div", { class: note.error ? "mib-err" : "mib-muted", text: note.text })] : []),
+        ),
+        el("div", { class: "mib-buttons" }, make, shot),
       );
       this.panes.append(row);
       if (this.formFor === p.id) {
@@ -248,19 +285,12 @@ export default class InboxPage extends HTMLElement {
     const label = el("input");
     label.placeholder = "cloud";
     label.maxLength = 32;
-    const expires = el("input");
-    expires.value = "24h";
-    expires.placeholder = "24h, 90m, 7d";
-    const maxUses = el("input");
-    maxUses.type = "number";
-    maxUses.min = String(BOUNDS.maxUses.min);
-    maxUses.max = String(BOUNDS.maxUses.max);
-    maxUses.value = String(DEFAULTS.maxUses);
-    const maxLen = el("input");
-    maxLen.type = "number";
-    maxLen.min = String(BOUNDS.maxLen.min);
-    maxLen.max = String(BOUNDS.maxLen.max);
-    maxLen.value = String(DEFAULTS.maxLen);
+    const hours = el("input");
+    hours.type = "number";
+    hours.min = "0.1";
+    hours.max = "720";
+    hours.step = "any";
+    hours.value = String(DEFAULT_HOURS);
     const go = button("Create link", "mib-primary");
     const cancel = button("Cancel");
     const result = el("span", { class: "mib-muted" });
@@ -268,7 +298,7 @@ export default class InboxPage extends HTMLElement {
     const form = el(
       "div",
       { class: "mib-full" },
-      el("div", { class: "mib-grid" }, field("Label (shown as [inbox: label])", label, `mib-label-${k}`), field("Expires after", expires, `mib-exp-${k}`), field("Max messages", maxUses, `mib-uses-${k}`), field("Max length (chars)", maxLen, `mib-len-${k}`)),
+      el("div", { class: "mib-grid" }, field("Label (shown as [inbox: label])", label, `mib-label-${k}`), field("Expires after (hours)", hours, `mib-exp-${k}`)),
       el("div", { class: "mib-actions" }, go, cancel, result),
     );
     cancel.addEventListener("click", () => {
@@ -281,7 +311,7 @@ export default class InboxPage extends HTMLElement {
       result.className = "mib-muted";
       result.textContent = "Creating… (starting the tunnel can take a few seconds)";
       this.ctx!
-        .action("create", { pane: p.id, label: label.value, expires: expires.value, maxUses: maxUses.value, maxLen: maxLen.value }, (text) => (result.textContent = text))
+        .action("create", { pane: p.id, label: label.value, hours: hours.value }, (text) => (result.textContent = text))
         .then((r) => {
           const res = r as { id: string; label: string; pane: string; link: string; message: string; expires: number };
           this.formFor = undefined;
@@ -337,46 +367,10 @@ export default class InboxPage extends HTMLElement {
     if (!t) return;
     const statusText =
       t.status === "running" ? `running${t.host ? ` at ${t.host}` : ""}${t.connected ? ", connected" : ""}` : t.status === "stopped" ? "stopped (it starts with the first link and stops when none is active)" : t.status;
-    this.tunnel.append(el("p", {}, `Mode: ${t.mode} · `, el("span", { class: t.status === "running" ? "mib-ok" : t.status === "stopped" ? "mib-muted" : "mib-warn", text: statusText })));
+    this.tunnel.append(el("p", {}, "Quick tunnel · ", el("span", { class: t.status === "running" ? "mib-ok" : t.status === "stopped" ? "mib-muted" : "mib-warn", text: statusText })));
     if (t.error) this.tunnel.append(el("p", { class: "mib-err", text: t.error }));
     if (t.warning) this.tunnel.append(el("p", { class: "mib-warn", text: t.warning }));
     this.tunnel.append(el("p", { class: "mib-muted", text: "Only the inbox's own listener (127.0.0.1, /inbox/ paths) is reachable through the tunnel, never the rest of motherapp." }));
-
-    const mode = el("select");
-    for (const [v, text] of [
-      ["quick", "quick (no account; the URL changes on every restart)"],
-      ["named", "named (your own hostname; after `cloudflared tunnel login`)"],
-    ] as const) {
-      const o = el("option", { text });
-      o.value = v;
-      mode.append(o);
-    }
-    mode.value = t.mode;
-    const name = el("input");
-    name.placeholder = "motherapp";
-    const host = el("input");
-    host.placeholder = "inbox.example.com";
-    if (t.mode === "named") host.value = t.host;
-    const named = el("div", { class: "mib-grid" }, field("Tunnel name", name, "mib-tname"), field("Hostname", host, "mib-thost"));
-    named.hidden = t.mode !== "named";
-    mode.addEventListener("change", () => (named.hidden = mode.value !== "named"));
-    const save = button("Save tunnel settings");
-    const result = el("span", { class: "mib-muted" });
-    save.addEventListener("click", () => {
-      save.disabled = true;
-      this.ctx!
-        .action("setTunnel", mode.value === "named" ? { mode: "named", name: name.value, hostname: host.value } : { mode: "quick" })
-        .then(() => {
-          result.className = "mib-ok";
-          result.textContent = "Saved.";
-        })
-        .catch((e: Error) => {
-          result.className = "mib-err";
-          result.textContent = e.message;
-        })
-        .finally(() => (save.disabled = false));
-    });
-    this.tunnel.append(field("Mode", mode, "mib-tmode"), named, el("div", { class: "mib-actions" }, save, result));
   }
 
   private renderLog(log: LogRow[]): void {

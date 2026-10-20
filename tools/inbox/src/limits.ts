@@ -1,19 +1,16 @@
-// Link options: defaults, bounds and the duration syntax. Imports nothing, so the custom page
-// can load it in the browser too.
+// Link options and the fixed safety limits. Imports nothing, so the custom page can load it
+// in the browser too.
+//
+// The only per-link option is the expiry, in hours (the user's decision, 2026-10-20: no
+// per-link message count or length). The rest are fixed guards, not options: the body cap
+// (http.ts), text cleaning (clean.ts), the per-link rate and the bounded queue below.
 
-export const DEFAULTS = {
-  expiresMs: 24 * 3600_000,
-  maxUses: 20,
-  maxLen: 500,
-} as const;
+/** Default expiry, in hours. */
+export const DEFAULT_HOURS = 24;
+/** Expiry bounds: 1 minute to 30 days. */
+export const BOUNDS = { expiresMs: { min: 60_000, max: 30 * 24 * 3600_000 } } as const;
 
-export const BOUNDS = {
-  expiresMs: { min: 60_000, max: 30 * 24 * 3600_000 },
-  maxUses: { min: 1, max: 1000 },
-  maxLen: { min: 20, max: 2000 },
-} as const;
-
-/** Messages per minute per link. */
+/** Messages per minute per link (protects the pane from a flood). */
 export const RATE_PER_MINUTE = 6;
 /** Messages held per link while the pane is busy. */
 export const QUEUE_MAX = 10;
@@ -23,7 +20,7 @@ const UNIT: Record<string, number> = { s: 1000, m: 60_000, h: 3600_000, d: 86_40
 /** "24h", "90m", "7d", "1h30m", "45s" → ms. Throws on anything else. */
 export function parseDuration(s: string): number {
   const t = s.trim().toLowerCase();
-  if (!/^(?:\d+[smhd])+$/.test(t)) throw new Error(`bad duration "${s}" (use e.g. 30m, 24h, 7d)`);
+  if (!/^(?:\d+[smhd])+$/.test(t)) throw new Error(`bad duration "${s}" (use hours, e.g. 24, or 30m, 7d)`);
   let ms = 0;
   for (const m of t.matchAll(/(\d+)([smhd])/g)) ms += Number(m[1]) * UNIT[m[2]!]!;
   return ms;
@@ -40,29 +37,22 @@ export function remaining(at: number, now: number): string {
 
 export interface LinkOptions {
   expiresMs: number;
-  maxUses: number;
-  maxLen: number;
 }
 
-function intIn(v: unknown, name: string, b: { min: number; max: number }, dflt: number): number {
-  if (v === undefined || v === null || v === "") return dflt;
-  const n = typeof v === "string" ? Number(v.trim()) : v;
-  if (typeof n !== "number" || !Number.isInteger(n) || n < b.min || n > b.max) throw new Error(`${name} must be a whole number from ${b.min} to ${b.max}`);
-  return n;
-}
-
-/** Validates options from the page or the CLI. `expires` may be ms (number) or "24h". */
-export function linkOptions(args: { expires?: unknown; maxUses?: unknown; maxLen?: unknown }): LinkOptions {
-  let expiresMs: number = DEFAULTS.expiresMs;
-  if (typeof args.expires === "string" && args.expires.trim() !== "") expiresMs = parseDuration(args.expires);
-  else if (typeof args.expires === "number") expiresMs = args.expires;
-  else if (args.expires !== undefined && args.expires !== null && args.expires !== "") throw new Error("expires must be a duration like 24h");
+/**
+ * Validates options from the page or the CLI. `hours` is a number of hours (number or numeric
+ * string, e.g. 24 or "1.5"). `expires` is the same, or a duration like "90m" or "7d".
+ */
+export function linkOptions(args: { hours?: unknown; expires?: unknown }): LinkOptions {
+  const raw = args.hours ?? args.expires;
+  let expiresMs = DEFAULT_HOURS * 3600_000;
+  if (typeof raw === "number") expiresMs = raw * 3600_000;
+  else if (typeof raw === "string" && raw.trim() !== "") {
+    const t = raw.trim();
+    expiresMs = /^\d+(?:\.\d+)?$/.test(t) ? Number(t) * 3600_000 : parseDuration(t);
+  } else if (raw !== undefined && raw !== null && raw !== "") throw new Error("the expiry must be a number of hours, e.g. 24");
   if (!Number.isFinite(expiresMs) || expiresMs < BOUNDS.expiresMs.min || expiresMs > BOUNDS.expiresMs.max) {
-    throw new Error("expires must be between 1 minute and 30 days");
+    throw new Error("the expiry must be between 1 minute and 30 days (720 hours)");
   }
-  return {
-    expiresMs,
-    maxUses: intIn(args.maxUses, "max uses", BOUNDS.maxUses, DEFAULTS.maxUses),
-    maxLen: intIn(args.maxLen, "max length", BOUNDS.maxLen, DEFAULTS.maxLen),
-  };
+  return { expiresMs: Math.round(expiresMs) };
 }
