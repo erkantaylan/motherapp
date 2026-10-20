@@ -111,10 +111,46 @@ test("core + audio tool with fake PipeWire commands", async (t) => {
   const bad = await c.call("action", { tool: "audio", name: "setAppMute", args: { app: "mpv", value: true } });
   assert.equal(bad.error?.message, "wpctl set-mute failed: Object '115' not found");
 
+  // master volume (#13): written by the default's id, and a change made outside the tool
+  // (the volume keys) arrives as a delta through pw-dump --monitor
+  const changed = (p: string, v: unknown) => () => c.notes("state").some((s) => s.tool === "audio" && s.changes.some((x: any) => x.path === p && x.value === v));
+  const mv = await c.call("action", { tool: "audio", name: "setMasterVolume", args: { kind: "output", value: 40 } });
+  assert.equal(mv.error, undefined);
+  assert.ok(calls().some((x) => x.cmd === "wpctl" && x.args!.join(" ") === "set-volume 48 0.40"));
+  await waitFor(changed("master.output.volume", 40), "master volume delta");
+  const mm = await c.call("action", { tool: "audio", name: "setMasterMute", args: { kind: "input", value: true } });
+  assert.equal(mm.error, undefined);
+  assert.ok(calls().some((x) => x.cmd === "wpctl" && x.args!.join(" ") === "set-mute 50 1"));
+  fs.writeFileSync(path.join(pw, "queue", "0.json"), JSON.stringify(monitorBatches()[7]));
+  await waitFor(changed("master.output.volume", 50), "external volume change via pw-dump --monitor");
+
+  // the CLI, as a GNOME shortcut runs it: quiet on success, by the default's id
+  const cliRun = (...args: string[]) =>
+    new Promise<{ code: number | null; out: string; err: string }>((res) => {
+      const p = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(repo, "tools/audio/audioctl.ts"), ...args], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_PW_DIR: pw },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let out = "";
+      let err = "";
+      p.stdout.on("data", (d) => (out += d));
+      p.stderr.on("data", (d) => (err += d));
+      p.on("exit", (code) => res({ code, out, err }));
+    });
+  assert.deepEqual(await cliRun("volume", "+5"), { code: 0, out: "", err: "" });
+  assert.equal(calls().filter((x) => x.cmd === "wpctl").at(-1)!.args!.join(" "), "set-volume 48 0.75");
+  assert.deepEqual(await cliRun("mute", "--input", "toggle"), { code: 0, out: "", err: "" });
+  assert.equal(calls().filter((x) => x.cmd === "wpctl").at(-1)!.args!.join(" "), "set-mute 50 toggle");
+  assert.deepEqual(await cliRun("volume", "--input"), { code: 0, out: "90\n", err: "" });
+  assert.equal((await cliRun("mute", "sideways")).code, 2);
+
   // a device plugged in shows up through pw-dump --monitor, and the default follows the metadata
   fs.writeFileSync(path.join(pw, "queue", "1.json"), JSON.stringify(monitorBatches()[2]));
   await waitFor(() => c.notes("state").some((s) => s.changes.some((x: any) => x.path === "sinks.71")), "headset delta via pw-dump --monitor");
   await waitFor(() => c.notes("state").some((s) => s.changes.some((x: any) => x.path === "defaultSink" && x.value === "71")), "default follows metadata");
+  // and the master slider moves to the new default's volume
+  await waitFor(changed("master.output.id", "71"), "master follows the default");
+  await waitFor(changed("master.output.volume", 80), "master shows the new default's volume");
 
   // mic meter: pw-record runs only while the stream is open
   await c.call("stream.open", { tool: "audio", name: "level/50" });

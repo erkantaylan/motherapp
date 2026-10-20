@@ -10,7 +10,10 @@ import {
   escapeKey,
   findApp,
   findDevice,
+  defaultDevice,
   linearToPercent,
+  masterItem,
+  masterState,
   percentToLinear,
   percentToWpctl,
   viewToState,
@@ -29,7 +32,7 @@ function viewOf(batch: unknown) {
 test("stream parser splits pw-dump --monitor output at any chunk boundary", () => {
   const text = monitorText();
   const expected = monitorBatches();
-  assert.equal(expected.length, 7);
+  assert.equal(expected.length, 11);
   for (const size of [1, 7, 64, 4096, text.length]) {
     const p = new JsonStreamParser();
     const got: unknown[] = [];
@@ -205,6 +208,46 @@ test("monitor sequence: additions, partial metadata updates and info:null remova
   // the removal objects themselves left nothing behind
   assert.equal(m.objects.has(71), false);
   assert.equal(m.objects.has(102), false);
+});
+
+test("master state: the default output and input with volume (wpctl scale) and mute", () => {
+  const view = viewOf(JSON.parse(dumpText()));
+  assert.equal(defaultDevice(view, "output")?.id, 48);
+  assert.equal(defaultDevice(view, "input")?.id, 50);
+  assert.deepEqual(masterState(view), {
+    output: { role: "Output", order: 0, id: "48", caption: "Acts on: Built-in Audio Analog Stereo", volume: 70, muted: false },
+    input: { role: "Mic", order: 1, id: "50", caption: "Acts on: Built-in Audio Analog Stereo", volume: 90, muted: false },
+  });
+  // channelVolumes, not softVolumes (the sink's soft volume is 0.512); unbalanced channels average
+  const node = (vols: number[], mute = false): PwObject => ({
+    id: 5,
+    type: "PipeWire:Interface:Node",
+    info: { props: { "media.class": "Audio/Sink", "node.name": "s", "node.description": "S" }, params: { Props: [{ channelVolumes: vols, softVolumes: [1, 1], mute }, { params: [] }] } },
+  });
+  const meta = { id: 9, type: "PipeWire:Interface:Metadata", props: { "metadata.name": "default" }, metadata: [{ subject: 0, key: "default.audio.sink", value: { name: "s" } }] };
+  assert.equal(masterState(viewOf([node([0.125, 0.125], true), meta])).output?.muted, true);
+  assert.equal(masterState(viewOf([node([0.1, 0.586])])).output, undefined, "no default metadata, no row");
+  assert.equal(masterState(viewOf([node([0.1, 0.586]), meta])).output?.volume, 70); // avg 0.343
+  // a sink whose Props haven't arrived yet reads 100%, like an app stream
+  const bare: PwObject = { id: 5, type: "PipeWire:Interface:Node", info: { props: { "media.class": "Audio/Sink", "node.name": "s" } } };
+  assert.equal(masterState(viewOf([bare, meta])).output?.volume, 100);
+  // the placeholder before any default is known always has a one-line caption
+  assert.deepEqual(masterItem("input", undefined), { role: "Mic", order: 1, id: "", caption: "No default input", volume: 0, muted: false });
+});
+
+test("master state through the monitor sequence: external changes, default switch, default gone and back", () => {
+  const m = new PwModel();
+  const states = monitorBatches().map((b) => (m.apply(b), masterState(buildView(m.objects.values()))));
+  const out = (i: number) => states[i]!.output;
+  assert.equal(out(0)?.volume, 70);
+  assert.deepEqual([out(2)?.id, out(2)?.volume], ["71", 80]); // the headset became the default
+  assert.deepEqual([out(6)?.id, out(6)?.volume], ["48", 70]); // and was unplugged
+  assert.deepEqual([out(7)?.volume, out(7)?.muted], [50, false]); // volume keys
+  assert.deepEqual([out(8)?.volume, out(8)?.muted], [50, true]);
+  assert.deepEqual([states[8]!.input?.volume, states[8]!.input?.muted], [60, true]);
+  assert.equal(out(9), undefined); // no default output
+  assert.equal(states[9]!.input?.id, "50"); // the mic is unaffected
+  assert.deepEqual([out(10)?.id, out(10)?.volume, out(10)?.muted], ["48", 70, false]);
 });
 
 test("metadata: value null deletes an entry", () => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
-// audioctl: the motherapp audio tool. PipeWire output/input switching, test sounds, a mic
-// level meter and per-app volume and mute, over the PipeWire CLI tools (pw-dump, wpctl,
+// audioctl: the motherapp audio tool. PipeWire output/input switching, master volume and mute
+// of the defaults, test sounds, a mic level meter and per-app volume and mute, over the PipeWire CLI tools (pw-dump, wpctl,
 // pw-play, pw-record). `audioctl serve` is the mode the core starts; every other subcommand
 // works on its own from a terminal or a keybinding (`audioctl help`).
 import { createTool } from "@motherapp/tool-sdk";

@@ -63,7 +63,7 @@ GNOME 48 unless its author updates it.
 | Runtime | **Node 24 LTS** (§ 4.10). It gets installed on the machine. |
 | Frontend | **Plain TS + Vite + Bootstrap 6 (alpha, pinned)**, web components for custom pages (§ 4.11). |
 | Launcher | **Served on the web only**: open `http://127.0.0.1:7323` in a browser. No tray icon for now. |
-| Audio scope, first version | **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
+| Audio scope, first version | **Master volume and mute** for the default output and the default input (mic), following whichever device is the default (#13). **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
 | Per-app rows | **One row per app.** All of an app's streams are grouped, e.g. one Firefox row. |
 | Audio test tools | **Keep audio-switch's**: L/R test, live mic meter, record-and-playback. |
 | Device volume | **Master sliders only** (default output + default mic, #13). No volume slider on each device row: tried as a mockup (Option B) and rejected as too crowded. |

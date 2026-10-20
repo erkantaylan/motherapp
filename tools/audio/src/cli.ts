@@ -3,14 +3,29 @@
 import type { Writable } from "node:stream";
 import { AudioOps } from "./ops.ts";
 import type { OpsOptions } from "./ops.ts";
-import { MAX_APP_VOLUME, PwModel, appMuted, appVolume, buildView, findApp, findDevice, viewToState } from "./pipewire.ts";
-import type { AudioView, Device } from "./pipewire.ts";
+import {
+  MAX_APP_VOLUME,
+  MAX_MASTER_VOLUME,
+  PwModel,
+  appMuted,
+  appVolume,
+  buildView,
+  defaultDevice,
+  deviceVolume,
+  findApp,
+  findDevice,
+  viewToState,
+} from "./pipewire.ts";
+import type { AudioView, Device, MasterKind } from "./pipewire.ts";
 import { runCommand } from "./runner.ts";
 import type { Runner } from "./runner.ts";
 
 export const USAGE = `usage: audioctl <command> [args]
 
   list [--json]                   outputs, inputs (* = default) and apps playing sound
+  volume [--input] [N|N%|+N|-N]   the default output's (--input: mic's) volume, 0-${MAX_MASTER_VOLUME};
+                                  +N stops at 100 unless already above. No value: print it
+  mute [--input] [on|off|toggle]  mute the default output (--input: mic). No value: print on|off
   set-default <id|name>           make an output or input the default
   app-volume <app> <percent>      set an app's volume, 0-${MAX_APP_VOLUME} (same scale as wpctl);
                                   +N / -N change it relatively
@@ -53,6 +68,32 @@ export function parsePercent(arg: string, current: number): number {
   return Math.round(Math.max(0, Math.min(MAX_APP_VOLUME, v)));
 }
 
+/**
+ * Master volume argument. Like parsePercent, but a relative increase stops at 100 unless the
+ * volume is already above it, as GNOME's volume keys do: a key bound to `volume +5` can't
+ * push the speakers into over-amplification by being held down.
+ */
+export function parseMasterPercent(arg: string, current: number): number {
+  const v = parsePercent(arg, current);
+  if (arg.trim().startsWith("+") && current <= 100) return Math.min(v, 100);
+  return Math.min(v, MAX_MASTER_VOLUME);
+}
+
+/** `volume` / `mute` arguments: `--input` anywhere, at most one value. */
+export function parseMasterArgs(cmd: string, args: string[]): { kind: MasterKind; value?: string } {
+  const rest = args.filter((a) => a !== "--input");
+  if (rest.length > 1) throw new UsageError(`${cmd} takes at most one value (got ${rest.join(" ")})`);
+  const out: { kind: MasterKind; value?: string } = { kind: args.includes("--input") ? "input" : "output" };
+  if (rest[0] !== undefined) out.value = rest[0];
+  return out;
+}
+
+function masterDevice(view: AudioView, kind: MasterKind): Device {
+  const d = defaultDevice(view, kind);
+  if (!d) throw new Error(`there is no default ${kind} right now`);
+  return d;
+}
+
 function need(args: string[], n: number, what: string): void {
   if (args.length < n) throw new UsageError(`missing ${what}`);
 }
@@ -90,6 +131,30 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
           const n = a.streams.length;
           line(io.stdout, `    ${a.name.padEnd(w)}  ${String(appVolume(a)).padStart(3)}%${appMuted(a) ? "  muted" : ""}${n > 1 ? `  (${n} streams)` : ""}`);
         }
+        return 0;
+      }
+      // volume / mute: for GNOME shortcuts, so quiet on success; with no value, print it.
+      case "volume": {
+        const { kind, value } = parseMasterArgs(cmd, args);
+        if (value !== undefined) parseMasterPercent(value, 0); // usage errors before touching PipeWire
+        const dev = masterDevice(await readView(io.runner), kind);
+        const current = deviceVolume(dev);
+        if (value === undefined) {
+          line(io.stdout, String(current));
+          return 0;
+        }
+        await ops.setDeviceVolume(dev, parseMasterPercent(value, current));
+        return 0;
+      }
+      case "mute": {
+        const { kind, value } = parseMasterArgs(cmd, args);
+        if (value !== undefined && !["on", "off", "toggle"].includes(value)) throw new UsageError(`mute takes on, off or toggle (got "${value}")`);
+        const dev = masterDevice(await readView(io.runner), kind);
+        if (value === undefined) {
+          line(io.stdout, dev.muted ? "on" : "off");
+          return 0;
+        }
+        await ops.setDeviceMute(dev, value === "toggle" ? "toggle" : value === "on");
         return 0;
       }
       case "set-default": {

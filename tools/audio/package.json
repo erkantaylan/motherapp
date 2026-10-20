@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Audio tool: PipeWire device switching, test sounds, mic meter, per-app volume and mute.",
+  "description": "Audio tool: PipeWire device switching, master volume and mute, test sounds, mic meter, per-app volume and mute.",
   "bin": {
     "audioctl": "./audioctl.ts"
   },
