@@ -1,0 +1,13 @@
+{
+  "name": "@motherapp/tool-inbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Inbox tool: one-time links that let a peer agent type a short message into a Claude Code pane in tmux, through a cloudflared tunnel.",
+  "bin": {
+    "inboxctl": "./inboxctl.ts"
+  },
+  "dependencies": {
+    "@motherapp/tool-sdk": "*"
+  }
+}

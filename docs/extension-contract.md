@@ -93,6 +93,22 @@ Any exit the core didn't ask for is a crash: restart after 1 s, 2 s, 4 s … cap
 the tool shows `failed` and a Restart button. Shutdown/disable sends SIGTERM, then SIGKILL
 after 3 s. If stdin closes, exit.
 
+### Secrets, and a tool's own listener
+
+- **State is public inside motherapp**: the core caches it, sends it to every page, and the
+  SDK may persist it. Never put a secret in state or in a `log` notification (both reach
+  journald or `log.jsonl`).
+- **An action's result goes only to the caller.** The core forwards it to the one client that
+  sent the action and neither logs nor caches it. That makes it the place for a value shown
+  once, like the inbox tool's new link (`create` returns it; the page and `inboxctl new` show
+  it, and only a hash is kept).
+- **A tool may run its own listener** on `127.0.0.1` and a port of its own (the core doesn't
+  know or proxy it). The inbox tool does (default 7324), so that cloudflared can expose that
+  port and nothing of the core. Such a tool owns the port's security entirely: bind to
+  `127.0.0.1` only, never trust `X-Forwarded-*`, cap bodies, never log URLs that carry tokens.
+  This is the one exception to the all-or-none network switch (DESIGN.md § 3), and needs a
+  decision there for any further tool.
+
 ## 3. The SDK (`@motherapp/tool-sdk`)
 
 ```ts
@@ -266,7 +282,9 @@ plus `ctx.render` for single `button` widgets, so Remove gets the shell's confir
 status dot. Outside a list a button's `confirm` has no row, so text you put in it must not
 contain `{word}` placeholders (that page inserts a zero-width space after each `{`). Logic the
 page and the tool share (`src/accel.ts`, `src/command.ts`) imports nothing, so the browser can
-load it through relative `./src/….ts` imports.
+load it through relative `./src/….ts` imports. `tools/inbox/page.ts` is another one: a form,
+a one-time secret display with `copy` buttons from `ctx.render`, and text from strangers shown
+with `textContent` only.
 
 ## 7. Checklist for a new tool
 

@@ -1,0 +1,8 @@
+● The build passes.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+  and then check the second half of the log for errors that mention the quick tunnel, because the
+  host changed
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

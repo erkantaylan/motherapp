@@ -1,0 +1,9 @@
+{
+  "id": "inbox",
+  "title": "Inbox",
+  "icon": "📨",
+  "serve": ["node", "inboxctl.ts", "serve"],
+  "page": "page.ts",
+  "bin": { "inboxctl": "inboxctl.ts" },
+  "defaultEnabled": true
+}

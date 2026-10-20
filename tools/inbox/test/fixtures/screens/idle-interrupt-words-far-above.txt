@@ -1,0 +1,17 @@
+> what does "esc to interrupt" mean in the status line?
+
+● It is the hint Claude Code shows while it works: press esc to interrupt
+  the current turn.
+
+● The spinner line reads like "✻ Thinking… (esc to interrupt)".
+
+● That's all there is to it.
+
+  Anything else?
+
+● Waiting for your next message.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

@@ -78,6 +78,7 @@ GNOME 48 unless its author updates it.
 | Build order | 1. Core infra (manager). 2. A **log service in the core** that every extension uses, plus its logs page (§ 4.12). 3. The **audio tool**: audio-switch parity plus per-app volume and mute. This replaces § 4.4. |
 | tmux tool | `tools/tmux/` per issue #6: polled every 2 s, copy and kill-with-confirm per session. |
 | Shortcuts tool | `tools/shortcuts/` per issue #7: owns only `motherapp-*` custom keybindings; key capture via a custom page. |
+| Inbox tool | `tools/inbox/` per #11: own 127.0.0.1 listener exposed only via cloudflared (quick or named tunnel); hashed tokens, idle-only delivery, peer-message rule in CLAUDE.md. A narrow exception to the all-or-none network switch. |
 
 ## 4. Details
 

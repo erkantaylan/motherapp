@@ -1,0 +1,29 @@
+ ✻ Welcome to Claude Code!
+
+   /help for help, /status for your current setup
+
+   cwd: /home/u/Desktop/projects/motherapp
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+> Try "write a test for page.ts"
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

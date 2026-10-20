@@ -1,0 +1,4 @@
+user@desk:~/Desktop/projects/motherapp$ git status
+On branch main
+nothing to commit, working tree clean
+user@desk:~/Desktop/projects/motherapp$
