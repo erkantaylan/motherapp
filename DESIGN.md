@@ -68,6 +68,7 @@ GNOME 48 unless its author updates it.
 | Audio test tools | **Keep audio-switch's**: L/R test, live mic meter, record-and-playback. |
 | Brightness UI | **Both**: a slider per monitor plus a linked "all monitors" slider. |
 | Brightness backend | **`libddcutil` kept loaded** in the brightness tool's serve process. It needs installing on the machine. |
+| Brightness FFI | **`koffi`** (npm, prebuilt binaries, so no compiler or dev headers on the machine) loads `libddcutil.so.4` by soname. All libddcutil calls run on one `worker_threads` worker, because they block and the library keeps per-thread state; the serve loop never waits on DDC/CI. Before the library loads, fd 1 is pointed at stderr, because libddcutil 1.4 prints to C stdout from its constructor. If the library can't be loaded, the tool falls back to the `ddcutil` command and shows a warning. Built in `tools/brightness/` (`brightctl`). |
 | Shared storage | Each tool keeps its own files in `~/.config/motherapp/` (settings) and `~/.local/state/motherapp/` (state). **SQLite** (`node:sqlite`) is added only where something needs searching, likely log history; when is Claude's call. |
 | Install | An **installer** that checks every dependency. It installs the missing ones, asking before anything uses `sudo`/apt, or explains how to install them. Then it builds the app and sets up the systemd user service. Built as `install.sh` (bash, since Node 24 may be missing): `--check`, `--yes [--allow-removals]`, `--uninstall [--purge]`. Node 24: `nvm`/`fnm install 24` is offered first when one is present (no sudo, removes nothing). Otherwise the NodeSource apt repo is offered, after an `apt-get -s` simulation that lists what the install would remove; `--yes` alone never accepts removals (issue #3). |
 | Tool CLIs on PATH | The installer writes wrappers in `~/.local/bin` (e.g. `audioctl`) that run the tool with the installer's Node 24; removed by `--uninstall`. |
@@ -272,9 +273,9 @@ page later without changing the shell.
 
 ### Brightness
 
-14. *Answered (§ 3): both kinds of slider, `libddcutil` kept loaded.* Still open for build time:
-    how Node calls into `libddcutil`. Options are an FFI package such as `koffi`, or a small C
-    helper process. The Ubuntu 24.04 package for the 1.4 library is **`libddcutil4`**
+14. *Answered (§ 3): both kinds of slider, `libddcutil` kept loaded.* The build-time question
+    of how Node calls into `libddcutil` is *answered (§ 3, "Brightness FFI", 2026-10-20): `koffi`*,
+    not a C helper. The Ubuntu 24.04 package for the 1.4 library is **`libddcutil4`**
     (1.4.1-1build2, universe; ships `libddcutil.so.4`, the unversioned `libddcutil.so` symlink
     is only in `libddcutil-dev`). Checked against the noble archive on 2026-10-19; `install.sh`
     still picks the name with `apt-cache` at runtime.
