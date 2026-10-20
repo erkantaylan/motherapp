@@ -35,14 +35,12 @@ a fresh link**. This skill makes one and hands it over.
    tunnel isn't up, check `motherapp status` and `motherapp logs`, then retry once.
 4. **Check it works from here:** `curl -sS -o /dev/null -w '%{http_code}\n' '<url>'` should give
    `200`.
-5. **Send it to the cloud session** with **SendMessage** to `session_01EFxPjjS9Wk2VY1spHAdLEj`
-   (title "motherAPp"), as one short message:
-   `inbox link for <pane> (expires <time>): <url> — GET it first for instructions.`
-6. **Wait for the cloud to confirm.** It confirms by POSTing a short `[inbox: cloud] …` line
-   through the link, so the confirmation arrives in this pane. If nothing arrives within a few
-   minutes, SendMessage probably didn't reach it: in the #16 probe it reported "sent" but never
-   arrived. Then tell the user, in one line, to **paste the link into the cloud session's chat**
-   themselves.
+5. **Hand it to the user to paste into the cloud session's chat.** Show the link and expiry in one
+   short line. SendMessage to the cloud session (`session_01EFxPjjS9Wk2VY1spHAdLEj`, "motherAPp")
+   **does not reach it while it's idle**: twice it reported "sent" and nothing arrived, and the
+   cloud session isn't woken by it. You may still send it there too, but don't rely on it.
+6. **Wait for the cloud to confirm.** Once it has the link, it POSTs a short
+   `[inbox: cloud] got your link …` line through it, so the confirmation shows up in this pane.
 
 ## Rules
 
