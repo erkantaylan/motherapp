@@ -8,7 +8,8 @@
 #   ./install.sh               interactive: asks y/N before each sudo/apt step and before
 #                              enabling the service
 #   ./install.sh --check       report only, change nothing (also: npm run doctor)
-#   ./install.sh --yes         accept every prompt
+#   ./install.sh --yes         accept every prompt, except an apt install that would remove
+#                              packages (add --allow-removals to accept that too)
 #   ./install.sh --uninstall   stop + disable the service, remove the unit file and the
 #                              ~/.local/bin wrappers this installer wrote
 #                              (add --purge to also delete ~/.config/motherapp and
@@ -58,17 +59,24 @@ LIBDDCUTIL_CANDIDATES=(libddcutil5 libddcutil4 libddcutil0)
 MODE=install
 YES=0
 PURGE=0
+ALLOW_REMOVALS=0
 
 usage() {
   cat <<'EOF'
-Usage: ./install.sh [--check | --uninstall [--purge]] [--yes]
+Usage: ./install.sh [--check | --uninstall [--purge]] [--yes [--allow-removals]]
 
   (no option)   Check dependencies, offer to install missing ones (asks before every
                 sudo/apt step), run npm ci + npm run build, write the systemd user unit,
                 ask before enabling it, then check http://127.0.0.1:7323/. Writes a
                 wrapper in ~/.local/bin for each tool command (e.g. audioctl).
+                Node 24: offers nvm/fnm first when you have one (no sudo), then the
+                NodeSource apt repo, showing first what that install would remove.
   --check       Only report status. Changes nothing, asks nothing.
-  --yes, -y     Answer yes to every prompt.
+  --yes, -y     Answer yes to every prompt, except an apt install that would remove
+                packages (e.g. NodeSource nodejs replacing Ubuntu's nodejs removes npm
+                and the node-* packages): --yes stops there.
+  --allow-removals
+                With --yes: also accept an install that removes packages.
   --uninstall   Stop and disable the service, remove ~/.config/systemd/user/motherapp.service
                 and the ~/.local/bin wrappers written by this installer.
                 Keeps ~/.config/motherapp and ~/.local/state/motherapp.
@@ -86,6 +94,7 @@ for arg in "$@"; do
     --uninstall) MODE=uninstall ;;
     --purge) PURGE=1 ;;
     --yes | -y) YES=1 ;;
+    --allow-removals) ALLOW_REMOVALS=1 ;;
     --help | -h) usage; exit 0 ;;
     *) echo "install.sh: unknown option: $arg" >&2; usage >&2; exit 2 ;;
   esac
@@ -244,13 +253,17 @@ node_origin() { # where a node binary came from, for the report
   fi
 }
 
-NODE_FIX_TEXT="Option A (sudo, offered by this installer): NodeSource apt repo for Node ${MIN_NODE}:
+NODE_FIX_TEXT="Option A (no sudo, removes nothing; offered when nvm is installed): nvm install ${MIN_NODE}
+  (no nvm yet: see https://github.com/nvm-sh/nvm#installing-and-updating)
+Option B (no sudo, removes nothing; offered when fnm is installed): fnm install ${MIN_NODE}
+  (no fnm yet: curl -fsSL https://fnm.vercel.app/install | bash)
+  With A or B the unit and the ~/.local/bin wrappers use that version's path: re-run ./install.sh after upgrading or removing it.
+Option C (sudo, offered): NodeSource apt repo for Node ${MIN_NODE}:
   sudo install -d -m 0755 /etc/apt/keyrings
   curl -fsSL $NODESOURCE_KEY_URL | sudo gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
   echo '$NODESOURCE_LIST_LINE' | sudo tee /etc/apt/sources.list.d/nodesource.list
-  sudo apt-get update && sudo apt-get install -y nodejs
-Option B (no sudo): fnm   curl -fsSL https://fnm.vercel.app/install | bash; then: fnm install ${MIN_NODE}
-Option C (no sudo): nvm   see https://github.com/nvm-sh/nvm#installing-and-updating; then: nvm install ${MIN_NODE}
+  sudo apt-get update && apt-get -s install nodejs | grep ^Remv   (what it would remove: with Ubuntu's nodejs installed, npm and every node-* package)
+  sudo apt-get install nodejs
 Then re-run ./install.sh (it also finds Node under ~/.nvm and ~/.local/share/fnm)."
 
 # ---------------------------------------------------------------- checks
@@ -483,7 +496,63 @@ run_checks() {
 
 APPLIED_FIX=0
 
-fix_nodesource() {
+# --- Node 24 from a version manager (no sudo, removes nothing)
+
+NVM_SH="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+
+fnm_bin() { # path of fnm, if installed
+  local d="${FNM_DIR:-$HOME/.local/share/fnm}"
+  if have fnm; then command -v fnm
+  elif [[ -x $d/fnm ]]; then printf '%s\n' "$d/fnm"
+  else return 1
+  fi
+}
+
+# True when the chosen Node lives in a version manager's per-version directory.
+node_is_versioned() { [[ $NODE_BIN == *"/.nvm/"* || $NODE_BIN == *"/fnm/"* || $NODE_BIN == *"/.fnm/"* ]]; }
+
+versioned_note() { # manager dir
+  printf 'the systemd unit and the ~/.local/bin wrappers will then run Node by its version-specific path under %s (.../v%s.x.y/.../bin/node), so re-run ./install.sh after you upgrade or remove that Node version' \
+    "$1" "$MIN_NODE"
+}
+
+# Offers `nvm install 24`, then `fnm install 24`, for whichever is installed. Returns 0 once
+# one of them installed Node, 1 when none is installed, all were declined or they failed.
+offer_version_managers() {
+  local fnm
+  if [[ -s $NVM_SH ]]; then
+    info "nvm is installed ($NVM_SH). It installs Node ${MIN_NODE} without sudo and removes nothing."
+    info "Note: $(versioned_note "${NVM_SH%/nvm.sh}")."
+    if ask "Run: nvm install ${MIN_NODE} (no sudo)"; then
+      cmdline "bash -c '. $NVM_SH --no-use; nvm install ${MIN_NODE}'"
+      # nvm is a shell function: load it in a clean bash, without our set -u/pipefail.
+      if bash -c '. "$1" --no-use; nvm install "$2"' _ "$NVM_SH" "$MIN_NODE" </dev/null; then return 0; fi
+      info "nvm install failed (see above)"
+    else
+      info "skipped nvm"
+    fi
+  fi
+  if fnm="$(fnm_bin)"; then
+    info "fnm is installed ($fnm). It installs Node ${MIN_NODE} without sudo and removes nothing."
+    info "Note: $(versioned_note "${FNM_DIR:-$HOME/.local/share/fnm}")."
+    if ask "Run: fnm install ${MIN_NODE} (no sudo)"; then
+      if run "$fnm" install "$MIN_NODE" </dev/null; then return 0; fi
+      info "fnm install failed (see above)"
+    else
+      info "skipped fnm"
+    fi
+  fi
+  return 1
+}
+
+# --- Node 24 from NodeSource (sudo; may replace Ubuntu's nodejs)
+
+nodesource_configured() {
+  local f="$ROOT/etc/apt/sources.list.d/nodesource.list"
+  [[ -f $f ]] && grep -qxF -- "$NODESOURCE_LIST_LINE" "$f"
+}
+
+add_nodesource_repo() {
   if ! have curl; then
     info "curl is missing; install it first: sudo apt-get install curl"
     return 1
@@ -493,8 +562,106 @@ fix_nodesource() {
       curl -fsSL "$NODESOURCE_KEY_URL" | sudo gpg --dearmor --yes -o "$ROOT/etc/apt/keyrings/nodesource.gpg"; } &&
     { cmdline "echo '$NODESOURCE_LIST_LINE' | sudo tee /etc/apt/sources.list.d/nodesource.list"
       printf '%s\n' "$NODESOURCE_LIST_LINE" | sudo tee "$ROOT/etc/apt/sources.list.d/nodesource.list" >/dev/null; } &&
-    run_sudo apt-get update &&
+    run_sudo apt-get update
+}
+
+# Simulates `apt-get install nodejs` (no sudo, changes nothing). Sets SIM_REMOVALS (packages
+# apt would remove) and SIM_NEW (the nodejs version it would install).
+SIM_REMOVALS=() SIM_NEW=""
+simulate_nodejs() {
+  local out
+  SIM_REMOVALS=() SIM_NEW=""
+  cmdline "apt-get -s install nodejs   (simulation: changes nothing)"
+  if ! out="$(LC_ALL=C apt-get -s install nodejs 2>&1)"; then
+    printf '%s\n' "$out" | sed 's/^/      /'
+    return 1
+  fi
+  mapfile -t SIM_REMOVALS < <(awk '$1 == "Remv" { print $2 }' <<<"$out")
+  SIM_NEW="$(awk '$1 == "Inst" && $2 == "nodejs" { for (i = 3; i <= NF; i++) if ($i ~ /^\(/) { sub(/^\(/, "", $i); print $i; exit } }' <<<"$out")"
+}
+
+info_wrapped() { # words... -> indented lines of at most ~90 characters
+  local line="" w
+  for w in "$@"; do
+    if [[ -n $line ]] && (( ${#line} + ${#w} + 1 > 84 )); then info "  $line"; line=""; fi
+    line+="${line:+ }$w"
+  done
+  [[ -n $line ]] && info "  $line"
+}
+
+node_manual_hint() {
+  info "Without sudo, use nvm or fnm (they remove nothing):"
+  info "  nvm: https://github.com/nvm-sh/nvm  then: nvm install ${MIN_NODE}"
+  info "  fnm: curl -fsSL https://fnm.vercel.app/install | bash  then: fnm install ${MIN_NODE}"
+  info "then re-run ./install.sh"
+}
+
+offer_nodesource() {
+  if ! have apt-get || ! have sudo; then
+    info "apt-get/sudo not available."
+    node_manual_hint
+    return 1
+  fi
+  if nodesource_configured; then
+    info "the NodeSource apt repo for Node ${MIN_NODE} is already configured"
+  elif ask "NodeSource, step 1 of 2: add its apt repo for Node ${MIN_NODE} (sudo: writes /etc/apt/keyrings/nodesource.gpg and /etc/apt/sources.list.d/nodesource.list, runs apt-get update). This installs and removes nothing; step 2 first shows what installing nodejs would change"; then
+    if ! add_nodesource_repo; then info "adding the NodeSource repo failed (see above)"; return 1; fi
+  else
+    info "skipped."
+    node_manual_hint
+    return 1
+  fi
+
+  if ! simulate_nodejs; then
+    info "apt-get -s install nodejs failed (see above); not installing. Check it yourself, then: sudo apt-get install nodejs"
+    return 1
+  fi
+  local old new n=${#SIM_REMOVALS[@]} undo
+  old="$(dpkg_installed nodejs)"
+  new="nodejs ${SIM_NEW:-from NodeSource}"
+  undo="the NodeSource repo stays configured (to undo: sudo rm /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg && sudo apt-get update)"
+  if (( n == 0 )); then
+    if ask "NodeSource, step 2 of 2: sudo apt-get install nodejs (installs $new${old:+, replacing nodejs $old}; removes nothing)"; then
+      run_sudo apt-get install -y nodejs
+      return
+    fi
+    info "skipped; $undo"
+    return 1
+  fi
+
+  local whose="the installed nodejs${old:+ $old}" preview=("${SIM_REMOVALS[@]:0:8}") list
+  [[ -n $old && $old != *nodesource* ]] && whose="Ubuntu's nodejs $old"
+  list="$(printf '%s, ' "${preview[@]}")"
+  list="${list%, }"
+  (( n > ${#preview[@]} )) && list+=", ..."
+  info "${C_RED}Installing $new replaces $whose and REMOVES $n package(s): $list${C_RESET}"
+  info "(full list below; they depend on Ubuntu's nodejs build, e.g. npm, eslint, node-gyp, libnode-dev)"
+  info_wrapped "${SIM_REMOVALS[@]}"
+  info "To keep them, say no and install Node ${MIN_NODE} with nvm or fnm instead (no sudo)."
+  if (( YES && ! ALLOW_REMOVALS )); then
+    info "not installing: --yes doesn't cover an install that removes packages."
+    info "Re-run with --yes --allow-removals to accept it, or without --yes to answer yourself."
+    info "$undo"
+    return 1
+  fi
+  local q="NodeSource, step 2 of 2: sudo apt-get install nodejs, which REMOVES the $n package(s) listed above"
+  if (( YES )); then
+    printf '%s?%s %s [y/N] y (--yes --allow-removals)\n' "$C_BOLD" "$C_RESET" "$q"
     run_sudo apt-get install -y nodejs
+    return
+  fi
+  if ask "$q (apt shows the list again and asks once more)"; then
+    run_sudo apt-get install nodejs
+    return
+  fi
+  info "skipped; nothing was removed. $undo"
+  return 1
+}
+
+offer_node() {
+  section "Install Node ${MIN_NODE}"
+  if offer_version_managers; then APPLIED_FIX=1; return; fi
+  if offer_nodesource; then APPLIED_FIX=1; fi
 }
 
 offer_fixes() {
@@ -514,21 +681,7 @@ offer_fixes() {
     fi
   fi
 
-  if (( NEED_NODE )); then
-    section "Install Node ${MIN_NODE}"
-    if (( can_apt )); then
-      if ask "Add the NodeSource apt repo for Node ${MIN_NODE} (writes /etc/apt/keyrings/nodesource.gpg and /etc/apt/sources.list.d/nodesource.list) and run sudo apt-get install nodejs"; then
-        if fix_nodesource; then APPLIED_FIX=1; else info "NodeSource install failed (see above)"; fi
-      else
-        info "skipped. Without sudo, use fnm or nvm:"
-        info "  curl -fsSL https://fnm.vercel.app/install | bash && fnm install ${MIN_NODE}"
-        info "  or nvm: https://github.com/nvm-sh/nvm  then: nvm install ${MIN_NODE}"
-        info "then re-run ./install.sh"
-      fi
-    else
-      info "apt-get/sudo not available. Install Node ${MIN_NODE} with fnm or nvm, then re-run."
-    fi
-  fi
+  (( NEED_NODE )) && offer_node
 
   if (( NEED_I2C_LOAD || NEED_I2C_PERSIST )); then
     section "i2c-dev kernel module"
@@ -794,9 +947,12 @@ render_wrapper() {
     "$BIN_MARKER" "${1#"$REPO_DIR"/}" "$NODE_BIN" "$1"
 }
 
-# True for a regular file (not a symlink) whose second line is the marker.
+# True for a regular file (not a symlink) that starts with #! and whose second line is the
+# marker. ~/.local/bin also holds binaries (uv, ffmpeg, ...): NULs are dropped inside the pipe,
+# because bash warns "ignored null byte in input" when a $(...) result contains one.
 is_managed() {
-  [[ -f $1 && ! -L $1 ]] && [[ "$(head -c 512 -- "$1" 2>/dev/null | sed -n 2p)" == "$BIN_MARKER" ]]
+  [[ -f $1 && ! -L $1 ]] &&
+    [[ "$(head -c 512 -- "$1" 2>/dev/null | tr -d '\0' | sed -n '1{/^#!/!q;};2p')" == "$BIN_MARKER" ]]
 }
 
 is_bin_cmd() { local c; for c in "${BIN_CMDS[@]}"; do [[ $c == "$1" ]] && return 0; done; return 1; }
@@ -896,22 +1052,32 @@ uninstall_bins() {
 
 summary() {
   section "Summary"
-  local i failed=0 warned=0
+  local i failed=0 warned=0 skipped=0
   for i in "${!R_STATUS[@]}"; do
     print_row "${R_STATUS[$i]}" "${R_NAME[$i]}" "${R_DETAIL[$i]}" "${R_FIX[$i]}"
-    case "${R_STATUS[$i]}" in
-      MISSING | FAIL | SKIP) [[ ${R_REQ[$i]} == 1 ]] && failed=$((failed + 1)) || warned=$((warned + 1)) ;;
-      WARN) warned=$((warned + 1)) ;;
-    esac
+    # A required item that is missing, failed or skipped fails the run; optional ones count as
+    # warnings, except an optional SKIP, which is counted on its own.
+    if [[ ${R_STATUS[$i]} == OK ]]; then continue; fi
+    if [[ ${R_STATUS[$i]} != WARN && ${R_REQ[$i]} == 1 ]]; then failed=$((failed + 1))
+    elif [[ ${R_STATUS[$i]} == SKIP ]]; then skipped=$((skipped + 1))
+    else warned=$((warned + 1))
+    fi
   done
   printf '\n'
+  if [[ $MODE != uninstall && -n $NODE_BIN ]] && node_is_versioned; then
+    info "note: Node is $NODE_BIN, from a version manager: re-run ./install.sh after upgrading or removing that Node version (the unit and the wrappers use this path)"
+    printf '\n'
+  fi
+  local counts
+  counts="$warned warning(s)"
+  (( skipped )) && counts+=", $skipped skipped"
   if (( failed > 0 )); then
-    printf '%sRESULT: FAIL%s (%d required item(s) missing or failed, %d warning(s))\n' "$C_RED" "$C_RESET" "$failed" "$warned"
+    printf '%sRESULT: FAIL%s (%d required item(s) missing or failed, %s)\n' "$C_RED" "$C_RESET" "$failed" "$counts"
     return 1
   fi
   local tail=""
   [[ $MODE == install || $MODE == check ]] && tail=" - open http://127.0.0.1:$PORT/"
-  printf '%sRESULT: OK%s (%d warning(s))%s\n' "$C_GREEN" "$C_RESET" "$warned" "$tail"
+  printf '%sRESULT: OK%s (%s)%s\n' "$C_GREEN" "$C_RESET" "$counts" "$tail"
   return 0
 }
 
