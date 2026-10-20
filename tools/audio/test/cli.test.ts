@@ -3,12 +3,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { parsePercent, runCli } from "../src/cli.ts";
-import { FakeRunner, dumpText } from "./fakes.ts";
+import { FakeRunner, arctisText, dumpText } from "./fakes.ts";
+
+let dump = dumpText;
 
 async function cli(...argv: string[]) {
   const runner = new FakeRunner();
   runner.behave = (p) => {
-    if (p.cmd === "pw-dump") p.stdout.write(dumpText());
+    if (p.cmd === "pw-dump") p.stdout.write(dump());
     p.exit(0);
   };
   const stdout = new PassThrough();
@@ -29,10 +31,10 @@ test("list: outputs and inputs with the default marked, apps with volume", async
     r.out,
     [
       "Outputs",
-      "  *   48  ALC1220 Analog  (Built-in Audio Analog Stereo)",
-      "      52  X34 P  (GA102 High Definition Audio Controller Digital Stereo (HDMI 2))",
+      "  *   48  Built-in Audio Analog Stereo  (ALC1220 Analog)",
+      "      52  GA102 High Definition Audio Controller Digital Stereo (HDMI 2)  (X34 P)",
       "Inputs",
-      "  *   50  ALC1220 Analog  (Built-in Audio Analog Stereo)",
+      "  *   50  Built-in Audio Analog Stereo  (ALC1220 Analog)",
       "Apps",
       "    Firefox   70%  (2 streams)",
       "    mpv       90%",
@@ -45,11 +47,35 @@ test("list: outputs and inputs with the default marked, apps with volume", async
   assert.equal(j.apps.Firefox.volume, 70);
 });
 
+test("list: a headset's Chat and Game outputs read like wpctl status (issue #5)", async () => {
+  dump = arctisText;
+  try {
+    const r = await cli("list");
+    assert.equal(r.code, 0);
+    assert.equal(
+      r.out,
+      [
+        "Outputs",
+        "      40  Arctis Pro Wireless Chat",
+        "  *   41  Arctis Pro Wireless Game",
+        "Inputs",
+        "  *   43  Arctis Pro Wireless Chat",
+        "Apps",
+        "    (none playing sound)",
+        "",
+      ].join("\n"),
+    );
+    assert.equal((await cli("set-default", "game")).out, "default output: Arctis Pro Wireless Game\n");
+  } finally {
+    dump = dumpText;
+  }
+});
+
 test("set-default, app-volume, app-mute and test-output build the right commands", async () => {
   let r = await cli("set-default", "hdmi");
   assert.equal(r.code, 0);
   assert.deepEqual(r.lines, ["pw-dump", "wpctl set-default 52"]);
-  assert.equal(r.out, "default output: X34 P\n");
+  assert.equal(r.out, "default output: GA102 High Definition Audio Controller Digital Stereo (HDMI 2)\n");
 
   r = await cli("app-volume", "firefox", "+5");
   assert.deepEqual(r.lines.slice(1), ["wpctl set-volume 101 0.75", "wpctl set-volume 102 0.75"]);

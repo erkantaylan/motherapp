@@ -1,0 +1,8 @@
+{
+  "id": "tmux",
+  "title": "tmux",
+  "icon": "🖥️",
+  "serve": ["node", "tmuxctl.ts", "serve"],
+  "bin": { "tmuxctl": "tmuxctl.ts" },
+  "defaultEnabled": true
+}

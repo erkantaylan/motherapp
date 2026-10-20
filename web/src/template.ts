@@ -34,8 +34,22 @@ function deep(v: JsonValue, ctx: TemplateContext): JsonValue {
   return v;
 }
 
-/** Copy of `w` with every string interpolated. A nested list's own item template is left alone. */
+/** Template context outside any list row: `{key}` and `{path}` are empty, there are no fields. */
+export const NO_ROW: TemplateContext = { key: "", path: "", item: undefined };
+
+/**
+ * Copy of `w` with every string interpolated. A nested list's own item template is left alone,
+ * and so are a button's `confirm` and string `copy`: those are interpolated when the button is
+ * clicked (`button.ts`), against the row's item at that moment.
+ */
 export function interpolateWidget(w: Widget, ctx: TemplateContext): Widget {
+  if (w.type === "button") {
+    const { confirm, copy, ...rest } = w;
+    const out = deep(rest as unknown as JsonValue, ctx) as unknown as typeof w;
+    if (confirm !== undefined) out.confirm = confirm;
+    if (copy !== undefined) out.copy = typeof copy === "string" ? copy : { bind: interpolate(copy.bind, ctx) };
+    return out;
+  }
   if (w.type === "list") {
     const { item, ...rest } = w;
     return { ...(deep(rest as unknown as JsonValue, ctx) as unknown as Omit<typeof w, "item">), item };

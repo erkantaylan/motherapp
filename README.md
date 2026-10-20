@@ -53,12 +53,18 @@ On the target machine (Ubuntu 24.04, GNOME, Wayland), from a clone of this repo:
 The installer checks Node >= 24, the PipeWire tools (`pw-dump`, `pw-play`, `pw-record`,
 `pw-metadata`, `wpctl`), the freedesktop test sounds, the PipeWire user services, `ddcutil`,
 `libddcutil`, the `i2c-dev` module, `/dev/i2c-*` and `i2c` group membership. It offers to fix
-what is missing and asks y/N before every `sudo`/apt step (`--yes` accepts everything). Then it
+what is missing and asks y/N before every `sudo`/apt step (`--yes` accepts everything except an
+install that would remove packages; add `--allow-removals` for that). For Node 24 it first
+offers `nvm install 24` or `fnm install 24` if you have nvm or fnm (no sudo, removes nothing; the
+unit and wrappers then use that version's path under `~/.nvm`, so re-run the installer after
+upgrading or removing it). Otherwise it offers the NodeSource apt repo in two steps: adding the
+repo, then installing `nodejs`, after a simulation (`apt-get -s`) that lists what the install would
+remove. With Ubuntu's own `nodejs` installed, that's `npm` and every `node-*` package. Then it
 runs `npm ci` and `npm run build`, writes `~/.config/systemd/user/motherapp.service` from
 `packaging/motherapp.service` (a template: real Node and repo paths are filled in), asks before
 `systemctl --user enable --now motherapp`, and checks that `http://127.0.0.1:7323/` responds.
 Every status line starts with `OK`, `MISSING`, `WARN`, `FAIL` or `SKIP`, the last line is
-`RESULT: OK` or `RESULT: FAIL`, and the exit code is 0 only when everything required is OK.
+`RESULT: OK` or `RESULT: FAIL` (with counts of warnings and of optional steps skipped), and the exit code is 0 only when everything required is OK.
 Re-running it is safe; re-run it after moving the checkout or changing Node.
 It also puts each tool's command in `~/.local/bin` (e.g. `audioctl`, a small wrapper that runs it
 with that Node), for terminals and GNOME keyboard shortcuts; `--uninstall` removes them.

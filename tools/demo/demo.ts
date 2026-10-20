@@ -14,6 +14,10 @@ const layout: Widget[] = [
   { type: "button", label: "Increment", action: "increment", style: "primary" },
   { type: "button", label: "Flaky increment (fails half the time)", action: "flaky" },
   { type: "button", label: "Slow job (progress)", action: "slow" },
+  // copy: client-side, no action; { bind } copies the current value at a state path
+  { type: "button", label: "Copy count", copy: { bind: "count" } },
+  // confirm: an in-page dialog first (danger style by default); Cancel sends nothing
+  { type: "button", label: "Reset counter", action: "reset", confirm: "Reset the counter to 0?" },
   { type: "text", text: "Controls", style: "heading" },
   { type: "toggle", label: "Enabled", bind: "enabled", action: "setEnabled" },
   { type: "slider", label: "Level (slow device, starts stale)", bind: "level", action: "setLevel", min: 0, max: 100, step: 1, unit: "%" },
@@ -43,7 +47,9 @@ const layout: Widget[] = [
         { type: "radio", bind: "selected", value: "{key}", action: "select", args: { id: "{key}" } },
         { type: "slider", bind: "items.{key}.value", action: "setItemValue", args: { id: "{key}" }, min: 0, max: 10, step: 1 },
         { type: "meter", stream: "item/{key}" },
-        { type: "button", label: "Remove", action: "removeItem", args: { id: "{key}" }, style: "danger" },
+        // A string copy and confirm are interpolated on click, with the row's current fields.
+        { type: "button", label: "Copy", copy: "{name} = {value}" },
+        { type: "button", label: "Remove", action: "removeItem", args: { id: "{key}" }, confirm: "Remove '{name}'? Its value is {value}." },
       ],
     },
   },
@@ -73,6 +79,10 @@ tool
     tool.set("count", count);
     tool.log.info("incremented", { count });
     return { count };
+  })
+  .action("reset", () => {
+    tool.set("count", 0);
+    tool.log.info("counter reset");
   })
   .action("flaky", () => {
     if (Math.random() < 0.5) {

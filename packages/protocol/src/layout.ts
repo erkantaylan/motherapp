@@ -1,4 +1,5 @@
 // Declarative page vocabulary (DESIGN.md § 4.1): list, radio, slider, toggle, meter, button, text.
+// Buttons can also copy text to the clipboard (`copy`) and ask first (`confirm`).
 //
 // Bindings: `bind` is an absolute dotted state path ("level", "sinks.42.volume").
 // Templates: inside a list item, any string field may contain `{key}` (the item's key),
@@ -20,12 +21,24 @@ export interface TextWidget {
   style?: "heading" | "body" | "muted";
 }
 
+/**
+ * A button. Clicking it, in this order:
+ * 1. `confirm`: shows a confirm dialog with this text (template). Cancel stops here.
+ * 2. `copy`: copies text to the clipboard in the browser (no tool round-trip), with brief
+ *    "Copied" feedback, or a select-the-text dialog where the clipboard API is unavailable.
+ *    A string is the text (template); `{ bind }` copies the value at that state path.
+ * 3. `action`: sends `args`. `action` is required unless `copy` is set.
+ * Inside a list row, `confirm` and a string `copy` are interpolated when clicked, against the
+ * row's current item, so they follow renames and other changes to the row.
+ */
 export interface ButtonWidget {
   type: "button";
   label: string;
-  action: string;
+  action?: string;
   args?: ActionArgs;
   style?: "default" | "primary" | "danger";
+  confirm?: string;
+  copy?: string | { bind: string };
 }
 
 export interface ToggleWidget {

@@ -69,12 +69,13 @@ GNOME 48 unless its author updates it.
 | Brightness UI | **Both**: a slider per monitor plus a linked "all monitors" slider. |
 | Brightness backend | **`libddcutil` kept loaded** in the brightness tool's serve process. It needs installing on the machine. |
 | Shared storage | Each tool keeps its own files in `~/.config/motherapp/` (settings) and `~/.local/state/motherapp/` (state). **SQLite** (`node:sqlite`) is added only where something needs searching, likely log history; when is Claude's call. |
-| Install | An **installer** that checks every dependency. It installs the missing ones, asking before anything uses `sudo`/apt, or explains how to install them. Then it builds the app and sets up the systemd user service. Built as `install.sh` (bash, since Node 24 may be missing): `--check`, `--yes`, `--uninstall [--purge]`; Node 24 comes from the NodeSource apt repo (offered) or fnm/nvm (explained). |
+| Install | An **installer** that checks every dependency. It installs the missing ones, asking before anything uses `sudo`/apt, or explains how to install them. Then it builds the app and sets up the systemd user service. Built as `install.sh` (bash, since Node 24 may be missing): `--check`, `--yes [--allow-removals]`, `--uninstall [--purge]`. Node 24: `nvm`/`fnm install 24` is offered first when one is present (no sudo, removes nothing). Otherwise the NodeSource apt repo is offered, after an `apt-get -s` simulation that lists what the install would remove; `--yes` alone never accepts removals (issue #3). |
 | Tool CLIs on PATH | The installer writes wrappers in `~/.local/bin` (e.g. `audioctl`) that run the tool with the installer's Node 24; removed by `--uninstall`. |
 | Testing on the machine | When a build is ready to try, a **GitHub issue with step-by-step test instructions** is opened for a Claude session on the user's computer to follow. |
 | Branching | **Work directly on `main`.** No feature branches. |
 | Audio backend (Q9) | **PipeWire CLI route**: `pw-dump --monitor` for events, `wpctl` for default/volume/mute, `pw-play`/`pw-record` for the tests. No `pactl`, no GObject bindings. Built in `tools/audio/` (`audioctl`). |
 | Build order | 1. Core infra (manager). 2. A **log service in the core** that every extension uses, plus its logs page (§ 4.12). 3. The **audio tool**: audio-switch parity plus per-app volume and mute. This replaces § 4.4. |
+| tmux tool | `tools/tmux/` per issue #6: polled every 2 s, copy and kill-with-confirm per session. |
 
 ## 4. Details
 
@@ -90,7 +91,9 @@ Two tiers:
   a state path and name an action. Layout/state split means a volume change is a tiny state
   delta, not a re-render. Pros: any language, consistent look, phone-friendly for free, zero
   frontend code per tool. Cons: we own a widget vocabulary, every new widget type is core work.
-  Starting vocabulary: list, radio, slider, toggle, meter, button, text.
+  Starting vocabulary: list, radio, slider, toggle, meter, button, text. Buttons later gained
+  `copy` (client-side clipboard copy) and `confirm` (an in-page confirm dialog), for tmux (#6)
+  and other tools (#8).
 - **Custom page (escape hatch).** The extension ships a TS module the shell mounts in the content
   area, with a client bound to its tool (subscribe to state, call actions) and the shared theme.
   Pros: anything goes (log viewer with live tail and filters, storage charts). Cons: TS only,

@@ -1,0 +1,13 @@
+{
+  "name": "@motherapp/tool-tmux",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "tmux tool: list tmux sessions, copy the attach command, kill sessions.",
+  "bin": {
+    "tmuxctl": "./tmuxctl.ts"
+  },
+  "dependencies": {
+    "@motherapp/tool-sdk": "*"
+  }
+}

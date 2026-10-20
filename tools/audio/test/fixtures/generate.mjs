@@ -1,4 +1,5 @@
-// Generates tools/audio/test/fixtures/{pw-dump.json,pw-dump-monitor.txt} in pw-dump 1.0 shapes.
+// Generates tools/audio/test/fixtures/{pw-dump.json,pw-dump-monitor.txt,pw-dump-arctis.json}
+// in pw-dump 1.0 shapes.
 //   node tools/audio/test/fixtures/generate.mjs tools/audio/test/fixtures
 // Written from PipeWire 1.0 pw-dump output shapes, not captured on the target machine. If a
 // real capture disagrees, fix this generator (and the tests) to match the capture.
@@ -74,7 +75,9 @@ function node(id, { state = "suspended", inPorts = 0, outPorts = 0, maxIn = 0, m
   };
 }
 
-function alsaNode(id, { cls, name, desc, nick, card, dev = 0, profile, deviceId, serial, ch = 2, path: apath, soft = 1.0, state = "suspended" }) {
+const CARD_NAMES = ["HDA Intel PCH", "HDA NVidia", "G435 Wireless Gaming Headset"];
+
+function alsaNode(id, { cls, name, desc, nick, card, dev = 0, profile, profileName = "analog-stereo", deviceId, serial, ch = 2, path: apath, soft = 1.0, state = "suspended", cardName = CARD_NAMES[card], driver = card === 2 ? "snd_usb_audio" : "snd_hda_intel" }) {
   const playback = cls === "Audio/Sink";
   return node(id, {
     state,
@@ -86,17 +89,17 @@ function alsaNode(id, { cls, name, desc, nick, card, dev = 0, profile, deviceId,
     params: nodeParams(ch, propsParam({ ch, soft })),
     props: {
       "alsa.card": card,
-      "alsa.card_name": card === 0 ? "HDA Intel PCH" : card === 1 ? "HDA NVidia" : "G435 Wireless Gaming Headset",
+      "alsa.card_name": cardName,
       "alsa.class": "generic",
       "alsa.device": dev,
-      "alsa.driver_name": card === 2 ? "snd_usb_audio" : "snd_hda_intel",
+      "alsa.driver_name": driver,
       "alsa.id": nick,
       "alsa.name": nick,
       "alsa.resolution_bits": 16,
       "alsa.subclass": "generic-mix",
       "alsa.subdevice": 0,
       "alsa.subdevice_name": "subdevice #0",
-      "api.alsa.card.name": card === 0 ? "HDA Intel PCH" : "HDA NVidia",
+      "api.alsa.card.name": cardName,
       "api.alsa.path": apath,
       "api.alsa.pcm.card": card,
       "api.alsa.pcm.stream": playback ? "playback" : "capture",
@@ -108,7 +111,7 @@ function alsaNode(id, { cls, name, desc, nick, card, dev = 0, profile, deviceId,
       "device.class": "sound",
       "device.id": deviceId,
       "device.profile.description": profile,
-      "device.profile.name": playback ? "analog-stereo" : "analog-stereo",
+      "device.profile.name": profileName,
       "device.routes": 1,
       "factory.id": 18,
       "factory.mode": "merge",
@@ -381,7 +384,36 @@ const batches = [
     meta(34, "default", [{ subject: 0, key: "default.audio.sink", type: "Spa:String:JSON", value: json(ANALOG_OUT) }], 34)],
 ];
 
+// pw-dump-arctis.json: a SteelSeries Arctis Pro Wireless (issue #5). The node.name, node.nick,
+// node.description, device.id and card props of sinks 40 and 41 are as the local tester read
+// them on the machine; the rest, and the source (43), are filled in from the same pattern
+// (WirePlumber's gaming-headset profile set: mono-chat is PCM 0 in both directions, stereo-game
+// is PCM 1 playback only). A USB card with two PCMs: the second PCM's nick is the generic
+// "USB Audio #1", and the first one's nick is just the card name.
+const ARCTIS = "usb-SteelSeries_Arctis_Pro_Wireless-00";
+const ARCTIS_CHAT = `alsa_output.${ARCTIS}.mono-chat`;
+const ARCTIS_GAME = `alsa_output.${ARCTIS}.stereo-game`;
+const ARCTIS_MIC = `alsa_input.${ARCTIS}.mono-chat`;
+const arctisCard = { card: 3, cardName: "Arctis Pro Wireless", driver: "snd_usb_audio", deviceId: 52 };
+const arctis = [
+  core,
+  device(52, { name: `alsa_card.${ARCTIS}`, desc: "Arctis Pro Wireless", nick: "Arctis Pro Wireless", card: 3, bus: "usb", serial: 52 }),
+  alsaNode(40, { ...arctisCard, cls: "Audio/Sink", name: ARCTIS_CHAT, desc: "Arctis Pro Wireless Chat", nick: "Arctis Pro Wireless", dev: 0, profile: "Chat Output", profileName: "mono-chat", serial: 40, path: "hw:3,0", ch: 1 }),
+  alsaNode(41, { ...arctisCard, cls: "Audio/Sink", name: ARCTIS_GAME, desc: "Arctis Pro Wireless Game", nick: "USB Audio #1", dev: 1, profile: "Game Output", profileName: "stereo-game", serial: 41, path: "hw:3,1", state: "running" }),
+  alsaNode(43, { ...arctisCard, cls: "Audio/Source", name: ARCTIS_MIC, desc: "Arctis Pro Wireless Chat", nick: "Arctis Pro Wireless", dev: 0, profile: "Chat Input", profileName: "mono-chat", serial: 43, path: "hw:3,0", ch: 1 }),
+  meta(
+    34,
+    "default",
+    [
+      { subject: 0, key: "default.audio.sink", type: "Spa:String:JSON", value: json(ARCTIS_GAME) },
+      { subject: 0, key: "default.audio.source", type: "Spa:String:JSON", value: json(ARCTIS_MIC) },
+    ],
+    34,
+  ),
+];
+
 fs.mkdirSync(out, { recursive: true });
 fs.writeFileSync(path.join(out, "pw-dump.json"), JSON.stringify(initial, null, 2) + "\n");
+fs.writeFileSync(path.join(out, "pw-dump-arctis.json"), JSON.stringify(arctis, null, 2) + "\n");
 fs.writeFileSync(path.join(out, "pw-dump-monitor.txt"), batches.map((b) => JSON.stringify(b, null, 2)).join("\n") + "\n");
 console.log("wrote", batches.length, "batches");
