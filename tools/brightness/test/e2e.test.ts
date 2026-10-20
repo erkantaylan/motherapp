@@ -175,7 +175,8 @@ test("real libddcutil in serve mode: its stdout chatter goes to the log, never i
   t.after(() => core.proc.kill("SIGKILL"));
   const c = await connect(core);
   await waitFor(() => c.changes().some((x) => x.path === "backend" && /libddcutil 1\.4/.test(x.value)), "libddcutil backend", 10_000);
-  await waitFor(() => c.changes().some((x) => x.path === "status" && /No monitors with DDC\/CI found/.test(x.value)), "0 displays", 10_000);
+  // With or without monitors attached: either the "none found" status or at least one monitor row.
+  await waitFor(() => c.changes().some((x) => (x.path === "status" && /No monitors with DDC\/CI found/.test(x.value)) || x.path.startsWith("monitors.")), "detection finished", 15_000);
   assert.ok(!core.lines.some((l) => /ignoring tool output/.test(l.msg)), "no stray lines on the JSON-RPC channel");
   assert.ok(!core.lines.some((l) => l.tool === "brightness" && l.src === "core" && /crash|exit/i.test(l.msg)), "no crash");
   c.ws.close();
