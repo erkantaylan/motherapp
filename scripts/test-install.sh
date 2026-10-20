@@ -96,13 +96,6 @@ new_case() {
   pw_stubs pw-dump pw-play pw-record pw-metadata wpctl
   sound_files
   stub ddcutil '[[ ${1:-} == --version ]] && echo "ddcutil 1.4.1"; exit 0'
-  stub fsearch 'exit 0'
-  echo 0.3.1-1~noble >"$FAKE/dpkg/fsearch"
-  # add-apt-repository: the FSearch PPA becomes a sources file and gives apt a candidate.
-  stub add-apt-repository 'echo "add-apt-repository $*" >>"$FAKE/calls"
-echo "URIs: https://ppa.launchpadcontent.net/christian-boxdoerfer/fsearch-stable/ubuntu/" \
-  >"$MOTHERAPP_INSTALL_ROOT/etc/apt/sources.list.d/christian-boxdoerfer-ubuntu-fsearch-stable-noble.sources"
-echo 0.3.1-1~noble >"$FAKE/apt/fsearch"'
 
   mkdir -p "$ROOT/sys/module/i2c_dev" "$ROOT/etc/modules-load.d" "$ROOT/etc/apt/sources.list.d" "$ROOT/dev"
   echo i2c-dev >"$ROOT/etc/modules-load.d/i2c-dev.conf"
@@ -149,7 +142,6 @@ for p in "${@:2}"; do
     wireplumber) printf "#!/bin/sh\n" >"$FAKE_STUB/wpctl"; chmod +x "$FAKE_STUB/wpctl" ;;
     sound-theme-freedesktop) mkdir -p "$R/usr/share/sounds/freedesktop/stereo"; touch "$R/usr/share/sounds/freedesktop/stereo/audio-channel-front-"{left,right}.oga ;;
     libddcutil4) mkdir -p "$R/usr/lib/x86_64-linux-gnu"; touch "$R/usr/lib/x86_64-linux-gnu/libddcutil.so.4" ;;
-    fsearch) printf "#!/bin/sh\n" >"$FAKE_STUB/fsearch"; chmod +x "$FAKE_STUB/fsearch" ;;
     nodejs) mkdir -p "$R/usr/bin"; cp "$FAKE/node_template" "$R/usr/bin/node"; cp "$FAKE/npm_template" "$R/usr/bin/npm"; chmod +x "$R/usr/bin/node" "$R/usr/bin/npm" ;;
   esac
 done'
@@ -1049,60 +1041,6 @@ echo '{ "port": 7999 }' >"$HOME_/.config/motherapp/config.json"
 stub xdg-open 'echo "xdg-open $*" >>"$FAKE/calls"'
 run_motherapp open
 check "open: the config.json port" calls_has "xdg-open http://127.0.0.1:7999/"
-
-# ------------------------------------------------------------------ FSearch (optional, #24)
-
-no_fsearch() { rm -f "$STUB/fsearch" "$FAKE/dpkg/fsearch"; }
-fsearch_sim() { echo "Inst fsearch (0.3.1-1~noble christian-boxdoerfer:noble [amd64])" >"$FAKE/apt_sim"; }
-
-new_case fsearch-check
-run_installer --yes           # the app installed, FSearch present
-no_fsearch
-: >"$FAKE/calls"
-run_installer --check
-check "--check: optional MISSING row" out_has '^MISSING +fsearch +not installed \(optional'
-check "--check: fix names the PPA" out_has 'add-apt-repository -y ppa:christian-boxdoerfer/fsearch-stable'
-check "--check: optional, so still OK" out_has '^RESULT: OK'
-check "--check: exit 0" exit_is 0
-check "--check: changes nothing" calls_lacks 'add-apt-repository|apt-get'
-
-new_case fsearch-yes
-no_fsearch
-fsearch_sim
-run_installer --yes
-check "--yes: PPA added" calls_has "sudo add-apt-repository -y ppa:christian-boxdoerfer/fsearch-stable"
-check "--yes: simulated first" calls_has "apt-get -s install fsearch"
-check "--yes: says it removes nothing" out_has 'step 2 of 2: sudo apt-get install -y fsearch \(installs fsearch 0\.3\.1-1~noble; removes nothing\)'
-check "--yes: installed" calls_has "sudo apt-get install -y fsearch"
-check "--yes: OK after the install" out_has '^OK +fsearch '
-check "--yes: exit 0" exit_is 0
-: >"$FAKE/calls"
-run_installer --yes
-check "re-run: nothing to do" calls_lacks 'add-apt-repository|install -y fsearch'
-
-new_case fsearch-removals
-no_fsearch
-{ echo "Remv libfoo1 [1.0-1]"; echo "Inst fsearch (0.3.1-1~noble christian-boxdoerfer:noble [amd64])"; } >"$FAKE/apt_sim"
-run_installer --yes --allow-removals
-check "removals: listed" out_has 'Installing fsearch would REMOVE 1 package\(s\); not installing it'
-check "removals: never installed, even with --allow-removals" calls_lacks 'apt-get install -y fsearch'
-check "removals: optional, exit 0" exit_is 0
-
-new_case fsearch-declined
-no_fsearch
-run_installer <<<$'n'
-check "declined: no PPA" calls_lacks 'add-apt-repository'
-check "declined: hint for later" out_has 'skipped\. Later: sudo add-apt-repository'
-
-new_case fsearch-ppa-present
-no_fsearch
-fsearch_sim
-echo "URIs: https://ppa.launchpadcontent.net/christian-boxdoerfer/fsearch-stable/ubuntu/" >"$ROOT/etc/apt/sources.list.d/fsearch.sources"
-echo 0.3.1-1~noble >"$FAKE/apt/fsearch"
-run_installer --yes
-check "PPA present: not added again" calls_lacks 'add-apt-repository'
-check "PPA present: says so" out_has 'the FSearch PPA is already configured'
-check "PPA present: installed" calls_has "sudo apt-get install -y fsearch"
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 (( FAILED == 0 ))

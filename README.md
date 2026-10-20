@@ -39,8 +39,8 @@ Settings page to try the widgets.
 
 ## Dependencies
 
-Target: **Ubuntu 24.04, GNOME, Wayland**. `./install.sh` checks the Node, audio, brightness and
-FSearch rows and offers to install what's missing (asking before every `sudo`/apt step). `tmux`,
+Target: **Ubuntu 24.04, GNOME, Wayland**. `./install.sh` checks the Node, audio and brightness
+rows and offers to install what's missing (asking before every `sudo`/apt step). `tmux`,
 `gsettings`/`dconf` and `cloudflared` aren't checked by the installer: a tool whose command is
 missing says so on its page.
 
@@ -54,7 +54,6 @@ missing says so on its page.
 | tmux tool | `tmux` | `tmux` |
 | Shortcuts tool | `gsettings`, `dconf` (GNOME) | `libglib2.0-bin`, `dconf-cli` |
 | Inbox tool | `cloudflared` (quick tunnels, no account) | Cloudflare's package |
-| File search (optional) | **FSearch** | its PPA, `ppa:christian-boxdoerfer/fsearch-stable` (not in Ubuntu's archive) |
 
 Build only (installed by `npm ci`, not system-wide): TypeScript, Vite, Bootstrap 6 (pinned alpha),
 Dart Sass, koffi.
@@ -86,8 +85,7 @@ The installer checks Node >= 24, the PipeWire tools (`pw-dump`, `pw-play`, `pw-r
 `pw-metadata`, `wpctl`), the freedesktop test sounds, the PipeWire user services, `ddcutil`,
 `libddcutil`, the `i2c-dev` module, `/dev/i2c-*` and `i2c` group membership. It offers to fix
 what is missing and asks y/N before every `sudo`/apt step (`--yes` accepts everything except an
-install that would remove packages; add `--allow-removals` for that). FSearch is optional: it is
-added from its PPA after a simulated install, and never if apt would remove anything. For Node 24 it first
+install that would remove packages; add `--allow-removals` for that). For Node 24 it first
 offers `nvm install 24` or `fnm install 24` if you have nvm or fnm (no sudo, removes nothing; the
 unit and wrappers then use that version's path under `~/.nvm`, so re-run the installer after
 upgrading or removing it). Otherwise it offers the NodeSource apt repo in two steps: adding the

@@ -45,9 +45,6 @@ SOUND_DIR="$ROOT/usr/share/sounds/freedesktop/stereo"
 TEST_SOUNDS=("$SOUND_DIR/audio-channel-front-left.oga" "$SOUND_DIR/audio-channel-front-right.oga")
 NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
 NODESOURCE_LIST_LINE="deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${MIN_NODE}.x nodistro main"
-# FSearch (Everything-like file search, #24) isn't in Ubuntu's archive; its author's PPA has it.
-FSEARCH_PPA="ppa:christian-boxdoerfer/fsearch-stable"
-FSEARCH_PPA_PATH="christian-boxdoerfer/fsearch-stable"
 
 # Ubuntu 24.04 (noble) package for each PipeWire command. Checked against the noble archive
 # (dpkg -c of pipewire-bin 1.0.5-1ubuntu3.3 and wireplumber 0.4.17-1ubuntu4.1); confirmed at
@@ -290,7 +287,6 @@ NEED_PKGS=()
 NEED_I2C_LOAD=0
 NEED_I2C_PERSIST=0
 NEED_USERMOD=0
-NEED_FSEARCH=0
 USER_NAME=""
 
 add_pkg() {
@@ -493,25 +489,8 @@ check_misc_tools() {
   fi
 }
 
-fsearch_ppa_configured() {
-  grep -rqsF -- "$FSEARCH_PPA_PATH" "$ROOT/etc/apt/sources.list.d/"
-}
-
-check_fsearch() {
-  if have fsearch; then
-    local v
-    v="$(dpkg_installed fsearch)"
-    record OK fsearch "${v:+fsearch $v }($(command -v fsearch))"
-    return
-  fi
-  local fix="sudo add-apt-repository -y $FSEARCH_PPA && sudo apt-get install fsearch"
-  fsearch_ppa_configured && fix="$(apt_fix fsearch)   (its PPA is already configured)"
-  record MISSING fsearch "not installed (optional: Everything-like instant file search)" "$fix" 0
-  NEED_FSEARCH=1
-}
-
 run_checks() {
-  NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0 NEED_FSEARCH=0
+  NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0
   section "Runtime"
   check_node
   check_misc_tools
@@ -525,8 +504,6 @@ run_checks() {
   check_i2c
   section "Service manager"
   check_systemd_user
-  section "File search (FSearch, optional)"
-  check_fsearch
 }
 
 # ---------------------------------------------------------------- fixes (sudo, asked)
@@ -702,46 +679,6 @@ offer_node() {
   if offer_nodesource; then APPLIED_FIX=1; fi
 }
 
-# --- FSearch from its PPA (sudo; optional). Never removes packages: if apt wants to, it stops.
-
-offer_fsearch() {
-  section "Install FSearch (optional)"
-  if ! have apt-get || ! have sudo; then
-    info "apt-get/sudo not available; skipped. Install: sudo add-apt-repository -y $FSEARCH_PPA && sudo apt-get install fsearch"
-    return 1
-  fi
-  if fsearch_ppa_configured; then
-    info "the FSearch PPA is already configured"
-  elif ! have add-apt-repository; then
-    info "add-apt-repository is missing (package software-properties-common); skipped."
-    info "Install it, then re-run: sudo apt-get install software-properties-common"
-    return 1
-  elif ask "FSearch, step 1 of 2: add its PPA ($FSEARCH_PPA; sudo, runs apt-get update). This installs and removes nothing; step 2 first shows what installing fsearch would change"; then
-    if ! run_sudo add-apt-repository -y "$FSEARCH_PPA"; then info "adding the PPA failed (see above)"; return 1; fi
-  else
-    info "skipped. Later: sudo add-apt-repository -y $FSEARCH_PPA && sudo apt-get install fsearch"
-    return 1
-  fi
-
-  if ! simulate_install fsearch; then
-    info "apt-get -s install fsearch failed (see above); not installing."
-    return 1
-  fi
-  local n=${#SIM_REMOVALS[@]}
-  if (( n > 0 )); then
-    info "${C_RED}Installing fsearch would REMOVE $n package(s); not installing it:${C_RESET}"
-    info_wrapped "${SIM_REMOVALS[@]}"
-    info "Check it yourself: sudo apt-get install fsearch (apt lists the removals and asks)"
-    return 1
-  fi
-  if ask "FSearch, step 2 of 2: sudo apt-get install -y fsearch (installs fsearch ${SIM_NEW:-from the PPA}; removes nothing)"; then
-    run_sudo apt-get install -y fsearch
-    return
-  fi
-  info "skipped; the PPA stays configured (to undo: sudo add-apt-repository -r -y $FSEARCH_PPA)"
-  return 1
-}
-
 offer_fixes() {
   local can_apt=1
   have apt-get && have sudo || can_apt=0
@@ -777,10 +714,6 @@ offer_fixes() {
     else
       info "skipped"
     fi
-  fi
-
-  if (( NEED_FSEARCH )); then
-    offer_fsearch && APPLIED_FIX=1
   fi
 
   if (( NEED_USERMOD )); then
