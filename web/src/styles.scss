@@ -202,30 +202,58 @@
   .row-controls .control { gap: var(--bs-spacer-3); }
   .list-empty[hidden] { display: none; }
 
-  // Settings: tool order (issue #20). The handle takes pointer drags only (touch-action: none,
-  // so a finger drags instead of scrolling); the arrow buttons are the keyboard path.
+  // Settings: tool order (issue #20). The handle is a button: pointer drags (touch-action: none,
+  // so a finger drags instead of scrolling), and the arrow keys while it has the focus.
   .order-bar { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-3) var(--bs-spacer-4); align-items: center; justify-content: space-between; margin: var(--bs-spacer-2) 0 var(--bs-spacer-3); }
   .order-bar .w-text { flex: 1 1 260px; }
+  // One grid for the whole list, and every row a subgrid of it: each part of a row has a named
+  // column shared by all rows, so a row without a Restart button (a disabled tool) leaves that
+  // slot empty instead of shifting its switch and dot.
+  .list-group.tool-order {
+    display: grid;
+    grid-template-columns: [handle] auto [labels] minmax(0, 1fr) [enabled] auto [restart] auto [dot] auto [end];
+    column-gap: var(--bs-spacer-4);
+  }
+  .tool-order > .list-row {
+    display: grid;
+    grid-column: handle / end;
+    grid-template-columns: subgrid;
+    gap: var(--bs-spacer-2) var(--bs-spacer-4);
+    align-items: center;
+  }
+  .tool-order > .list-row > .drag-handle { grid-column: handle; }
+  .tool-order > .list-row > .row-labels { grid-column: labels; }
+  .tool-order > .list-row > .row-enabled { grid-column: enabled; flex-wrap: nowrap; gap: var(--bs-spacer-3); }
+  .tool-order > .list-row > .row-restart { grid-column: restart; justify-self: start; }
+  .tool-order > .list-row > .dot { grid-column: dot; }
+  // Narrow: the name gets the first line to itself, the controls stay in their columns below it.
+  @media (max-width: 560px) {
+    .tool-order > .list-row > .drag-handle { grid-row: 1 / span 2; }
+    .tool-order > .list-row > .row-labels { grid-row: 1; grid-column: labels / end; }
+    .tool-order > .list-row > :is(.row-enabled, .row-restart, .dot) { grid-row: 2; }
+  }
   .drag-handle {
     flex: none;
-    padding: var(--bs-spacer-2) var(--bs-spacer-1);
+    padding: var(--bs-spacer-2);
     margin-inline-start: calc(-1 * var(--bs-spacer-2));
     font-size: 1.15em;
     line-height: 1;
     color: var(--muted);
     cursor: grab;
     user-select: none;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius);
     touch-action: none;
   }
   .drag-handle:hover { color: var(--fg); }
+  .drag-handle:focus-visible { color: var(--fg); outline: var(--bs-focus-ring); outline-offset: var(--bs-focus-ring-offset); }
   .tool-order.is-dragging, .tool-order.is-dragging .drag-handle { cursor: grabbing; user-select: none; }
   .tool-order .list-row.dragging {
     z-index: 2;
     background-color: color-mix(in oklch, var(--bs-primary-bg-subtle) 60%, var(--bs-bg-body));
     box-shadow: var(--bs-box-shadow);
   }
-  .order-buttons .btn-icon { min-width: var(--bs-btn-input-sm-min-height, 2rem); }
-
   // dialogs (button confirm, manual copy) and the "Copied" toast
   .dialog { --bs-dialog-width: 460px; }
   .dialog-text { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }

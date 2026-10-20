@@ -1,9 +1,9 @@
-// Settings re-ordering (issue #20), DOM-free: up/down, drag targets, the pending-order model,
+// Settings re-ordering (issue #20), DOM-free: keyboard moves, drag targets, the pending-order model,
 // focus after a move and the aria-live text. The pointer and focus behaviour itself is checked
 // in Chromium (see docs/lessons/2026-10-20-tool-order.md).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ReorderModel, dropIndex, focusTarget, moveBy, moveItem, moveMessage, sameOrder } from "../src/reorder.ts";
+import { ReorderModel, dropIndex, keyMove, moveBy, moveItem, moveMessage, sameOrder } from "../src/reorder.ts";
 
 const ids = ["audio", "brightness", "inbox", "tmux"];
 
@@ -79,11 +79,17 @@ test("ReorderModel: tools that appear or vanish while a move is pending", () => 
   assert.deepEqual(m.view(["brightness", "inbox", "shortcuts", "tmux"]), ["tmux", "inbox", "brightness", "shortcuts"]);
 });
 
-test("focus stays on the pressed button, or moves to the other one at the ends", () => {
-  assert.equal(focusTarget("up", 1, 4), "up");
-  assert.equal(focusTarget("up", 0, 4), "down");
-  assert.equal(focusTarget("down", 3, 4), "up");
-  assert.equal(focusTarget("down", 2, 4), "down");
+test("keyMove: arrows move by one, Home/End to the ends, other keys and the ends do nothing", () => {
+  assert.deepEqual(keyMove(ids, "inbox", "ArrowUp"), { order: ["audio", "inbox", "brightness", "tmux"], index: 1 });
+  assert.deepEqual(keyMove(ids, "inbox", "ArrowDown"), { order: ["audio", "brightness", "tmux", "inbox"], index: 3 });
+  assert.deepEqual(keyMove(ids, "inbox", "Home"), { order: ["inbox", "audio", "brightness", "tmux"], index: 0 });
+  assert.deepEqual(keyMove(ids, "brightness", "End"), { order: ["audio", "inbox", "tmux", "brightness"], index: 3 });
+  assert.equal(keyMove(ids, "audio", "ArrowUp"), undefined);
+  assert.equal(keyMove(ids, "audio", "Home"), undefined);
+  assert.equal(keyMove(ids, "tmux", "ArrowDown"), undefined);
+  assert.equal(keyMove(ids, "tmux", "End"), undefined);
+  assert.equal(keyMove(ids, "inbox", "Enter"), undefined);
+  assert.equal(keyMove(ids, "gone", "ArrowUp"), undefined);
 });
 
 test("the aria-live message names the tool and its 1-based position", () => {

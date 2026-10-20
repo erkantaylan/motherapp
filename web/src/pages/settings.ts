@@ -4,7 +4,7 @@ import type { ToolInfo, VersionInfo } from "@motherapp/protocol";
 import type { App } from "../app.ts";
 import { KeyedList } from "../keyedList.ts";
 import { confirmDialog, h, statusDot } from "../renderer.ts";
-import { ReorderModel, dropIndex, focusTarget, moveBy, moveMessage, moveItem, sameOrder } from "../reorder.ts";
+import { ReorderModel, dropIndex, keyMove, moveMessage, moveItem, sameOrder } from "../reorder.ts";
 
 const when = (iso: string | null | undefined): string => (iso ? new Date(iso).toLocaleString() : "unknown");
 
@@ -54,8 +54,7 @@ function versionSection(app: App): { el: HTMLElement; off: () => void } {
 
 interface RowRefs {
   node: HTMLElement;
-  up: HTMLButtonElement;
-  down: HTMLButtonElement;
+  handle: HTMLButtonElement;
   title(): string;
 }
 
@@ -64,6 +63,9 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
   const version = versionSection(app);
   // Moves are announced here ("Brightness moved to position 1 of 6").
   const live = h("div", { class: "visually-hidden" });
+  // Every drag handle points here (aria-describedby).
+  const keyHint = h("div", { class: "visually-hidden", text: "Use arrow keys to move" });
+  keyHint.id = "tool-order-key-hint";
   live.setAttribute("role", "status");
   live.setAttribute("aria-live", "polite");
   let liveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -82,11 +84,12 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     h(
       "div",
       { class: "order-bar" },
-      h("p", { class: "w-text muted", text: "Drag ⠿ or use the arrows to set the sidebar order. Logs and Settings stay at the bottom." }),
+      h("p", { class: "w-text muted", text: "Drag ⠿ to set the sidebar order (or focus it and use the arrow keys). Logs and Settings stay at the bottom." }),
       h("div", { class: "row-controls" }, reset, orderDot.el),
     ),
     rowsEl,
     live,
+    keyHint,
     h("p", { class: "w-text muted", text: "Changes are saved to ~/.config/motherapp/config.json." }),
     version.el,
   );
@@ -118,14 +121,19 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     );
   };
 
-  const moveRow = (id: string, pressed: "up" | "down") => {
-    const r = moveBy(model.view(serverIds()), id, pressed === "up" ? -1 : 1);
+  // Keyboard path: ArrowUp/ArrowDown/Home/End on a focused drag handle.
+  const onHandleKey = (id: string, e: KeyboardEvent) => {
+    if (drag || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+    // Also at the top or bottom, so the page doesn't scroll instead.
+    e.preventDefault();
+    const r = keyMove(model.view(serverIds()), id, e.key);
     if (!r) return;
     model.propose(r.order);
     sync();
-    // Moving a row re-inserts its node, which can drop the focus; put it back on the row's button.
+    // Moving a row re-inserts its node, which can drop the focus; put it back on the handle.
     const row = refs.get(id);
-    if (row) row[focusTarget(pressed, r.index, r.order.length)].focus();
+    row?.handle.focus();
     announce(moveMessage(row?.title() ?? id, r.index, r.order.length));
     save(r.order);
   };
@@ -147,8 +155,8 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
 
   // Dragging: Pointer Events, so mouse, touch and pen share one path. The pointer is captured by
   // the list itself, not the handle, because the dragged row's node is moved around while the
-  // drag runs (and a moved node loses its capture). Keyboard users have the arrow buttons; the
-  // handle isn't focusable and does nothing for them.
+  // drag runs (and a moved node loses its capture). Keyboard users focus the same handle and use
+  // the arrow keys (onHandleKey).
   let drag: { id: string; pointerId: number; start: string[] } | undefined;
   const shownOrder = () => list.keys();
   const endDrag = (commit: boolean) => {
@@ -237,44 +245,33 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
             enabled.checked = info.enabled;
           });
       });
-      const restart = h("button", { class: "btn-outline theme-secondary btn-sm", text: "Restart" });
+      const restart = h("button", { class: "btn-outline theme-secondary btn-sm row-restart", text: "Restart" });
       restart.type = "button";
       restart.addEventListener("click", () => {
         app.conn.request("tool.restart", { tool: info.id }).catch((e: Error) => dot.set("failed", e.message));
       });
-      // Drag handle: pointer only. Hidden from assistive tech and out of the tab order; the
-      // arrow buttons below are the keyboard path.
-      const handle = h("span", { class: "drag-handle", text: "⠿", title: "Drag to reorder" });
-      handle.setAttribute("aria-hidden", "true");
+      // Drag handle: a pointer drags it; focused (it's a button), the arrow keys move the row.
+      const handle = h("button", { class: "drag-handle", text: "⠿", title: "Drag to reorder" });
+      handle.type = "button";
+      handle.setAttribute("aria-describedby", keyHint.id);
       handle.addEventListener("pointerdown", (e) => startDrag(info.id, e));
-      const arrow = (dir: "up" | "down") => {
-        const b = h("button", { class: "btn-outline theme-secondary btn-sm btn-icon", text: dir === "up" ? "↑" : "↓" });
-        b.type = "button";
-        b.addEventListener("click", () => moveRow(info.id, dir));
-        return b;
-      };
-      const up = arrow("up");
-      const down = arrow("down");
+      handle.addEventListener("keydown", (e) => onHandleKey(info.id, e));
+      // Each part has its own named grid column, shared by all rows through subgrid
+      // (styles.scss, .tool-order), so a row without a Restart button keeps the others' columns.
       const node = h(
         "div",
         { class: "list-group-item list-row" },
         handle,
         h("div", { class: "row-labels" }, title, sub),
-        h(
-          "div",
-          { class: "row-controls" },
-          h("div", { class: "btn-group order-buttons" }, up, down),
-          h("label", { class: "control" }, h("span", { class: "control-label", text: "Enabled" }), h("div", { class: "switch" }, enabled)),
-          restart,
-          dot.el,
-        ),
+        h("label", { class: "control row-enabled" }, h("span", { class: "control-label", text: "Enabled" }), h("div", { class: "switch" }, enabled)),
+        restart,
+        dot.el,
       );
       node.dataset.tool = first.id;
-      refs.set(first.id, { node, up, down, title: () => info.title });
+      refs.set(first.id, { node, handle, title: () => info.title });
       const update = (next: ToolInfo) => {
         info = next;
-        up.setAttribute("aria-label", `Move ${next.title} up`);
-        down.setAttribute("aria-label", `Move ${next.title} down`);
+        handle.setAttribute("aria-label", `Move ${next.title}`);
         title.textContent = `${next.icon ? next.icon + " " : ""}${next.title}`;
         sub.textContent = `${next.id} · ${next.status}${next.statusText ? ` · ${next.statusText}` : ""}`;
         sub.title = sub.textContent; // .row-sub is one line, cut with an ellipsis
@@ -298,17 +295,7 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     // Re-inserting a row can drop the focus (e.g. another tab moved the row this tab is on).
     const active = document.activeElement instanceof HTMLElement && rowsEl.contains(document.activeElement) ? document.activeElement : undefined;
     list.update(ids.map((id) => [id, byId.get(id)!] as const));
-    ids.forEach((id, i) => {
-      const r = refs.get(id);
-      if (!r) return;
-      r.up.disabled = i === 0;
-      r.down.disabled = i === ids.length - 1;
-    });
-    if (active && active.isConnected && document.activeElement !== active) {
-      const row = [...refs.values()].find((r) => r.node.contains(active));
-      const target = active instanceof HTMLButtonElement && active.disabled && row ? (active === row.up ? row.down : row.up) : active;
-      target.focus();
-    }
+    if (active && active.isConnected && document.activeElement !== active) active.focus();
     reset.disabled = !app.orderSaved && !model.hasPending;
   }
   sync();

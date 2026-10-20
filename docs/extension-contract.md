@@ -46,8 +46,8 @@ tools/<id>/
 
 The core reads `tools/*/manifest.json` at startup. Enabled/disabled is stored in
 `~/.config/motherapp/config.json` (`{"port": 7323, "tools": {"<id>": {"enabled": true}}}`) and can
-be changed on the Settings page. The sidebar order the user sets there (drag or the arrow
-buttons) is saved in the same file as `"order": ["audio", "brightness", …]`; ids of tools that no
+be changed on the Settings page. The sidebar order the user sets there (drag the ⠿ handle, or
+focus it and use the arrow keys) is saved in the same file as `"order": ["audio", "brightness", …]`; ids of tools that no
 longer exist are ignored and dropped on the next save, and "Reset to default order" removes the
 key. The core writes the file atomically and keeps every key it doesn't know. Logs and Settings
 are core pages and always sit at the bottom of the sidebar. Unknown manifest fields are ignored. After adding a tool, run `npm install` once at the repo root

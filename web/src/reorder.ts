@@ -1,6 +1,6 @@
 // Re-ordering the tools on the Settings page (issue #20), without a DOM: moving an id, where a
 // drag drops, the order shown while a save is on its way, and what a screen reader hears.
-// settings.ts wires these to the rows, the buttons and Pointer Events.
+// settings.ts wires these to the rows, the drag handles' keys and Pointer Events.
 
 /** `ids` with the item at `from` moved to index `to` (both clamped). Never mutates `ids`. */
 export function moveItem<T>(ids: readonly T[], from: number, to: number): T[] {
@@ -13,8 +13,8 @@ export function moveItem<T>(ids: readonly T[], from: number, to: number): T[] {
 }
 
 /**
- * The up/down buttons: `id` moved by `delta` (-1 up, +1 down). Undefined when it can't move
- * (unknown id, already first or last), so the caller does nothing and announces nothing.
+ * `id` moved by `delta` (-1 up, +1 down). Undefined when it can't move (unknown id, already
+ * first or last), so the caller does nothing and announces nothing.
  */
 export function moveBy(ids: readonly string[], id: string, delta: number): { order: string[]; index: number } | undefined {
   const from = ids.indexOf(id);
@@ -91,11 +91,23 @@ export function moveMessage(title: string, index: number, total: number): string
 }
 
 /**
- * Which of a row's two buttons gets the focus back after a move: the one pressed, unless it is
- * now disabled (the row reached the top or bottom), then the other one.
+ * A key pressed on a row's drag handle: ArrowUp/ArrowDown move the row by one, Home/End to the
+ * top/bottom. Undefined for other keys, or when the row can't move that way (nothing to do,
+ * nothing to announce, and the key keeps its default).
  */
-export function focusTarget(pressed: "up" | "down", index: number, total: number): "up" | "down" {
-  if (pressed === "up" && index === 0 && total > 1) return "down";
-  if (pressed === "down" && index === total - 1 && total > 1) return "up";
-  return pressed;
+export function keyMove(ids: readonly string[], id: string, key: string): { order: string[]; index: number } | undefined {
+  const from = ids.indexOf(id);
+  if (from < 0) return undefined;
+  switch (key) {
+    case "ArrowUp":
+      return moveBy(ids, id, -1);
+    case "ArrowDown":
+      return moveBy(ids, id, 1);
+    case "Home":
+      return moveBy(ids, id, -from);
+    case "End":
+      return moveBy(ids, id, ids.length - 1 - from);
+    default:
+      return undefined;
+  }
 }
