@@ -13,13 +13,21 @@ import { MACHINE_MONITORS, fakeDdcutil } from "./fakes.ts";
 const fakeWorker = new URL("./fake-worker.ts", import.meta.url);
 const libInstalled = ["/usr/lib/x86_64-linux-gnu/libddcutil.so.4", "/usr/lib/aarch64-linux-gnu/libddcutil.so.4", "/usr/lib/libddcutil.so.4"].some((f) => fs.existsSync(f));
 
-test("real libddcutil.so.4 loads through koffi in the worker; no monitors here means 0 displays", { skip: !libInstalled && "libddcutil4 is not installed" }, async () => {
+// Must pass with and without monitors attached (cloud: none; the user's machine: two), and must
+// never write to a real monitor: it only detects and reads a bus that doesn't exist.
+test("real libddcutil.so.4 loads through koffi in the worker and detects without throwing", { skip: !libInstalled && "libddcutil4 is not installed" }, async () => {
   const b = await LibBackend.start();
   try {
     assert.match(b.description, /^libddcutil 1\.4\.\d/);
-    assert.deepEqual(await b.detect(false), []);
-    assert.deepEqual(await b.detect(true), [], "redetect works too");
-    await assert.rejects(b.read(1), (e: Error & { gone?: boolean }) => e.gone === true && /not reachable any more/.test(e.message));
+    for (const redetect of [false, true]) {
+      const found = await b.detect(redetect);
+      assert.ok(Array.isArray(found));
+      for (const m of found) {
+        assert.equal(typeof m.bus, "number");
+        for (const k of ["mfg", "model", "serial"] as const) assert.equal(typeof m[k], "string", `${k} of bus ${m.bus}`);
+      }
+    }
+    await assert.rejects(b.read(999), (e: Error & { gone?: boolean }) => e.gone === true && /not reachable any more/.test(e.message));
   } finally {
     await b.close();
   }
