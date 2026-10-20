@@ -6,6 +6,7 @@ import { diffState } from "../src/diff.ts";
 import {
   PwModel,
   buildView,
+  deviceTitles,
   escapeKey,
   findApp,
   findDevice,
@@ -15,7 +16,7 @@ import {
   viewToState,
 } from "../src/pipewire.ts";
 import type { PwObject } from "../src/pipewire.ts";
-import { dumpText, monitorBatches, monitorText } from "./fakes.ts";
+import { arctisText, dumpText, monitorBatches, monitorText } from "./fakes.ts";
 
 const ANALOG_OUT = "alsa_output.pci-0000_00_1f.3.analog-stereo";
 
@@ -47,18 +48,50 @@ test("stream parser ignores brackets and quotes inside strings", () => {
   assert.deepEqual(JSON.parse(vals[1]!), [{ id: 1, info: null }]);
 });
 
-test("devices: exact Audio/Sink and Audio/Source only, titled like audio-switch, sorted", () => {
+test("devices: exact Audio/Sink and Audio/Source only, titled by description like wpctl, sorted", () => {
   const view = viewOf(JSON.parse(dumpText()));
   assert.deepEqual(
     view.sinks.map((d) => [d.id, d.title, d.subtitle]),
     [
-      [48, "ALC1220 Analog", "Built-in Audio Analog Stereo"],
-      [52, "X34 P", "GA102 High Definition Audio Controller Digital Stereo (HDMI 2)"],
+      [48, "Built-in Audio Analog Stereo", "ALC1220 Analog"],
+      [52, "GA102 High Definition Audio Controller Digital Stereo (HDMI 2)", "X34 P"],
     ],
   );
+  assert.deepEqual(view.sources.map((d) => [d.title, d.subtitle]), [["Built-in Audio Analog Stereo", "ALC1220 Analog"]]);
   // not the webcam (Video/Source), the echo-cancel Audio/Source/Virtual or the MIDI bridge
   assert.deepEqual(view.sources.map((d) => d.id), [50]);
   assert.equal(view.sinks[0]!.name, ANALOG_OUT);
+});
+
+test("issue #5: a USB headset with Chat and Game PCMs gets distinct titles, as wpctl shows them", () => {
+  const view = viewOf(JSON.parse(arctisText()));
+  // sink 41's nick is the generic "USB Audio #1", sink 40's is just the card name
+  assert.deepEqual(
+    view.sinks.map((d) => [d.id, d.title, d.subtitle]),
+    [
+      [40, "Arctis Pro Wireless Chat", ""],
+      [41, "Arctis Pro Wireless Game", ""],
+    ],
+  );
+  assert.deepEqual(view.sources.map((d) => [d.id, d.title, d.subtitle]), [[43, "Arctis Pro Wireless Chat", ""]]);
+  assert.equal(viewToState(view).defaultSink, "41");
+  assert.equal(findDevice(view, "game").id, 41);
+  assert.equal(findDevice(view, "chat", "sink").id, 40);
+  assert.throws(() => findDevice(view, "Arctis Pro Wireless Chat"), /matches several devices: 40 .*, 43/);
+});
+
+test("deviceTitles: description first; the nick only as a second line, and only if it adds something", () => {
+  const t = (props: Record<string, string>) => deviceTitles(props, "node.name.x");
+  assert.deepEqual(t({ "node.description": "Arctis Pro Wireless Game", "node.nick": "USB Audio #1" }), { title: "Arctis Pro Wireless Game", subtitle: "" });
+  assert.deepEqual(t({ "node.description": "Monitor Digital Stereo (HDMI)", "node.nick": "DELL U2720Q" }), { title: "Monitor Digital Stereo (HDMI)", subtitle: "DELL U2720Q" });
+  // generic ALSA PCM names never show
+  for (const nick of ["USB Audio", "USB Audio #2", "HDMI 0", "HDMI #3", "DisplayPort 1", "Digital", "Analog #1", "subdevice #0"]) {
+    assert.deepEqual(t({ "node.description": "Some Card Analog Stereo", "node.nick": nick }), { title: "Some Card Analog Stereo", subtitle: "" }, nick);
+  }
+  // no description: a useful nick, else the node name
+  assert.deepEqual(t({ "node.nick": "Scarlett 2i2" }), { title: "Scarlett 2i2", subtitle: "" });
+  assert.deepEqual(t({ "node.nick": "USB Audio #1" }), { title: "node.name.x", subtitle: "" });
+  assert.deepEqual(t({}), { title: "node.name.x", subtitle: "" });
 });
 
 test("defaults come from the default metadata (node names) and map to ids", () => {
@@ -197,7 +230,7 @@ test("findDevice and findApp: by id, node name, title, unique substring; ambigui
   assert.equal(findDevice(view, ANALOG_OUT).id, 48);
   assert.equal(findDevice(view, "hdmi").id, 52);
   assert.equal(findDevice(view, "x34 p", "sink").id, 52);
-  assert.throws(() => findDevice(view, "Built-in"), /matches several devices: 48 \(ALC1220 Analog\), 50/);
+  assert.throws(() => findDevice(view, "Built-in"), /matches several devices: 48 \(Built-in Audio Analog Stereo\), 50/);
   assert.equal(findDevice(view, "Built-in", "source").id, 50);
   assert.throws(() => findDevice(view, "50", "sink"), /No output with id 50/);
   assert.throws(() => findDevice(view, "nothing"), /No device matches "nothing"/);

@@ -106,8 +106,8 @@ test("each monitor update publishes only the minimal delta", async () => {
     [{ path: "apps.Spotify.volume", value: 50 }],
     // 2: headset plugged in and made default
     [
-      { path: "sinks.71", value: { name: "alsa_output.usb-Logitech_G435_Wireless_Gaming_Headset_V001008005.1-01.analog-stereo", title: "G435 Wireless Gaming Headset", subtitle: "G435 Wireless Gaming Headset Analog Stereo" } },
-      { path: "sources.72", value: { name: "alsa_input.usb-Logitech_G435_Wireless_Gaming_Headset_V001008005.1-01.mono-fallback", title: "G435 Wireless Gaming Headset", subtitle: "G435 Wireless Gaming Headset Mono" } },
+      { path: "sinks.71", value: { name: "alsa_output.usb-Logitech_G435_Wireless_Gaming_Headset_V001008005.1-01.analog-stereo", title: "G435 Wireless Gaming Headset Analog Stereo", subtitle: "" } },
+      { path: "sources.72", value: { name: "alsa_input.usb-Logitech_G435_Wireless_Gaming_Headset_V001008005.1-01.mono-fallback", title: "G435 Wireless Gaming Headset Mono", subtitle: "" } },
       { path: "defaultSink", value: "71" },
     ],
     // 3: event sounds: nothing
@@ -276,7 +276,7 @@ test("recordTest records from the source, then plays the recording on the defaul
   assert.deepEqual(play.args, ["--format", "s16", "--rate", "48000", "--channels", "1", "-"]);
   assert.ok(play.stdinData.equals(second));
   const progress = h.notes("progress").map((p: any) => p.text);
-  assert.deepEqual(progress, ["Recording 1 s from ALC1220 Analog, speak now", "Playing back", "Done"]);
+  assert.deepEqual(progress, ["Recording 1 s from Built-in Audio Analog Stereo, speak now", "Playing back", "Done"]);
 
   // pw-record dying early is a failed action
   h.runner.behave = (p) => {
