@@ -28,6 +28,11 @@ transient unit), `MOTHERAPP_UNATTENDED` sudo handling in `install.sh`, the relea
   "refusing to allow an OAuth App to create or update workflow … without `workflow` scope".
   → The workflow is parked at `docs/releases/release.yml`. A cloud session can't add or
   change workflows. Leave that to the user, or to the local session if its token has the scope.
+- [cloud] `git push origin v2` (an annotated tag on the pushed main commit 4155d9e) got
+  `HTTP 403` from git-receive-pack three times, while branch pushes to main work. The
+  session's git access won't push tags. → Leave tagging and the GitHub Release to the user:
+  `git tag -a vN -m "motherapp vN" <commit> && git push origin vN`, then
+  `gh release create vN --verify-tag --notes-file docs/releases/vN.md` (until the workflow is in place).
 - [cloud] The worktree guard refused a `python3` heredoc that edited a file containing "git",
   and `sed -n "$(grep …)p"`. → Use Edit, or sed with literal line numbers.
 
