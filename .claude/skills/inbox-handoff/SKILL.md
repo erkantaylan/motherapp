@@ -33,16 +33,20 @@ a fresh link**. This skill makes one and hands it over.
    ```
    It prints the `https://….trycloudflare.com/inbox/<token>` URL once. If it fails because the
    tunnel isn't up, check `motherapp status` and `motherapp logs`, then retry once.
-4. **Check it works from here:** `curl -sS -o /dev/null -w '%{http_code}\n' '<url>'` should give
-   `200`.
+4. **Check it works from here, and wait until it does:** `curl -sS -o /dev/null -w '%{http_code}\n' '<url>'`
+   should give `200`. Right after `inboxctl new`, a new quick-tunnel host often fails DNS
+   ("Could not resolve host", code 000) for a few seconds. Retry every 5 s for up to a minute
+   before sending the link. After a restart, the *old* host answers `530`.
 5. **Send it to the cloud session** with **SendMessage** to `session_01EFxPjjS9Wk2VY1spHAdLEj`
    (title "motherAPp"), as one short message:
    `inbox link for <pane> (expires <time>): <url> — GET it first for instructions.`
 6. **Wait for the cloud to confirm.** It confirms by POSTing a short `[inbox: cloud] …` line
    through the link, so the confirmation arrives in this pane. If nothing arrives within a few
-   minutes, SendMessage probably didn't reach it: in the #16 probe it reported "sent" but never
-   arrived. Then tell the user, in one line, to **paste the link into the cloud session's chat**
-   themselves.
+   minutes, SendMessage didn't reach it. That's the normal case when the cloud session is
+   **idle**: SendMessage only queues the message, and a cloud session reads its queue on its
+   next turn, which an idle session never starts by itself (#23, verified 2026-10-20). Then tell
+   the user, in one line, to **paste the link into the cloud session's chat** (or type anything
+   there, so it takes a turn and reads the queued message).
 
 ## Rules
 
