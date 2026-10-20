@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import { screenStamp } from "../src/screens.ts";
-import { harness, screenOf, tick, waitFor } from "./fakes.ts";
+import { advanceUntil, harness, screenOf, tick, waitFor } from "./fakes.ts";
 import type { Harness } from "./fakes.ts";
 
 function post(h: Harness, token: string, msg: unknown): Promise<{ status: number; body: string }> {
@@ -49,8 +49,7 @@ test("a held message records which check failed, on the page and in the journal,
   assert.equal(queued.fields!.check, "no-prompt-line");
   pane.dialog = false;
   pane.working = true;
-  h.timers.advance(1000);
-  await waitFor(() => row(h, r.id).check === "busy-marker", "check changes");
+  await advanceUntil(h.timers, () => row(h, r.id).check === "busy-marker", "check changes");
   await waitFor(() => h.logs().some((l) => l.msg.startsWith("inbox message still held") && l.fields?.check === "busy-marker"), "logged");
   assert.ok(!JSON.stringify(h.logs()).includes("secret words"), "no message text in the journal");
   assert.ok(!JSON.stringify(h.logs()).includes(r.token));

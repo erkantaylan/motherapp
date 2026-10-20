@@ -8,7 +8,7 @@ import { InboxService } from "../src/service.ts";
 import { PEER_RULE } from "../src/skill.ts";
 import { hashToken } from "../src/store.ts";
 import { Store } from "../src/store.ts";
-import { claudePane, harness, tick, waitFor } from "./fakes.ts";
+import { advanceUntil, claudePane, harness, waitFor } from "./fakes.ts";
 import type { Harness } from "./fakes.ts";
 
 interface Res {
@@ -233,30 +233,30 @@ test("held while the user types, Claude works, a dialog is open or copy mode is 
   const row = () => h.tool.get(`links.${r.id}`) as { pending: number; held: string };
   assert.deepEqual([row().pending, row().held, (row() as unknown as { check: string }).check], [2, "someone is typing in the pane (input not empty)", "input-not-empty"]);
 
+  const WORKING = "Claude is working (busy marker \"… to interrupt\" near the box)";
   for (const [state, reason] of [
-    [{ input: "", working: true }, "Claude is working (busy marker \"… to interrupt\" near the box)"],
+    [{ input: "", working: true }, WORKING],
     [{ working: false, dialog: true }, "Claude's input box isn't on screen (a dialog, or not Claude's prompt): no `>` prompt line found"],
     [{ dialog: false, inMode: true }, "the pane is in copy mode"],
   ] as const) {
     Object.assign(pane, state);
-    h.timers.advance(1000);
-    await waitFor(() => row().held === reason, reason);
+    await advanceUntil(h.timers, () => row().held === reason, reason);
     assert.equal(row().pending, 2);
   }
   assert.deepEqual(h.runner.tmux.sends(), [], "nothing typed while busy");
 
   pane.inMode = false;
-  h.timers.advance(1000); // one message per pump tick: Claude is busy after it anyway
-  await waitFor(() => pane.submitted.length === 1, "first delivered");
-  assert.equal(row().pending, 1);
+  // One message per pump tick (Claude is busy after it anyway): stepping stops at the first.
+  await advanceUntil(h.timers, () => pane.submitted.length === 1, "first delivered");
+  await waitFor(() => row().pending === 1, "first no longer pending"); // published after the send
+  assert.deepEqual(pane.submitted, ["[inbox: cloud] first"]);
   pane.working = true;
-  h.timers.advance(1000);
-  await tick();
+  await advanceUntil(h.timers, () => row().held === WORKING, "second held while Claude works");
+  assert.equal(pane.submitted.length, 1);
   pane.working = false;
-  h.timers.advance(1000);
-  await waitFor(() => pane.submitted.length === 2, "second delivered");
+  await advanceUntil(h.timers, () => pane.submitted.length === 2, "second delivered");
   assert.deepEqual(pane.submitted, ["[inbox: cloud] first", "[inbox: cloud] second"], "in order");
-  assert.equal(row().pending, 0);
+  await waitFor(() => row().pending === 0, "nothing pending");
   const results = Object.values(h.tool.get("log") as Record<string, { result: string }>).map((e) => e.result);
   assert.deepEqual(results, ["queued: someone is typing in the pane (input not empty)", "queued: someone is typing in the pane (input not empty)", "submitted", "submitted"]);
 });
@@ -293,11 +293,9 @@ test("expiry drops waiting messages with the link; a pane that stops being Claud
   await post(h, a.token, { text: "for a" });
   await post(h, b.token, { text: "for b" });
   h.timers.t += 61_000;
-  h.timers.advance(15_000); // sweep
-  await waitFor(() => h.tool.get(`links.${a.id}`) === undefined, "a expired");
+  await advanceUntil(h.timers, () => h.tool.get(`links.${a.id}`) === undefined, "a expired (sweep)", 15_000);
   pane.command = "bash";
-  h.timers.advance(1000);
-  await waitFor(() => (h.tool.get(`links.${b.id}`) as { pending: number }).pending === 0, "b dropped");
+  await advanceUntil(h.timers, () => (h.tool.get(`links.${b.id}`) as { pending: number }).pending === 0, "b dropped");
   const results = Object.values(h.tool.get("log") as Record<string, { result: string }>).map((e) => e.result);
   assert.ok(results.includes("dropped: link expired"));
   assert.ok(results.includes("dropped: the pane runs bash, not Claude"));
@@ -355,8 +353,7 @@ test("no token in any line the tool emitted, across every kind of request", asyn
   await req(h.url(`/inbox/${r.token}`));
   await req(h.url(`/inbox/${"B".repeat(43)}`), "POST", "{}");
   h.runner.tmux.panes[0]!.input = "";
-  h.timers.advance(1000);
-  await waitFor(() => h.runner.tmux.panes[0]!.submitted.length === 1, "delivered");
+  await advanceUntil(h.timers, () => h.runner.tmux.panes[0]!.submitted.length === 1, "delivered");
   await h.call("revoke", { id: r.id });
   const lines = exceptCreateReplies(h);
   assert.ok(lines.length > 10);
