@@ -4,5 +4,13 @@
   "icon": "🔆",
   "serve": ["node", "brightctl.ts", "serve"],
   "bin": { "brightctl": "brightctl.ts" },
+  "commands": {
+    "brightctl": [
+      { "title": "All monitors brighter", "args": ["set", "all", "+10"] },
+      { "title": "All monitors darker", "args": ["set", "all", "-10"] },
+      { "title": "All monitors to 100%", "args": ["set", "all", "100"] },
+      { "title": "All monitors to 30%", "args": ["set", "all", "30"] }
+    ]
+  },
   "defaultEnabled": true
 }

@@ -1,0 +1,13 @@
+{
+  "name": "@motherapp/tool-shortcuts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shortcuts tool: GNOME custom keyboard shortcuts, with key capture and suggested tool commands.",
+  "bin": {
+    "shortcutsctl": "./shortcutsctl.ts"
+  },
+  "dependencies": {
+    "@motherapp/tool-sdk": "*"
+  }
+}

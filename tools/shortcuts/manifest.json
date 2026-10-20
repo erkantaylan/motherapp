@@ -1,0 +1,9 @@
+{
+  "id": "shortcuts",
+  "title": "Shortcuts",
+  "icon": "⌨️",
+  "serve": ["node", "shortcutsctl.ts", "serve"],
+  "page": "page.ts",
+  "bin": { "shortcutsctl": "shortcutsctl.ts" },
+  "defaultEnabled": true
+}

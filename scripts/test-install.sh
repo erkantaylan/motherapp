@@ -628,5 +628,147 @@ check "good entries still written" test -f "$(WRAP)"
 check "bad entries not written" test ! -e "$(WRAP badctl)" -a ! -e "$(WRAP nofile)"
 check "exit 0 (bad bin entries are warnings)" exit_is 0
 
+# ------------------------------------------------------------------ GNOME keyboard shortcuts
+
+# Fake gsettings/dconf backed by files: $FAKE/gs/list holds the custom-keybindings array as
+# gsettings prints it, $FAKE/gs/entries/<path with / as _>/<key> each value (also as printed).
+sc_stubs() {
+  mkdir -p "$FAKE/gs/entries"
+  cat >"$STUB/gsettings" <<'EOF'
+#!/usr/bin/env bash
+echo "gsettings $* (LC_ALL=${LC_ALL:-})" >>"$FAKE/calls"
+[[ -f $FAKE/gs_broken ]] && { echo "No such schema “$2”" >&2; exit 1; }
+d="$FAKE/gs"
+if [[ $2 == org.gnome.settings-daemon.plugins.media-keys && $3 == custom-keybindings ]]; then
+  case $1 in
+    get) if [[ -f $d/list ]]; then cat "$d/list"; else echo "@as []"; fi ;;
+    set) [[ -f $FAKE/gs_noop ]] || printf '%s\n' "$4" >"$d/list" ;;   # gs_noop: "succeeds", writes nowhere
+    *) exit 1 ;;
+  esac
+  exit 0
+fi
+[[ $2 == org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/*/ ]] || { echo "No such schema" >&2; exit 1; }
+e="$d/entries/$(printf '%s' "${2#*:}" | tr / _)"
+case $1 in
+  get) if [[ -f $e/$3 ]]; then cat "$e/$3"; else echo "''"; fi ;;
+  reset) rm -f "$e/$3" ;;
+  *) exit 1 ;;
+esac
+EOF
+  cat >"$STUB/dconf" <<'EOF'
+#!/usr/bin/env bash
+echo "dconf $*" >>"$FAKE/calls"
+[[ $1 == reset && $2 == -f ]] && rm -rf "$FAKE/gs/entries/$(printf '%s' "$3" | tr / _)"
+exit 0
+EOF
+  chmod +x "$STUB/gsettings" "$STUB/dconf"
+}
+SC_DIR=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings
+sc_entry() { # segment name command binding  (values stored as gsettings prints them)
+  local e
+  e="$FAKE/gs/entries/$(printf '%s' "$SC_DIR/$1/" | tr / _)"
+  mkdir -p "$e"
+  printf "'%s'\n" "$2" >"$e/name"
+  printf "'%s'\n" "$3" >"$e/command"
+  printf "'%s'\n" "$4" >"$e/binding"
+}
+sc_list() { # segments... -> writes the array
+  local s out=""
+  for s in "$@"; do out+="${out:+, }'$SC_DIR/$s/'"; done
+  if [[ -z $out ]]; then echo "@as []" >"$FAKE/gs/list"; else echo "[$out]" >"$FAKE/gs/list"; fi
+}
+MACHINE_SEGS=(custom0 dc-map-toggle dc-map-opacity dc-map-zoomout dc-map-zoomin dc-map-fit dc-map-follow dc-map-clicks)
+sc_machine() { # entries for the user's 8 shortcuts (issue #7); sc_list sets the array
+  local s
+  for s in "${MACHINE_SEGS[@]}"; do sc_entry "$s" "$s" "/home/erkan/.local/bin/dc-map $s" "<Control>F9"; done
+}
+sc_entries() { (cd "$FAKE/gs/entries" && find . -type f | sort | while read -r f; do printf '%s=%s\n' "$f" "$(cat "$f")"; done); }
+
+new_case shortcuts-none
+sc_stubs
+sc_machine
+sc_list "${MACHINE_SEGS[@]}"
+run_installer --check
+check "--check: no motherapp shortcuts, the others counted" out_has '^OK +shortcuts +no motherapp keyboard shortcuts \(8 other custom shortcut\(s\) left alone\)'
+check "--check: gsettings run with a UTF-8 locale" calls_has "gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings (LC_ALL=C.UTF-8)"
+check "--check: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
+run_installer --uninstall
+check "uninstall without motherapp shortcuts: OK, no prompt" out_has '^OK +shortcuts +no motherapp keyboard shortcuts'
+check "uninstall without motherapp shortcuts: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
+
+new_case shortcuts
+sc_stubs
+sc_machine
+run_installer --yes   # writes the audioctl/brightctl/... wrappers
+sc_entry motherapp-mute-firefox "Mute Firefox" "$HOME_/.local/bin/audioctl app-mute firefox toggle" "<Control><Alt>m"
+sc_entry motherapp-gone "Gone" "sh -c '$HOME_/.local/bin/missingctl x && true'" "<Super>F1"
+# ours mixed in between the user's: the order of the others must survive
+sc_list custom0 dc-map-toggle motherapp-mute-firefox dc-map-opacity dc-map-zoomout dc-map-zoomin dc-map-fit motherapp-gone dc-map-follow dc-map-clicks
+cp "$FAKE/gs/list" "$C/list.before"
+: >"$FAKE/calls"
+run_installer --check
+check "--check: counts ours, names the missing wrapper" \
+  out_has "^WARN +shortcuts +2 motherapp keyboard shortcut\\(s\\), 1 run a missing wrapper: 'Gone' -> $HOME_/\\.local/bin/missingctl"
+check "--check: fix suggests reinstalling or removing" out_has 'fix: \./install\.sh writes the wrappers again'
+check "--check: still exit 0" exit_is 0
+check "--check: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
+sc_entries >"$C/entries.before"
+run_installer --uninstall   # stdin closed: the answer is no
+check "uninstall: asks, default no" out_has "Remove the 2 GNOME keyboard shortcut\\(s\\) motherapp made \\('Mute Firefox', 'Gone'\\)\\? .*\\[y/N\\]"
+check "uninstall: says they'd point at removed wrappers" out_has "^WARN +shortcuts +kept 2 motherapp keyboard shortcut\\(s\\) .*they point at removed wrappers"
+check "uninstall declined: list untouched" cmp -s "$FAKE/gs/list" "$C/list.before"
+sc_entries >"$C/entries.declined"
+check "uninstall declined: entries untouched" cmp -s "$C/entries.declined" "$C/entries.before"
+check "uninstall declined: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
+check "uninstall declined: wrappers still removed" test ! -e "$(WRAP)"
+check "uninstall declined: exit 0" exit_is 0
+run_installer --uninstall <<<"y"
+check "uninstall yes: the user's 8 kept, in order" \
+  file_has "$FAKE/gs/list" "['$SC_DIR/custom0/', '$SC_DIR/dc-map-toggle/', '$SC_DIR/dc-map-opacity/', '$SC_DIR/dc-map-zoomout/', '$SC_DIR/dc-map-zoomin/', '$SC_DIR/dc-map-fit/', '$SC_DIR/dc-map-follow/', '$SC_DIR/dc-map-clicks/']"
+check "uninstall yes: dconf reset of ours" calls_has "dconf reset -f $SC_DIR/motherapp-mute-firefox/"
+check "uninstall yes: ours' keys gone" test ! -e "$FAKE/gs/entries/$(printf '%s' "$SC_DIR/motherapp-gone/" | tr / _)"
+sc_entries >"$C/entries.after"
+grep -v motherapp "$C/entries.before" >"$C/entries.theirs"
+check "uninstall yes: the user's keys untouched" cmp -s "$C/entries.after" "$C/entries.theirs"
+check "uninstall yes: reported" out_has "^OK +shortcuts +removed 2 motherapp keyboard shortcut\\(s\\): 'Mute Firefox', 'Gone'"
+
+new_case shortcuts-yes
+sc_stubs
+sc_machine
+sc_entry motherapp-only "Only" "/x" "<Super>F2"
+sc_list motherapp-only
+run_installer --uninstall --yes
+check "--yes removes them" out_has '^OK +shortcuts +removed 1 motherapp'
+check "--yes: last one removed writes @as []" file_has "$FAKE/gs/list" "@as []"
+rm -f "$STUB/dconf"
+sc_entry motherapp-again "Again" "/x" "<Super>F3"
+sc_list custom0 motherapp-again
+run_installer --uninstall --yes
+check "without dconf: reset key by key" calls_has "gsettings reset org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$SC_DIR/motherapp-again/ binding"
+check "without dconf: others kept" file_has "$FAKE/gs/list" "['$SC_DIR/custom0/']"
+sc_entry motherapp-stuck "Stuck" "/x" "<Super>F4"
+sc_list custom0 motherapp-stuck
+touch "$FAKE/gs_noop"
+: >"$FAKE/calls"
+run_installer --uninstall --yes
+check "a write that doesn't stick: FAIL" out_has "^FAIL +shortcuts +the custom-keybindings list didn't change"
+check "a write that doesn't stick: keys not reset" calls_lacks 'gsettings reset|^dconf'
+check "a write that doesn't stick: exit 1" exit_is 1
+
+new_case shortcuts-unavailable
+sc_stubs
+touch "$FAKE/gs_broken"
+run_installer --check
+check "no schema: an info line, no record" out_has 'GNOME keyboard shortcuts: gsettings or GNOME.s media-keys schema isn.t available here'
+check "no schema: no shortcuts row" out_lacks '^[A-Z]+ +shortcuts '
+rm -f "$FAKE/gs_broken"
+echo "['/odd\"path/']" >"$FAKE/gs/list"
+run_installer --uninstall --yes
+check "unparsable list: WARN, nothing written" out_has "^WARN +shortcuts +can't read the custom-keybindings list safely"
+check "unparsable list: list untouched" file_has "$FAKE/gs/list" "['/odd\"path/']"
+printf '%s\n' "['/back\\\\slash/', '$SC_DIR/motherapp-x/']" >"$FAKE/gs/list"
+run_installer --check
+check "a backslash in a path: WARN, not misread" out_has "^WARN +shortcuts +can't read the custom-keybindings list safely"
+
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 (( FAILED == 0 ))

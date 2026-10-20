@@ -4,5 +4,16 @@
   "icon": "🔊",
   "serve": ["node", "audioctl.ts", "serve"],
   "bin": { "audioctl": "audioctl.ts" },
+  "commands": {
+    "audioctl": [
+      { "title": "Mute/unmute Firefox", "args": ["app-mute", "firefox", "toggle"] },
+      { "title": "Firefox volume up", "args": ["app-volume", "firefox", "+10"] },
+      { "title": "Firefox volume down", "args": ["app-volume", "firefox", "-10"] },
+      { "title": "Volume up", "args": ["volume", "+5"] },
+      { "title": "Volume down", "args": ["volume", "-5"] },
+      { "title": "Mute/unmute output", "args": ["mute", "toggle"] },
+      { "title": "Mute/unmute mic", "args": ["mute", "--input", "toggle"] }
+    ]
+  },
   "defaultEnabled": true
 }

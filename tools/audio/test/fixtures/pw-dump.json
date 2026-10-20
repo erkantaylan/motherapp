@@ -542,8 +542,8 @@
             "volume": 1,
             "mute": false,
             "channelVolumes": [
-              1,
-              1
+              0.343,
+              0.343
             ],
             "volumeBase": 1,
             "volumeStep": 0.000015,
@@ -704,8 +704,8 @@
             "volume": 1,
             "mute": false,
             "channelVolumes": [
-              1,
-              1
+              0.729,
+              0.729
             ],
             "volumeBase": 1,
             "volumeStep": 0.000015,

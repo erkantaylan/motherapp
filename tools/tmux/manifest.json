@@ -4,5 +4,10 @@
   "icon": "🖥️",
   "serve": ["node", "tmuxctl.ts", "serve"],
   "bin": { "tmuxctl": "tmuxctl.ts" },
+  "commands": {
+    "tmuxctl": [
+      { "title": "Kill the tmux session 'scratch'", "args": ["kill", "scratch"] }
+    ]
+  },
   "defaultEnabled": true
 }

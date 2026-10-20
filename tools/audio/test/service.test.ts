@@ -80,18 +80,25 @@ test("starts pw-dump --monitor without colours; the first dump replaces the stal
   assert.deepEqual(h.runner.lines(), ["pw-dump --monitor"]);
   assert.equal(h.monitor().env?.NO_COLOR, "1");
   const before = (await h.call("state.get")).result;
-  assert.deepEqual(before.stale.sort(), ["apps", "defaultSink", "defaultSource", "sinks", "sources"]);
+  assert.deepEqual(before.stale.sort(), ["apps", "defaultSink", "defaultSource", "master.input", "master.output", "sinks", "sources"]);
+  // before any dump the master rows are placeholders, with a caption (never an empty line)
+  assert.deepEqual(before.state.master, INITIAL_STATE.master);
+  assert.equal(before.state.master.output.caption, "No default output");
   h.changes();
   await h.feed(monitorBatches()[0]);
   const c = h.changes();
-  // one change per key, whole values, all fresh
-  assert.deepEqual(c.map((x: any) => x.path), ["sinks", "sources", "defaultSink", "defaultSource", "apps"]);
+  // one change per key, whole values, all fresh; the master rows get deltas, then are confirmed
+  assert.deepEqual(c.filter((x: any) => !x.path.startsWith("master")).map((x: any) => x.path), ["sinks", "sources", "defaultSink", "defaultSource", "apps"]);
   assert.ok(c.every((x: any) => !x.stale));
   const snap = (await h.call("state.get")).result;
   assert.deepEqual(snap.stale, []);
   assert.deepEqual(Object.keys(snap.state.sinks), ["48", "52"]);
   assert.equal(snap.state.defaultSink, "48");
   assert.deepEqual(Object.keys(snap.state.apps), ["Firefox", "mpv", "Spotify"]);
+  assert.deepEqual(snap.state.master, {
+    output: { role: "Output", order: 0, id: "48", caption: "Acts on: Built-in Audio Analog Stereo", volume: 70, muted: false },
+    input: { role: "Mic", order: 1, id: "50", caption: "Acts on: Built-in Audio Analog Stereo", volume: 90, muted: false },
+  });
   await h.end();
 });
 
@@ -109,6 +116,10 @@ test("each monitor update publishes only the minimal delta", async () => {
       { path: "sinks.71", value: { name: "alsa_output.usb-Logitech_G435_Wireless_Gaming_Headset_V001008005.1-01.analog-stereo", title: "G435 Wireless Gaming Headset Analog Stereo", subtitle: "" } },
       { path: "sources.72", value: { name: "alsa_input.usb-Logitech_G435_Wireless_Gaming_Headset_V001008005.1-01.mono-fallback", title: "G435 Wireless Gaming Headset Mono", subtitle: "" } },
       { path: "defaultSink", value: "71" },
+      // the master slider follows the new default to its volume
+      { path: "master.output.id", value: "71" },
+      { path: "master.output.caption", value: "Acts on: G435 Wireless Gaming Headset Analog Stereo" },
+      { path: "master.output.volume", value: 80 },
     ],
     // 3: event sounds: nothing
     [],
@@ -127,8 +138,34 @@ test("each monitor update publishes only the minimal delta", async () => {
       { path: "sinks.71", value: null },
       { path: "sources.72", value: null },
       { path: "defaultSink", value: "48" },
+      { path: "master.output.id", value: "48" },
+      { path: "master.output.caption", value: "Acts on: Built-in Audio Analog Stereo" },
+      { path: "master.output.volume", value: 70 },
+    ],
+    // 7: the volume keys turn the default output down
+    [{ path: "master.output.volume", value: 50 }],
+    // 8: output muted; the mic turned down and muted
+    [
+      { path: "master.output.muted", value: true },
+      { path: "master.input.volume", value: 60 },
+      { path: "master.input.muted", value: true },
+    ],
+    // 9: the default output disappears: the row keeps its last values and is marked stale
+    [
+      { path: "sinks.48", value: null },
+      { path: "defaultSink", value: "" },
+      { path: "master.output", value: { role: "Output", order: 0, id: "48", caption: "Acts on: Built-in Audio Analog Stereo", volume: 50, muted: true }, stale: true },
+    ],
+    // 10: it is back: deltas for what differs, then the row is confirmed
+    [
+      { path: "sinks.48", value: { name: "alsa_output.pci-0000_00_1f.3.analog-stereo", title: "Built-in Audio Analog Stereo", subtitle: "ALC1220 Analog" } },
+      { path: "defaultSink", value: "48" },
+      { path: "master.output.volume", value: 70 },
+      { path: "master.output.muted", value: false },
+      { path: "master.output", value: { role: "Output", order: 0, id: "48", caption: "Acts on: Built-in Audio Analog Stereo", volume: 70, muted: false } },
     ],
   ];
+  assert.equal(rest.length, expected.length);
   for (const [i, b] of rest.entries()) {
     await h.feed(b);
     assert.deepEqual(h.changes(), expected[i], `batch ${i + 1}`);
@@ -203,6 +240,96 @@ test("slider drags are serialized per app; only the newest pending value is writ
   assert.ok(results.every((r) => r.error === undefined));
   assert.deepEqual(h.runner.lines("wpctl"), ["wpctl set-volume 110 0.10", "wpctl set-volume 110 0.40"]);
   assert.equal(h.tool.get("apps.Spotify.volume"), 40);
+  await h.end();
+});
+
+test("master volume and mute: wpctl by the default's id from the model, for output and input", async () => {
+  const h = setup();
+  await tick();
+  const b = monitorBatches();
+  await h.feed(b[0]);
+  h.changes();
+
+  assert.equal((await h.action("setMasterVolume", { kind: "output", value: 55 })).result, null);
+  assert.deepEqual(h.runner.lines("wpctl"), ["wpctl set-volume 48 0.55"]);
+  assert.deepEqual(h.changes(), [{ path: "master.output.volume", value: 55 }]);
+  await h.action("setMasterVolume", { kind: "input", value: 400.4 }); // clamped, rounded
+  assert.equal(h.runner.lines("wpctl").at(-1), "wpctl set-volume 50 1.50");
+  await h.action("setMasterMute", { kind: "output", value: true });
+  assert.equal(h.runner.lines("wpctl").at(-1), "wpctl set-mute 48 1");
+  assert.equal(h.tool.get("master.output.muted"), true);
+  await h.action("setMasterMute", { kind: "input", value: "toggle" });
+  assert.equal(h.runner.lines("wpctl").at(-1), "wpctl set-mute 50 1");
+  // kind defaults to the output
+  await h.action("setMasterMute", { value: false });
+  assert.equal(h.runner.lines("wpctl").at(-1), "wpctl set-mute 48 0");
+
+  // after the default switches, writes go to the new default
+  await h.feed(b[2]);
+  await h.action("setMasterVolume", { kind: "output", value: 30 });
+  assert.equal(h.runner.lines("wpctl").at(-1), "wpctl set-volume 71 0.30");
+
+  // bad arguments
+  assert.equal((await h.action("setMasterVolume", { kind: "speakers", value: 3 })).error?.code, -32602);
+  assert.equal((await h.action("setMasterVolume", { kind: "output", value: "loud" })).error?.code, -32602);
+  assert.equal((await h.action("setMasterMute", { kind: "output", value: "maybe" })).error?.code, -32602);
+
+  // no default output (PipeWire restarting): a readable error, no wpctl, the row stays stale
+  for (const x of b.slice(3, 10)) await h.feed(x);
+  assert.equal(h.tool.isStale("master.output"), true);
+  const n = h.runner.lines("wpctl").length;
+  assert.equal((await h.action("setMasterVolume", { kind: "output", value: 20 })).error?.message, "There is no default output right now");
+  assert.equal((await h.action("setMasterMute", { kind: "output", value: "toggle" })).error?.message, "There is no default output right now");
+  assert.equal(h.runner.lines("wpctl").length, n);
+  // the mic still works meanwhile
+  await h.action("setMasterVolume", { kind: "input", value: 40 });
+  assert.equal(h.runner.lines("wpctl").at(-1), "wpctl set-volume 50 0.40");
+  await h.end();
+});
+
+test("master slider drags are serialized and coalesced: only the newest pending value is written", async () => {
+  const h = setup();
+  await tick();
+  await h.feed(monitorBatches()[0]);
+  const held: FakeProc[] = [];
+  h.runner.behave = (p) => {
+    if (p.cmd === "wpctl") held.push(p);
+  };
+  const replies = [10, 20, 30, 40, 50].map((v) => h.action("setMasterVolume", { kind: "output", value: v }));
+  // the mic slider has its own queue
+  const mic = h.action("setMasterVolume", { kind: "input", value: 5 });
+  await waitFor(() => held.length === 2, "first wpctl of each");
+  await tick();
+  assert.equal(held.length, 2, "nothing else starts while a write is running");
+  held[0]!.exit(0);
+  held[1]!.exit(0);
+  await waitFor(() => held.length === 3, "the newest output value");
+  held[2]!.exit(0);
+  const results = await Promise.all([...replies, mic]);
+  assert.ok(results.every((r) => r.error === undefined));
+  assert.deepEqual(h.runner.lines("wpctl"), ["wpctl set-volume 48 0.10", "wpctl set-volume 50 0.05", "wpctl set-volume 48 0.50"]);
+  assert.equal(h.tool.get("master.output.volume"), 50);
+  await h.end();
+});
+
+test("master rows: after pw-dump restarts with no defaults yet, the last values stay (stale) until they're back", async () => {
+  const h = setup();
+  await tick();
+  await h.feed(monitorBatches()[0]);
+  h.monitor().fail(1, "");
+  await waitFor(() => h.timers.pending().length === 1, "restart timer");
+  assert.equal(h.tool.isStale("master.output"), true);
+  assert.equal(h.tool.get("master.output.volume"), 70);
+  h.timers.advance(1000);
+  await tick();
+  const noDefault = monitorBatches()[0]!.filter((o: any) => o.type !== "PipeWire:Interface:Metadata");
+  await h.feed(noDefault);
+  assert.equal(h.tool.isStale("master.output"), true);
+  assert.equal(h.tool.isStale("master.input"), true);
+  assert.equal(h.tool.get("master.output.caption"), "Acts on: Built-in Audio Analog Stereo");
+  await h.feed(monitorBatches()[0]);
+  assert.equal(h.tool.isStale("master.output"), false);
+  assert.equal(h.tool.isStale("master.input"), false);
   await h.end();
 });
 
@@ -348,7 +475,7 @@ test("pw-dump exiting: logged, state marked stale, restarted with backoff, full 
   await waitFor(() => h.timers.pending().length === 1, "restart timer");
   assert.deepEqual(h.timers.pending(), [1000]);
   const c = h.changes();
-  assert.ok(c.filter((x: any) => x.stale).length === 5);
+  assert.deepEqual(c.filter((x: any) => x.stale).map((x: any) => x.path), ["sinks", "sources", "defaultSink", "defaultSource", "apps", "master.output", "master.input"]);
   assert.match(h.tool.get("status") as string, /pw-dump: exit code 1: pw-dump: can't connect: Host is down\). Retrying in 1 s/);
   assert.ok(h.notes("log").some((l: any) => l.level === "warn" && /pw-dump --monitor stopped: exit code 1.*restarting in 1 s/.test(l.msg)));
 
@@ -381,9 +508,14 @@ test("pw-dump exiting: logged, state marked stale, restarted with backoff, full 
   await h.end();
 });
 
-test("layout: Outputs, Inputs and Apps lists keyed by map key, using only the existing widgets", () => {
+test("layout: master rows first, then Outputs, Inputs and Apps lists keyed by map key, using only the existing widgets", () => {
   const lists = layout.filter((w) => w.type === "list");
-  assert.deepEqual(lists.map((l) => [l.label, l.bind]), [["Outputs", "sinks"], ["Inputs", "sources"], ["Apps", "apps"]]);
+  assert.deepEqual(lists.map((l) => [l.label, l.bind]), [[undefined, "master"], ["Outputs", "sinks"], ["Inputs", "sources"], ["Apps", "apps"]]);
+  // nothing that comes and goes sits above the master sliders (#12)
+  assert.equal(layout[0]!.type, "list");
+  assert.equal((layout[0] as any).bind, "master");
+  // no per-device volume on the output/input rows (the user's decision)
+  for (const l of lists.slice(1, 3)) assert.ok(!(l.item.widgets ?? []).some((w) => w.type === "slider" || w.type === "toggle"));
   const types = new Set<string>();
   const walk = (ws: typeof layout) => ws.forEach((w) => (types.add(w.type), w.type === "list" && walk(w.item.widgets ?? [])));
   walk(layout);

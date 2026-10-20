@@ -63,9 +63,10 @@ GNOME 48 unless its author updates it.
 | Runtime | **Node 24 LTS** (§ 4.10). It gets installed on the machine. |
 | Frontend | **Plain TS + Vite + Bootstrap 6 (alpha, pinned)**, web components for custom pages (§ 4.11). |
 | Launcher | **Served on the web only**: open `http://127.0.0.1:7323` in a browser. No tray icon for now. |
-| Audio scope, first version | **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
+| Audio scope, first version | **Master volume and mute** for the default output and the default input (mic), following whichever device is the default (#13). **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
 | Per-app rows | **One row per app.** All of an app's streams are grouped, e.g. one Firefox row. |
 | Audio test tools | **Keep audio-switch's**: L/R test, live mic meter, record-and-playback. |
+| Device volume | **Master sliders only** (default output + default mic, #13). No volume slider on each device row: tried as a mockup (Option B) and rejected as too crowded. |
 | Brightness UI | **Both**: a slider per monitor plus a linked "all monitors" slider. |
 | Brightness backend | **`libddcutil` kept loaded** in the brightness tool's serve process. It needs installing on the machine. |
 | Brightness FFI | **`koffi`** (npm, prebuilt binaries, so no compiler or dev headers on the machine) loads `libddcutil.so.4` by soname. All libddcutil calls run on one `worker_threads` worker, because they block and the library keeps per-thread state; the serve loop never waits on DDC/CI. Before the library loads, fd 1 is pointed at stderr, because libddcutil 1.4 prints to C stdout from its constructor. If the library can't be loaded, the tool falls back to the `ddcutil` command and shows a warning. Built in `tools/brightness/` (`brightctl`). |
@@ -77,6 +78,7 @@ GNOME 48 unless its author updates it.
 | Audio backend (Q9) | **PipeWire CLI route**: `pw-dump --monitor` for events, `wpctl` for default/volume/mute, `pw-play`/`pw-record` for the tests. No `pactl`, no GObject bindings. Built in `tools/audio/` (`audioctl`). |
 | Build order | 1. Core infra (manager). 2. A **log service in the core** that every extension uses, plus its logs page (§ 4.12). 3. The **audio tool**: audio-switch parity plus per-app volume and mute. This replaces § 4.4. |
 | tmux tool | `tools/tmux/` per issue #6: polled every 2 s, copy and kill-with-confirm per session. |
+| Shortcuts tool | `tools/shortcuts/` per issue #7: owns only `motherapp-*` custom keybindings; key capture via a custom page. |
 
 ## 4. Details
 

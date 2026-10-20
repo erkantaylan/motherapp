@@ -11,7 +11,8 @@
 #   ./install.sh --yes         accept every prompt, except an apt install that would remove
 #                              packages (add --allow-removals to accept that too)
 #   ./install.sh --uninstall   stop + disable the service, remove the unit file and the
-#                              ~/.local/bin wrappers this installer wrote
+#                              ~/.local/bin wrappers this installer wrote, and offer to
+#                              remove the GNOME keyboard shortcuts motherapp made (default no)
 #                              (add --purge to also delete ~/.config/motherapp and
 #                              ~/.local/state/motherapp)
 #
@@ -78,7 +79,9 @@ Usage: ./install.sh [--check | --uninstall [--purge]] [--yes [--allow-removals]]
   --allow-removals
                 With --yes: also accept an install that removes packages.
   --uninstall   Stop and disable the service, remove ~/.config/systemd/user/motherapp.service
-                and the ~/.local/bin wrappers written by this installer.
+                and the ~/.local/bin wrappers written by this installer. Asks whether to
+                remove the GNOME keyboard shortcuts motherapp made (default no; --yes
+                removes them). Shortcuts made elsewhere are never touched.
                 Keeps ~/.config/motherapp and ~/.local/state/motherapp.
   --purge       With --uninstall: also delete those two directories.
   --help, -h    This text.
@@ -1048,6 +1051,144 @@ uninstall_bins() {
   (( n )) || record OK commands "no motherapp wrappers in $BIN_DIR"
 }
 
+# ---------------------------------------------------------------- GNOME keyboard shortcuts
+
+# The shortcuts tool (tools/shortcuts) only ever creates custom keybindings at
+# /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/motherapp-<slug>/.
+# Their commands run the ~/.local/bin wrappers by absolute path, so they break when the
+# wrappers go. Every other custom keybinding belongs to the user and is never touched.
+SC_SCHEMA="org.gnome.settings-daemon.plugins.media-keys"
+SC_OWNED_RE='^/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/motherapp-[a-z0-9]+(-[a-z0-9]+)*/$'
+SC_ALL=() SC_OURS=()
+
+sc_gsettings() { LC_ALL=C.UTF-8 gsettings "$@" 2>/dev/null; }
+
+# Reads the custom-keybindings array into SC_ALL (all paths, in order) and SC_OURS (motherapp
+# ones). Returns 1 when gsettings can't be used here (not installed, no GNOME schema), 2 when
+# the array holds something this script won't parse (quotes or backslashes in a path).
+sc_read() {
+  SC_ALL=() SC_OURS=()
+  have gsettings || return 1
+  local out p rebuilt=""
+  out="$(sc_gsettings get "$SC_SCHEMA" custom-keybindings)" || return 1
+  [[ $out == "@as []" || $out == "[]" ]] && return 0
+  [[ $out == *'"'* || $out == *\\* ]] && return 2
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    p="${p#\'}" p="${p%\'}"
+    SC_ALL+=("$p")
+    rebuilt+="${rebuilt:+, }'$p'"
+    [[ $p =~ $SC_OWNED_RE ]] && SC_OURS+=("$p")
+  done < <(grep -o "'[^']*'" <<<"$out")
+  [[ "[$rebuilt]" == "$out" ]] || return 2
+}
+
+sc_get() { # path key -> the value as gsettings prints it ('…' or "…")
+  sc_gsettings get "$SC_SCHEMA.custom-keybinding:$1" "$2"
+}
+
+# The ~/.local/bin wrappers a command refers to that don't exist (one per line).
+sc_missing_wrappers() {
+  local w
+  while IFS= read -r w; do
+    [[ $w == "$BIN_DIR/"* && ! -e $w ]] && printf '%s\n' "$w"
+  done < <(grep -oE "/[^ '\"]+" <<<"$1")
+}
+
+sc_names() { # the names of SC_OURS as gsettings prints them, comma-separated, for messages
+  local p n out=""
+  for p in "${SC_OURS[@]}"; do
+    n="$(sc_get "$p" name)"
+    out+="${out:+, }${n:-?}"
+  done
+  printf '%s' "$out"
+}
+
+# Status for --check (and after an install): how many motherapp shortcuts exist and whether
+# the wrappers they run exist.
+shortcuts_status() {
+  local rc=0
+  sc_read || rc=$?
+  if (( rc == 1 )); then
+    info "GNOME keyboard shortcuts: gsettings or GNOME's media-keys schema isn't available here; not checked"
+    return
+  fi
+  section "GNOME keyboard shortcuts"
+  if (( rc == 2 )); then
+    record WARN shortcuts "can't read the custom-keybindings list safely; not checked" "see: gsettings get $SC_SCHEMA custom-keybindings" 0
+    return
+  fi
+  local n=${#SC_OURS[@]} p cmd miss broken=()
+  if (( n == 0 )); then
+    record OK shortcuts "no motherapp keyboard shortcuts (${#SC_ALL[@]} other custom shortcut(s) left alone)"
+    return
+  fi
+  for p in "${SC_OURS[@]}"; do
+    cmd="$(sc_get "$p" command)"
+    miss="$(sc_missing_wrappers "$cmd")"
+    [[ -n $miss ]] && broken+=("$(sc_get "$p" name) -> ${miss//$'\n'/ }")
+  done
+  if (( ${#broken[@]} == 0 )); then
+    record OK shortcuts "$n motherapp keyboard shortcut(s), their wrappers exist (${#SC_ALL[@]} custom shortcut(s) in all)"
+  else
+    record WARN shortcuts "$n motherapp keyboard shortcut(s), ${#broken[@]} run a missing wrapper: $(printf '%s; ' "${broken[@]}" | sed 's/; $//')" \
+      "./install.sh writes the wrappers again; or remove those shortcuts on the Shortcuts page (shortcutsctl remove <name>)" 0
+  fi
+}
+
+# --uninstall: offer to remove the motherapp shortcuts (default no, --yes says yes). Kept, they
+# would run wrappers that the uninstall removes.
+uninstall_shortcuts() {
+  local rc=0
+  sc_read || rc=$?
+  if (( rc == 1 )); then
+    info "GNOME keyboard shortcuts: gsettings not available here; if you made shortcuts with motherapp, remove them in GNOME Settings"
+    return
+  fi
+  if (( rc == 2 )); then
+    record WARN shortcuts "can't read the custom-keybindings list safely; motherapp shortcuts (if any) left alone" "remove them in GNOME Settings > Keyboard > Custom Shortcuts" 0
+    return
+  fi
+  local n=${#SC_OURS[@]}
+  if (( n == 0 )); then
+    record OK shortcuts "no motherapp keyboard shortcuts"
+    return
+  fi
+  local names
+  names="$(sc_names)"
+  if ! ask "Remove the $n GNOME keyboard shortcut(s) motherapp made ($names)? If kept, they run $BIN_DIR wrappers that this uninstall removes. Other shortcuts are not touched"; then
+    record WARN shortcuts "kept $n motherapp keyboard shortcut(s) ($names); they point at removed wrappers" \
+      "remove them in GNOME Settings > Keyboard > Custom Shortcuts, or reinstall and use the Shortcuts page" 0
+    return
+  fi
+  # re-read right before writing, keep every other entry in its place
+  sc_read || { record FAIL shortcuts "couldn't re-read the custom-keybindings list"; return; }
+  local p keep="" ours=("${SC_OURS[@]}")
+  for p in "${SC_ALL[@]}"; do
+    [[ $p =~ $SC_OWNED_RE ]] || keep+="${keep:+, }'$p'"
+  done
+  if [[ -z $keep ]]; then keep="@as []"; else keep="[$keep]"; fi
+  cmdline "gsettings set $SC_SCHEMA custom-keybindings \"$keep\""
+  if ! LC_ALL=C.UTF-8 gsettings set "$SC_SCHEMA" custom-keybindings "$keep"; then
+    record FAIL shortcuts "gsettings couldn't write the custom-keybindings list"
+    return
+  fi
+  # without the session bus gsettings may "succeed" and write nowhere: read it back
+  if ! sc_read || (( ${#SC_OURS[@]} )); then
+    record FAIL shortcuts "the custom-keybindings list didn't change (no session D-Bus here? run --uninstall from a terminal in your GNOME session)"
+    return
+  fi
+  for p in "${ours[@]}"; do
+    if have dconf; then
+      run dconf reset -f "$p"
+    else
+      local k
+      for k in name command binding; do LC_ALL=C.UTF-8 gsettings reset "$SC_SCHEMA.custom-keybinding:$p" "$k"; done
+    fi
+  done
+  record OK shortcuts "removed ${#ours[@]} motherapp keyboard shortcut(s): $names"
+}
+
 # ---------------------------------------------------------------- summary
 
 summary() {
@@ -1108,6 +1249,7 @@ uninstall() {
     run systemctl --user daemon-reload
     systemctl --user reset-failed "$UNIT_NAME" >/dev/null 2>&1 || true
   fi
+  uninstall_shortcuts
   uninstall_bins
   local d
   for d in "$APP_CONFIG_DIR" "$APP_STATE_DIR"; do
@@ -1148,6 +1290,7 @@ case "$MODE" in
     resolve_port
     app_status
     bin_status
+    shortcuts_status
     summary
     exit $?
     ;;
@@ -1162,6 +1305,7 @@ case "$MODE" in
     resolve_port
     app_setup
     bin_setup
+    shortcuts_status
     summary
     exit $?
     ;;
