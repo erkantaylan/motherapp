@@ -59,11 +59,17 @@ export async function readView(runner: Runner): Promise<AudioView> {
   return buildView(model.objects.values());
 }
 
-/** "70", "70%", "+5", "-5%" → the new percentage, clamped to 0..MAX. */
+/**
+ * "70", "70%", "+5", "-5%" → the new percentage. An absolute value above MAX is a usage error
+ * (#28: `volume 151` used to set 150 silently, so a typo could reach the speakers); a relative
+ * change is clamped to 0..MAX. Call it once with any `current` before reading PipeWire, so
+ * usage errors come first.
+ */
 export function parsePercent(arg: string, current: number): number {
   const m = /^([+-]?)(\d+(?:\.\d+)?)%?$/.exec(arg.trim());
   if (!m) throw new UsageError(`volume must be a percentage like 70, 70%, +5 or -5 (got "${arg}")`);
   const n = Number(m[2]);
+  if (m[1] === "" && n > MAX_APP_VOLUME) throw new UsageError(`volume must be 0-${MAX_APP_VOLUME} (got ${m[2]})`);
   const v = m[1] === "+" ? current + n : m[1] === "-" ? current - n : n;
   return Math.round(Math.max(0, Math.min(MAX_APP_VOLUME, v)));
 }
@@ -166,6 +172,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       }
       case "app-volume": {
         need(args, 2, "app and volume");
+        parsePercent(args[1]!, 0); // usage errors before touching PipeWire
         const app = findApp(await readView(io.runner), args[0]!);
         const v = parsePercent(args[1]!, appVolume(app));
         await ops.setStreamsVolume(app.streams, v);

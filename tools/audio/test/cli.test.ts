@@ -181,6 +181,30 @@ test("parsePercent: absolute, relative, clamped", () => {
   assert.equal(parsePercent("70%", 10), 70);
   assert.equal(parsePercent("+5", 70), 75);
   assert.equal(parsePercent("-5%", 3), 0);
-  assert.equal(parsePercent("200", 0), 150);
+  assert.equal(parsePercent("150", 0), 150);
+  assert.equal(parsePercent("+200", 0), 150); // relative: clamped
+  assert.throws(() => parsePercent("200", 0), /^Error: volume must be 0-150 \(got 200\)$/);
+  assert.throws(() => parsePercent("150.5", 0), /must be 0-150/);
   assert.throws(() => parsePercent("loud", 0), /percentage/);
+});
+
+test("#28: an absolute volume above 150 is a usage error before PipeWire; relative still clamps", async () => {
+  // 150 is fine
+  let r = await cli("volume", "150");
+  assert.deepEqual([r.code, r.err, r.lines], [0, "", ["pw-dump", "wpctl set-volume 48 1.50"]]);
+  // 151 and 1000: exit 2, the message, and no pw-dump or wpctl at all
+  for (const argv of [["volume", "151"], ["volume", "1000"], ["volume", "--input", "151%"], ["app-volume", "firefox", "151"], ["app-volume", "firefox", "1000%"]]) {
+    r = await cli(...argv);
+    assert.equal(r.code, 2, argv.join(" "));
+    assert.deepEqual(r.lines, [], argv.join(" "));
+    const got = argv.at(-1)!.replace("%", "");
+    assert.ok(r.err.startsWith(`audioctl: volume must be 0-150 (got ${got})\n`), r.err);
+  }
+  // +200 on the master stops at 100 (from 70)
+  r = await cli("volume", "+200");
+  assert.deepEqual([r.code, r.lines], [0, ["pw-dump", "wpctl set-volume 48 1.00"]]);
+  // app-volume +N clamps to 150
+  r = await cli("app-volume", "spotify", "+200");
+  assert.equal(r.code, 0);
+  assert.match(r.out, /: 150%\n$/);
 });
