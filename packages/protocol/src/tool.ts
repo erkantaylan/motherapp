@@ -16,6 +16,11 @@ export interface ToolManifest {
   page?: string;
   /** Enabled when first discovered. Default true. */
   defaultEnabled?: boolean;
+  /**
+   * Default sidebar position hint (lower first), used until the user re-orders the tools on
+   * the Settings page. Tools without one follow, alphabetically.
+   */
+  order?: number;
 }
 
 export type StateObject = JsonObject;

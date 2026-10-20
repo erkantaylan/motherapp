@@ -162,7 +162,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   const broadcast = <K extends keyof UiNotifications>(method: K, params: UiNotifications[K]) => {
     for (const c of clients) c.notify(method, params);
   };
-  manager.on("tools", () => broadcast("tools", { tools: manager.list() }));
+  manager.on("tools", () => broadcast("tools", toolsNotification(manager)));
   manager.on("snapshot", (h) => broadcast("snapshot", { tool: h.id, state: h.state, stale: h.stale.list() }));
   manager.on("state", (h, changes) => broadcast("state", { tool: h.id, changes }));
   manager.on("stream", (h, name, value) => {
@@ -188,6 +188,10 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   });
 }
 
+function toolsNotification(manager: Manager): UiNotifications["tools"] {
+  return { tools: manager.list(), orderSaved: manager.orderSaved };
+}
+
 /** One browser connection. */
 class Client {
   private ws: WebSocket;
@@ -211,7 +215,7 @@ class Client {
       timeoutMs: 0,
     });
     ws.on("message", (data) => this.peer.receiveLine(data.toString()));
-    this.notify("tools", { tools: manager.list() });
+    this.notify("tools", toolsNotification(manager));
     for (const h of manager.hosts.values()) {
       if (h.hasSnapshot) this.notify("snapshot", { tool: h.id, state: h.state, stale: h.stale.list() });
     }
@@ -279,6 +283,12 @@ class Client {
         await this.manager.setEnabled(str("tool"), p.enabled);
         return null;
       }
+      case "tools.setOrder":
+        this.manager.setOrder(p.order);
+        return null;
+      case "tools.resetOrder":
+        this.manager.resetOrder();
+        return null;
       case "version.get":
         if (!this.version) throw new RpcError(ErrorCode.MethodNotFound, "version info not available");
         return this.version.get(p.refresh === true);

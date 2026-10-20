@@ -29,6 +29,7 @@ tools/<id>/
 | `serve` | Command line, relative to the tool dir. `"node"` means the Node that runs the core (so systemd's PATH doesn't matter). A command with a `/` is resolved against the tool dir. Any language works. |
 | `page` | Optional custom page module (see § 6). |
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
+| `order` | Optional number, a default sidebar position hint: lower comes first, and tools without one follow alphabetically by id. It applies only until the user re-orders the tools on the Settings page; after that their saved order rules, and a newly installed tool is appended at the end (alphabetically among other new ones), hint or not. Audio has `"order": 1` so it comes first out of the box. |
 | `bin` | Optional. `{ "<command>": "<script relative to the tool dir>" }`, e.g. `{"audioctl": "audioctl.ts"}`. For each entry `install.sh` writes `~/.local/bin/<command>`, a bash wrapper that runs the script with the installer's Node 24 by absolute path (so an older `node` on PATH or a keyboard shortcut's minimal PATH doesn't matter), and `--uninstall` removes it. The script must be a Node script; the command name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and must be unique across tools. The core ignores this field. |
 
 | `commands` | Optional. Suggested invocations of the tool's `bin` commands that are worth binding to a key: `{ "<command>": [{ "title": "<what it does>", "args": ["<arg>", …] }] }`, keyed by a command from `bin`. The shortcuts tool (`tools/shortcuts/`) offers them in its "Suggested command" list and writes the command as the `~/.local/bin` wrapper's absolute path plus the quoted `args`. Keep `title` short and imperative. The core and the installer ignore this field. |
@@ -45,7 +46,11 @@ tools/<id>/
 
 The core reads `tools/*/manifest.json` at startup. Enabled/disabled is stored in
 `~/.config/motherapp/config.json` (`{"port": 7323, "tools": {"<id>": {"enabled": true}}}`) and can
-be changed on the Settings page. Unknown manifest fields are ignored. After adding a tool, run `npm install` once at the repo root
+be changed on the Settings page. The sidebar order the user sets there (drag or the arrow
+buttons) is saved in the same file as `"order": ["audio", "brightness", …]`; ids of tools that no
+longer exist are ignored and dropped on the next save, and "Reset to default order" removes the
+key. The core writes the file atomically and keeps every key it doesn't know. Logs and Settings
+are core pages and always sit at the bottom of the sidebar. Unknown manifest fields are ignored. After adding a tool, run `npm install` once at the repo root
 (the tool is a workspace) and restart the core.
 
 ## 2. Serve mode: messages

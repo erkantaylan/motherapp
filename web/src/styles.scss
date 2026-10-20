@@ -12,6 +12,7 @@
 @use "bootstrap/scss/forms/switch";
 @use "bootstrap/scss/forms/form-range";
 @use "bootstrap/scss/buttons/button";
+@use "bootstrap/scss/buttons/button-group";
 @use "bootstrap/scss/list-group";
 @use "bootstrap/scss/nav";
 @use "bootstrap/scss/badge";
@@ -201,6 +202,30 @@
   .row-controls { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4); align-items: center; }
   .row-controls .control { gap: var(--bs-spacer-3); }
   .list-empty[hidden] { display: none; }
+
+  // Settings: tool order (issue #20). The handle takes pointer drags only (touch-action: none,
+  // so a finger drags instead of scrolling); the arrow buttons are the keyboard path.
+  .order-bar { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-3) var(--bs-spacer-4); align-items: center; justify-content: space-between; margin: var(--bs-spacer-2) 0 var(--bs-spacer-3); }
+  .order-bar .w-text { flex: 1 1 260px; }
+  .drag-handle {
+    flex: none;
+    padding: var(--bs-spacer-2) var(--bs-spacer-1);
+    margin-inline-start: calc(-1 * var(--bs-spacer-2));
+    font-size: 1.15em;
+    line-height: 1;
+    color: var(--muted);
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+  }
+  .drag-handle:hover { color: var(--fg); }
+  .tool-order.is-dragging, .tool-order.is-dragging .drag-handle { cursor: grabbing; user-select: none; }
+  .tool-order .list-row.dragging {
+    z-index: 2;
+    background-color: color-mix(in oklch, var(--bs-primary-bg-subtle) 60%, var(--bs-bg-body));
+    box-shadow: var(--bs-box-shadow);
+  }
+  .order-buttons .btn-icon { min-width: var(--bs-btn-input-sm-min-height, 2rem); }
 
   // dialogs (button confirm, manual copy) and the "Copied" toast
   .dialog { --bs-dialog-width: 460px; }
