@@ -31,6 +31,18 @@ tools/<id>/
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
 | `bin` | Optional. `{ "<command>": "<script relative to the tool dir>" }`, e.g. `{"audioctl": "audioctl.ts"}`. For each entry `install.sh` writes `~/.local/bin/<command>`, a bash wrapper that runs the script with the installer's Node 24 by absolute path (so an older `node` on PATH or a keyboard shortcut's minimal PATH doesn't matter), and `--uninstall` removes it. The script must be a Node script; the command name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and must be unique across tools. The core ignores this field. |
 
+| `commands` | Optional. Suggested invocations of the tool's `bin` commands that are worth binding to a key: `{ "<command>": [{ "title": "<what it does>", "args": ["<arg>", …] }] }`, keyed by a command from `bin`. The shortcuts tool (`tools/shortcuts/`) offers them in its "Suggested command" list and writes the command as the `~/.local/bin` wrapper's absolute path plus the quoted `args`. Keep `title` short and imperative. The core and the installer ignore this field. |
+
+```json
+"bin": { "audioctl": "audioctl.ts" },
+"commands": {
+  "audioctl": [
+    { "title": "Mute/unmute Firefox", "args": ["app-mute", "firefox", "toggle"] },
+    { "title": "Firefox volume up", "args": ["app-volume", "firefox", "+10"] }
+  ]
+}
+```
+
 The core reads `tools/*/manifest.json` at startup. Enabled/disabled is stored in
 `~/.config/motherapp/config.json` (`{"port": 7323, "tools": {"<id>": {"enabled": true}}}`) and can
 be changed on the Settings page. Unknown manifest fields are ignored. After adding a tool, run `npm install` once at the repo root
@@ -232,6 +244,14 @@ export default class AudioPage extends HTMLElement {
 `render(widgets, container)` (the declarative renderer, for mixing) and `info()`. Use the theme
 CSS variables (`--fg`, `--bg`, `--surface`, `--muted`, `--border`, `--accent`, `--ok`,
 `--warn`, `--err`).
+
+`tools/shortcuts/page.ts` is a working example: its own form and rows, styled only with those
+variables (a `<style>` scoped by a class on its root, so it doesn't depend on the shell's CSS),
+plus `ctx.render` for single `button` widgets, so Remove gets the shell's confirm dialog and
+status dot. Outside a list a button's `confirm` has no row, so text you put in it must not
+contain `{word}` placeholders (that page inserts a zero-width space after each `{`). Logic the
+page and the tool share (`src/accel.ts`, `src/command.ts`) imports nothing, so the browser can
+load it through relative `./src/….ts` imports.
 
 ## 7. Checklist for a new tool
 

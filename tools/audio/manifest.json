@@ -4,5 +4,12 @@
   "icon": "🔊",
   "serve": ["node", "audioctl.ts", "serve"],
   "bin": { "audioctl": "audioctl.ts" },
+  "commands": {
+    "audioctl": [
+      { "title": "Mute/unmute Firefox", "args": ["app-mute", "firefox", "toggle"] },
+      { "title": "Firefox volume up", "args": ["app-volume", "firefox", "+10"] },
+      { "title": "Firefox volume down", "args": ["app-volume", "firefox", "-10"] }
+    ]
+  },
   "defaultEnabled": true
 }
