@@ -14,7 +14,7 @@ import type {
   Widget,
 } from "@motherapp/protocol";
 import { joinPath } from "@motherapp/protocol";
-import { ActionRunner } from "./actionRunner.ts";
+import { ActionRunner, DotStatus } from "./actionRunner.ts";
 import { KeyedList, listEntries } from "./keyedList.ts";
 import type { Row, RowHost } from "./keyedList.ts";
 import type { ToolStore } from "./store.ts";
@@ -50,18 +50,27 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-/** Small status dot: setting / set / failed (message on hover). */
-export function statusDot(): { el: HTMLElement; set(status: ControlStatus, error?: string): void } {
+/**
+ * Small status dot: setting / set / failed (message on hover). `set` fades out after ~2 s
+ * (DotStatus); the dot keeps its space in every state, so nothing around it moves.
+ */
+export function statusDot(): { el: HTMLElement; set(status: ControlStatus, error?: string): void; dispose(): void } {
   const el = h("span", { class: "dot" });
   el.dataset.status = "idle";
-  return {
-    el,
-    set(status, error) {
+  const state = new DotStatus((status, error) => {
+    if (status === "idle") {
+      // Keep the last colour (data-status) while the opacity transition runs; see styles.scss.
+      if (el.dataset.status !== "idle") el.dataset.faded = "";
+      el.title = "";
+    } else {
+      delete el.dataset.faded;
       el.dataset.status = status;
-      el.title = status === "failed" ? `Failed: ${error ?? "unknown error"}` : status === "setting" ? "Setting…" : status === "set" ? "Set" : "";
-      el.setAttribute("aria-label", el.title);
-    },
-  };
+      el.title = status === "failed" ? `Failed: ${error ?? "unknown error"}` : status === "setting" ? "Setting…" : "Set";
+    }
+    if (el.title) el.setAttribute("aria-label", el.title);
+    else el.removeAttribute("aria-label");
+  });
+  return { el, set: (status, error) => state.set(status, error), dispose: () => state.cancel() };
 }
 
 function markStale(el: HTMLElement, stale: boolean): void {
@@ -249,7 +258,7 @@ function button(w: ButtonWidget, ctx: RenderContext): Mounted {
     });
   });
   const el = h("div", { class: "control w-button" }, btn, runner ? dot.el : null);
-  return { el, destroy: () => runner?.dispose() };
+  return { el, destroy: () => (runner?.dispose(), dot.dispose()) };
 }
 
 function toggle(w: ToggleWidget, ctx: RenderContext): Mounted {
@@ -273,7 +282,7 @@ function toggle(w: ToggleWidget, ctx: RenderContext): Mounted {
   el.classList.add("w-toggle");
   sync();
   const off = ctx.store.subscribe(w.bind, sync);
-  return { el, destroy: () => (off(), runner.dispose()) };
+  return { el, destroy: () => (off(), runner.dispose(), dot.dispose()) };
 }
 
 function slider(w: SliderWidget, ctx: RenderContext): Mounted {
@@ -328,6 +337,7 @@ function slider(w: SliderWidget, ctx: RenderContext): Mounted {
     destroy: () => {
       off();
       runner.dispose();
+      dot.dispose();
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     },
@@ -381,7 +391,7 @@ function radio(w: RadioWidget, ctx: RenderContext): Mounted {
   sync();
   if (single) queueMicrotask(sync); // the row exists once this widget is attached
   const off = ctx.store.subscribe(w.bind, sync);
-  return { el, destroy: () => (off(), runner.dispose()) };
+  return { el, destroy: () => (off(), runner.dispose(), dot.dispose()) };
 }
 
 function meter(w: MeterWidget, ctx: RenderContext): Mounted {

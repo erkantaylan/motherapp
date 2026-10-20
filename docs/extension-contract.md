@@ -195,8 +195,9 @@ shell-quoted command) belongs in a state field, e.g. `copy: { bind: "sessions.{k
 
 `tools/demo/` uses all three forms; `tools/tmux/` uses `copy: { bind }` and `confirm`.
 
-**Status dots** come for free: *setting* while the request is out, *set* on success, *failed*
-on error (message on hover). Slider values sent while a request is in flight are coalesced:
+**Status dots** come for free: *setting* while the request is out, *set* on success (shown for
+~2 s, then it fades out), *failed* on error (message on hover; it stays until the next
+success). The dot keeps its space when hidden. Slider values sent while a request is in flight are coalesced:
 only the newest is sent when the reply arrives, so slow devices aren't flooded. Reply only
 after the change is applied (or failed); then publish the real value via `set`.
 

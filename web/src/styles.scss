@@ -152,11 +152,18 @@
   }
   .list-row .meter { width: min(120px, 30vw); }
 
-  // status dot: setting / set / failed
+  // status dot: setting / set / failed. "set" fades out after ~2 s (DotStatus adds
+  // data-faded and keeps data-status, so the colour stays while the opacity runs down).
+  // The dot always keeps its 8px, so nothing around it moves. A new status removes
+  // data-faded, which shows the dot again at once (the transition is only on the way out).
   .dot { flex: none; width: 8px; height: 8px; background: transparent; border-radius: 50%; }
   .dot[data-status="setting"] { background: var(--bs-warning-base); animation: ma-pulse .8s ease-in-out infinite alternate; }
   .dot[data-status="set"] { background: var(--bs-success-base); }
   .dot[data-status="failed"] { cursor: help; background: var(--bs-danger-base); }
+  .dot[data-faded] { opacity: 0; transition: opacity .3s ease-out; }
+  @media (prefers-reduced-motion: reduce) {
+    .dot[data-faded] { transition: none; }
+  }
   @keyframes ma-pulse {
     from { opacity: .35; }
     to { opacity: 1; }

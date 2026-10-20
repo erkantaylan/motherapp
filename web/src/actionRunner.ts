@@ -6,6 +6,48 @@ import type { ControlStatus, JsonObject } from "@motherapp/protocol";
 
 export type StatusListener = (status: ControlStatus, error?: string) => void;
 
+/** How long a green "set" dot stays before it fades (DESIGN.md § 3 "Control feedback"). */
+export const SET_VISIBLE_MS = 2000;
+
+/**
+ * What a status dot shows over time (issue #15): `set` is shown for `SET_VISIBLE_MS`, then
+ * turns `idle` (the dot fades out in CSS but keeps its space); `setting` and `failed` stay until
+ * the next status. Any new status cancels a pending fade, so an old success can never hide a
+ * newer state. DOM-free; `statusDot()` in renderer.ts wraps it.
+ */
+export class DotStatus {
+  status: ControlStatus = "idle";
+  error: string | undefined;
+  private show: StatusListener;
+  private visibleMs: number;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(show: StatusListener, visibleMs = SET_VISIBLE_MS) {
+    this.show = show;
+    this.visibleMs = visibleMs;
+  }
+
+  set(status: ControlStatus, error?: string): void {
+    this.cancel();
+    this.status = status;
+    this.error = status === "failed" ? error : undefined;
+    this.show(status, this.error);
+    if (status === "set") {
+      this.timer = setTimeout(() => {
+        this.timer = undefined;
+        this.status = "idle";
+        this.show("idle");
+      }, this.visibleMs);
+    }
+  }
+
+  /** Drops a pending fade (e.g. when the control goes away). */
+  cancel(): void {
+    if (this.timer !== undefined) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+}
+
 export class ActionRunner {
   status: ControlStatus = "idle";
   error: string | undefined;
