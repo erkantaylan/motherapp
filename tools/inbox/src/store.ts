@@ -4,6 +4,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { sweepTmpFiles } from "@motherapp/tool-sdk";
 import type { LinkOptions } from "./limits.ts";
 
 export const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -107,6 +108,8 @@ export class Store {
 
   constructor(dir: string) {
     this.dir = dir;
+    // Temp files of a write that was killed before its rename (#29); older than a minute only.
+    for (const f of [this.linksFile, this.logFile]) sweepTmpFiles(dir, path.basename(f));
     this.load();
   }
 

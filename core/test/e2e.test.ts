@@ -64,7 +64,9 @@ test("core + demo tool over WebSocket: cached state, action, delta, log entry", 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-e2e-"));
   const cfgDir = path.join(tmp, "config", "motherapp");
   fs.mkdirSync(cfgDir, { recursive: true });
-  fs.writeFileSync(path.join(cfgDir, "config.json"), JSON.stringify({ port: 0, tools: { demo: { enabled: true } } }));
+  // only the demo: the real tools would talk to the machine (and their snapshots raced the demo's)
+  const tools = Object.fromEntries(fs.readdirSync(path.join(repo, "tools")).map((id) => [id, { enabled: id === "demo" }]));
+  fs.writeFileSync(path.join(cfgDir, "config.json"), JSON.stringify({ port: 0, tools }));
   const webDir = path.join(tmp, "web");
   fs.mkdirSync(webDir);
   fs.writeFileSync(path.join(webDir, "index.html"), "<!doctype html><title>test</title>");
@@ -94,7 +96,7 @@ test("core + demo tool over WebSocket: cached state, action, delta, log entry", 
   const c2 = new Client(`ws://127.0.0.1:${port}/ws`);
   await c2.open();
   // a fresh client gets the cached state immediately, without asking the tool
-  await waitFor(() => c2.notes("snapshot").length > 0, "snapshot on connect");
+  await waitFor(() => c2.notes("snapshot").some((s) => s.tool === "demo"), "snapshot on connect");
   const snap = c2.notes("snapshot").find((s) => s.tool === "demo");
   assert.equal(snap.state.count, 0);
   assert.deepEqual(snap.stale, ["level"]); // demo's "slow device" value starts stale
@@ -145,6 +147,62 @@ test("core + demo tool over WebSocket: cached state, action, delta, log entry", 
   await new Promise((r) => core.child.once("exit", r));
   assert.ok(core.lines.some((l) => l.msg === "shutting down (SIGTERM)"));
 });
+
+// #29. "mixed" is the unit's KillMode now (SIGTERM to the core only); "control-group" is
+// systemd's default (SIGTERM to every process, then the core sends its tools another).
+for (const mode of ["mixed", "control-group"] as const) {
+  test(`stop with KillMode=${mode}: the core stops its tools, they exit 0 and save their state`, async (t) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-e2e-stop-"));
+    const cfgDir = path.join(tmp, "config", "motherapp");
+    fs.mkdirSync(cfgDir, { recursive: true });
+    // only the demo: the real tools would talk to the machine's PipeWire, monitors, …
+    const tools = Object.fromEntries(fs.readdirSync(path.join(repo, "tools")).map((id) => [id, { enabled: id === "demo" }]));
+    fs.writeFileSync(path.join(cfgDir, "config.json"), JSON.stringify({ port: 0, tools }));
+    const env = {
+      ...process.env,
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      XDG_STATE_HOME: path.join(tmp, "state"),
+      MOTHERAPP_TOOLS_DIR: path.join(repo, "tools"),
+      MOTHERAPP_WEB_DIR: path.join(tmp, "noweb"),
+    };
+    // its own process group, so "control-group" can signal the core and its tools at once
+    const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(repo, "core/src/main.ts")], { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    t.after(() => {
+      try {
+        process.kill(-child.pid!, "SIGKILL");
+      } catch {
+        // already gone
+      }
+      fs.rmSync(tmp, { recursive: true, force: true });
+    });
+    const lines: Record<string, any>[] = [];
+    let buf = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (c: string) => {
+      buf += c;
+      const parts = buf.split("\n");
+      buf = parts.pop()!;
+      for (const p of parts) if (p) lines.push(JSON.parse(p));
+    });
+    await waitFor(() => lines.some((l) => l.fields?.port), "listening line");
+    const c = new Client(`ws://127.0.0.1:${lines.find((l) => l.fields?.port)!.fields.port}/ws`);
+    await c.open();
+    await waitFor(() => c.notes("tools").some((p) => p.tools.find((x: any) => x.id === "demo")?.status === "running"), "demo running");
+    for (let i = 0; i < 3; i++) assert.equal((await c.call("action", { tool: "demo", name: "increment" })).error, undefined);
+    c.ws.close();
+
+    const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once("exit", (code, sig) => r([code, sig])));
+    if (mode === "mixed") child.kill("SIGTERM");
+    else process.kill(-child.pid!, "SIGTERM");
+    assert.deepEqual(await exited, [0, null]);
+    await new Promise((r) => setTimeout(r, 50)); // the last stdout lines
+    const stopped = lines.filter((l) => l.tool === "demo" && /^stopped \(/.test(l.msg)).map((l) => l.msg);
+    assert.deepEqual(stopped, ["stopped (exited with code 0)"]);
+    const stateDir = path.join(tmp, "state", "motherapp");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(stateDir, "demo.json"), "utf8")).state.count, 3);
+    assert.deepEqual(fs.readdirSync(stateDir).filter((f) => f.endsWith(".tmp")), []);
+  });
+}
 
 test("custom page modules are served type-stripped; foreign origins are refused", async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-e2e-"));

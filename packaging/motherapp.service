@@ -17,6 +17,12 @@ ExecStart="@NODE@" "@REPO_DIR@/core/src/main.ts"
 WorkingDirectory=@REPO_DIR@
 Restart=on-failure
 RestartSec=2
+# On stop, SIGTERM goes to the core only; it stops its tools one by one (SIGTERM, SIGKILL after
+# 3 s) and exits once they have saved their state. With the default control-group mode every
+# tool got a second SIGTERM from systemd and some died mid-save. Whatever is left when the core
+# exits (or after TimeoutStopSec) gets SIGKILL.
+KillMode=mixed
+TimeoutStopSec=15
 # The core prints one JSON line per log entry; journald keeps them.
 StandardOutput=journal
 StandardError=journal

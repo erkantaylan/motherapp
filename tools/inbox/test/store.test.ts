@@ -24,6 +24,17 @@ test("tokens: 32 random bytes, base64url, 43 characters, all different", () => {
   assert.equal(seen.size, 200);
 });
 
+test("#29: temp files of an interrupted write are swept on load (older than a minute only)", () => {
+  const dir = path.join(tmpDir("store-sweep"), "inbox");
+  new Store(dir).create(opts, 1000);
+  const old = (Date.now() - 120_000) / 1000;
+  for (const f of ["links.json.77.0a1b2c3d.tmp", "deliveries.json.77.0a1b2c3d.tmp", "links.json.78.ffffffff.tmp"]) fs.writeFileSync(path.join(dir, f), "");
+  for (const f of ["links.json.77.0a1b2c3d.tmp", "deliveries.json.77.0a1b2c3d.tmp"]) fs.utimesSync(path.join(dir, f), old, old);
+  const s = new Store(dir);
+  assert.equal(s.problems.length, 0);
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith(".tmp")), ["links.json.78.ffffffff.tmp"]);
+});
+
 test("only the SHA-256 is stored, in a 0700 directory and 0600 files", () => {
   const dir = path.join(tmpDir("store"), "inbox");
   const s = new Store(dir);

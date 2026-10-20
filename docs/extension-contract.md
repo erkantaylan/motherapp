@@ -104,7 +104,11 @@ action/method; the core itself uses `-32001` timeout, `-32002` tool unavailable,
 Any exit the core didn't ask for is a crash: restart after 1 s, 2 s, 4 s … capped at 30 s
 (the backoff resets after a run of ≥ 60 s). The 5th crash within 2 minutes stops retrying;
 the tool shows `failed` and a Restart button. Shutdown/disable sends SIGTERM, then SIGKILL
-after 3 s. If stdin closes, exit.
+after 3 s. If stdin closes, exit. A tool may get more than one SIGTERM (Ctrl+C in a terminal
+reaches the whole process group): the SDK keeps its handler installed and ignores repeats, so
+the final state save always finishes. The systemd unit uses `KillMode=mixed`, so on a service
+stop only the core gets systemd's SIGTERM. On startup the SDK removes `<id>.json.<pid>.tmp`
+files older than a minute (`sweepTmpFiles`), left by a save that was killed anyway.
 
 ### Secrets, and a tool's own listener
 

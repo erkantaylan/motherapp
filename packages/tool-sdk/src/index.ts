@@ -107,6 +107,7 @@ export class Tool {
   private out: Writable | undefined;
   private stopped = false;
   private loadError: string | undefined;
+  private sweptTmp: string[] = [];
   private isWatched = false;
   private watchListeners = new Set<(watching: boolean) => void>();
 
@@ -203,6 +204,9 @@ export class Tool {
   private load(): void {
     const file = this.stateFile;
     if (!file) return;
+    // Leftovers of a save that was killed between write and rename (#29).
+    const swept = sweepTmpFiles(path.dirname(file), path.basename(file));
+    if (swept.length > 0) this.sweptTmp = swept;
     let raw: string;
     try {
       raw = fs.readFileSync(file, "utf8");
@@ -283,6 +287,7 @@ export class Tool {
     });
     if (this.opts.captureConsole !== false) this.captureConsole();
     if (this.loadError) this.log.warn(this.loadError);
+    if (this.sweptTmp.length > 0) this.log.info("removed leftover temp state files", { files: this.sweptTmp });
     // Changes made before serve() are part of the first state.get; don't resend them.
     this.pendingChanges = [];
 
@@ -298,12 +303,19 @@ export class Tool {
       input.on("end", done);
       input.on("close", done);
       if (input === process.stdin) {
+        // `on`, not `once`: with `once` the listener is gone after the first signal, Node
+        // restores the default action, and a second SIGTERM (systemd's to the whole cgroup
+        // plus the core's own) killed the tool in the middle of its final save, leaving an
+        // empty `<id>.json.<pid>.tmp` behind (#29). Repeats are ignored while shutting down.
+        let stopping = false;
         const onSignal = () => {
+          if (stopping) return;
+          stopping = true;
           done();
           process.exit(0);
         };
-        process.once("SIGTERM", onSignal);
-        process.once("SIGINT", onSignal);
+        process.on("SIGTERM", onSignal);
+        process.on("SIGINT", onSignal);
       }
     });
   }
@@ -450,6 +462,40 @@ export function exitOnBrokenPipe(...streams: Writable[]): void {
       throw e;
     });
   }
+}
+
+/** Matches `<base>.<pid>.tmp` and `<base>.<pid>.<hex>.tmp`, the temp names of atomic writes. */
+function tmpPattern(base: string): RegExp {
+  return new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.\\d+(?:\\.[0-9a-f]+)?\\.tmp$`);
+}
+
+/**
+ * Removes temp files that an interrupted atomic write of `dir/<base>` left behind
+ * (`<base>.<pid>.tmp`, `<base>.<pid>.<hex>.tmp`) once they are older than `maxAgeMs` (a younger
+ * one may belong to a write in progress). Returns the names removed. Never throws.
+ */
+export function sweepTmpFiles(dir: string, base: string, maxAgeMs = 60_000, now = Date.now()): string[] {
+  const re = tmpPattern(base);
+  const removed: string[] = [];
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return removed;
+  }
+  for (const name of names) {
+    if (!re.test(name)) continue;
+    const p = path.join(dir, name);
+    try {
+      const st = fs.lstatSync(p);
+      if (!st.isFile() || now - st.mtimeMs < maxAgeMs) continue;
+      fs.unlinkSync(p);
+      removed.push(name);
+    } catch {
+      // gone already, or not ours to remove
+    }
+  }
+  return removed;
 }
 
 /** Reads a tool's persisted state without starting it (for plain CLI subcommands). */
