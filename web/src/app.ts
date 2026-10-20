@@ -1,5 +1,5 @@
 // App-wide client state: tool infos, one ToolStore per tool, streams, progress, logs.
-import type { JsonObject, JsonValue, LogEntry, RpcId, ToolInfo, UiNotifications } from "@motherapp/protocol";
+import type { JsonObject, JsonValue, LogEntry, RpcId, ToolInfo, UiNotifications, VersionInfo } from "@motherapp/protocol";
 import { Connection } from "./connection.ts";
 import { ToolStore } from "./store.ts";
 
@@ -15,6 +15,9 @@ export class App {
   private streamCbs = new Map<string, Set<(v: JsonValue) => void>>();
   private progressCbs = new Map<RpcId, ProgressCb>();
   private logListeners = new Set<(e: LogEntry) => void>();
+  /** Running build vs checkout; asked for on every (re)connect, since a restart may bring a new build. */
+  version: VersionInfo | undefined;
+  private versionListeners = new Set<() => void>();
 
   constructor(url: string) {
     this.conn = new Connection(url, (method, params) => this.onNotify(method, params));
@@ -28,7 +31,22 @@ export class App {
         const [tool, name] = key.split("\0") as [string, string];
         this.conn.request("stream.open", { tool, name }).catch(() => {});
       }
+      this.refreshVersion().catch(() => {});
     });
+  }
+
+  /** Asks the core for its version info; `refresh` makes it look the checkout up again. */
+  refreshVersion(refresh = false): Promise<VersionInfo> {
+    return this.conn.request("version.get", { refresh }).then((v) => {
+      this.version = v;
+      for (const l of [...this.versionListeners]) l();
+      return v;
+    });
+  }
+
+  onVersion(l: () => void): () => void {
+    this.versionListeners.add(l);
+    return () => this.versionListeners.delete(l);
   }
 
   start(): void {

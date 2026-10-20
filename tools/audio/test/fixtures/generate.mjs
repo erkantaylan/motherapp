@@ -77,7 +77,7 @@ function node(id, { state = "suspended", inPorts = 0, outPorts = 0, maxIn = 0, m
 
 const CARD_NAMES = ["HDA Intel PCH", "HDA NVidia", "G435 Wireless Gaming Headset"];
 
-function alsaNode(id, { cls, name, desc, nick, card, dev = 0, profile, profileName = "analog-stereo", deviceId, serial, ch = 2, path: apath, soft = 1.0, state = "suspended", cardName = CARD_NAMES[card], driver = card === 2 ? "snd_usb_audio" : "snd_hda_intel" }) {
+function alsaNode(id, { cls, name, desc, nick, card, dev = 0, profile, profileName = "analog-stereo", deviceId, serial, ch = 2, path: apath, vol = 1.0, mute = false, soft = 1.0, state = "suspended", cardName = CARD_NAMES[card], driver = card === 2 ? "snd_usb_audio" : "snd_hda_intel" }) {
   const playback = cls === "Audio/Sink";
   return node(id, {
     state,
@@ -86,7 +86,7 @@ function alsaNode(id, { cls, name, desc, nick, card, dev = 0, profile, profileNa
     maxIn: playback ? 65 : 0,
     maxOut: playback ? 0 : 65,
     ch,
-    params: nodeParams(ch, propsParam({ ch, soft })),
+    params: nodeParams(ch, propsParam({ ch, vol, mute, soft })),
     props: {
       "alsa.card": card,
       "alsa.card_name": cardName,
@@ -274,8 +274,9 @@ const core = {
   info: { cookie: 1880421, "user-name": "kappa", "host-name": "kappa-desktop", version: "1.0.5", name: "pipewire-0", "change-mask": ["props"], props: { "config.name": "pipewire.conf", "core.daemon": true, "core.name": "pipewire-0", "default.clock.rate": 48000, "object.id": 0, "object.serial": 0 } },
 };
 
-const sinkAnalog = alsaNode(48, { cls: "Audio/Sink", name: ANALOG_OUT, desc: "Built-in Audio Analog Stereo", nick: "ALC1220 Analog", card: 0, profile: "Analog Stereo", deviceId: 42, serial: 49, path: "front:0", soft: 0.512, state: "running" });
-const srcAnalog = alsaNode(50, { cls: "Audio/Source", name: ANALOG_IN, desc: "Built-in Audio Analog Stereo", nick: "ALC1220 Analog", card: 0, profile: "Analog Stereo", deviceId: 42, serial: 51, path: "front:0" });
+const sinkAnalog = alsaNode(48, { cls: "Audio/Sink", name: ANALOG_OUT, desc: "Built-in Audio Analog Stereo", nick: "ALC1220 Analog", card: 0, profile: "Analog Stereo", deviceId: 42, serial: 49, path: "front:0", vol: 0.343, soft: 0.512, state: "running" });
+// Master volume (#13): the default output is at 70% (0.343 linear), the default mic at 90%.
+const srcAnalog = alsaNode(50, { cls: "Audio/Source", name: ANALOG_IN, desc: "Built-in Audio Analog Stereo", nick: "ALC1220 Analog", card: 0, profile: "Analog Stereo", deviceId: 42, serial: 51, path: "front:0", vol: 0.729 });
 const sinkHdmi = alsaNode(52, { cls: "Audio/Sink", name: HDMI_OUT, desc: "GA102 High Definition Audio Controller Digital Stereo (HDMI 2)", nick: "X34 P", card: 1, dev: 7, profile: "Digital Stereo (HDMI 2) Output", deviceId: 43, serial: 53, path: "hdmi:1,1" });
 
 const dummy = node(28, { props: { "factory.name": "support.node.driver", "node.name": "Dummy-Driver", "node.group": "pipewire.dummy", "priority.driver": 200000, "object.serial": 28, "node.driver": true }, params: {} });
@@ -360,7 +361,7 @@ function withState(n, state) {
 const removed = (id) => ({ id, info: null });
 
 const usbDev = device(70, { name: "alsa_card.usb-Logitech_G435_Wireless_Gaming_Headset_V001008005.1-01", desc: "G435 Wireless Gaming Headset", nick: "G435 Wireless Gaming Headset", card: 2, bus: "usb", serial: 1600 });
-const usbSink = alsaNode(71, { cls: "Audio/Sink", name: USB_OUT, desc: "G435 Wireless Gaming Headset Analog Stereo", nick: "G435 Wireless Gaming Headset", card: 2, profile: "Analog Stereo", deviceId: 70, serial: 1601, path: "front:2" });
+const usbSink = alsaNode(71, { cls: "Audio/Sink", name: USB_OUT, desc: "G435 Wireless Gaming Headset Analog Stereo", nick: "G435 Wireless Gaming Headset", card: 2, profile: "Analog Stereo", deviceId: 70, serial: 1601, path: "front:2", vol: 0.512 });
 const usbSrc = alsaNode(72, { cls: "Audio/Source", name: USB_IN, desc: "G435 Wireless Gaming Headset Mono", nick: "G435 Wireless Gaming Headset", card: 2, profile: "Mono Input", deviceId: 70, serial: 1602, path: "hw:2", ch: 1 });
 
 const eventStream = pulseStream(130, { app: "GNOME Shell", binary: "gnome-shell", pid: 2100, media: "message-new-instant", serial: 1700, clientId: 98, vol: 1.0, role: "event", extra: { "event.id": "message-new-instant", "event.description": "Message received", "media.filename": "/usr/share/sounds/Yaru/stereo/message-new-instant.oga" } });
@@ -382,6 +383,16 @@ const batches = [
   // 6: headset unplugged; the default falls back to the built-in output.
   [removed(220), removed(221), removed(71), removed(72), removed(70),
     meta(34, "default", [{ subject: 0, key: "default.audio.sink", type: "Spa:String:JSON", value: json(ANALOG_OUT) }], 34)],
+  // Master volume (#13), changed outside the tool (GNOME, the keyboard volume keys):
+  // 7: the default output goes 70% -> 50% (linear 0.125).
+  [withVolume(sinkAnalog, 0.125)],
+  // 8: the default output is muted; the mic goes 90% -> 60% (linear 0.216) and is muted.
+  [withVolume(sinkAnalog, 0.125, { mute: true }), withVolume(srcAnalog, 0.216, { mute: true })],
+  // 9: the default output disappears (PipeWire/WirePlumber restarting): the node is removed
+  //    and the default metadata entry deleted, with no new default yet.
+  [removed(48), meta(34, "default", [{ subject: 0, key: "default.audio.sink", type: null, value: null }], 34)],
+  // 10: it comes back at 70%, unmuted, and is the default again.
+  [sinkAnalog, meta(34, "default", [{ subject: 0, key: "default.audio.sink", type: "Spa:String:JSON", value: json(ANALOG_OUT) }], 34)],
 ];
 
 // pw-dump-arctis.json: a SteelSeries Arctis Pro Wireless (issue #5). The node.name, node.nick,

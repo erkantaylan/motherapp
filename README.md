@@ -43,9 +43,19 @@ On the target machine (Ubuntu 24.04, GNOME, Wayland), from a clone of this repo:
 
 ```sh
 ./install.sh               # or: make install
-./install.sh --check       # or: make check / npm run doctor - report only, changes nothing
+./install.sh --check       # or: make check / motherapp check - report only, changes nothing
 ./install.sh --uninstall   # or: make uninstall - stop + remove the user service (keeps config/state)
 ```
+
+After the first install, update with **`motherapp install`** (alias `motherapp update`) from any
+directory: it runs `git fetch` and `git pull --ff-only` on `main`, then `./install.sh --yes`, and
+prints the old → new version, the new commits and the HTTP check. It refuses when the checkout
+has local changes, isn't on `main` or has diverged (it never stashes, resets or merges), and
+says "already up to date" when there is nothing new. `motherapp status` shows the service, the
+running vs checkout version and each tool's state; `motherapp help` lists the rest (`version`,
+`check`, `logs`, `open`, `uninstall`). Versions look like `v1-abc1234`: the number in `VERSION`
+(bumped by hand), the short git hash, and `-dirty` for a build with uncommitted changes. The
+sidebar footer and Settings show the running version.
 
 `make help` lists the other targets (`make purge` = `--uninstall --purge`, which also deletes
 `~/.config/motherapp` and `~/.local/state/motherapp`).
@@ -67,7 +77,8 @@ Every status line starts with `OK`, `MISSING`, `WARN`, `FAIL` or `SKIP`, the las
 `RESULT: OK` or `RESULT: FAIL` (with counts of warnings and of optional steps skipped), and the exit code is 0 only when everything required is OK.
 Re-running it is safe; re-run it after moving the checkout or changing Node.
 It also puts each tool's command in `~/.local/bin` (e.g. `audioctl`, a small wrapper that runs it
-with that Node), for terminals and GNOME keyboard shortcuts; `--uninstall` removes them.
+with that Node), plus the `motherapp` command, for terminals and GNOME keyboard shortcuts;
+`--uninstall` removes them.
 
 ```sh
 journalctl --user -u motherapp -f    # one JSON line per log entry

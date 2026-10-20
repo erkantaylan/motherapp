@@ -51,6 +51,16 @@ export class AudioOps {
     await Promise.all(streams.map((s) => this.wpctl(["set-mute", String(s.id), muted ? "1" : "0"])));
   }
 
+  /** Master volume: one `wpctl set-volume <id>` on that output or input, by its PipeWire id. */
+  setDeviceVolume(dev: Device, percent: number): Promise<unknown> {
+    return this.wpctl(["set-volume", String(dev.id), percentToWpctl(percent)]);
+  }
+
+  /** Master mute: `wpctl set-mute <id> 1|0|toggle`. */
+  setDeviceMute(dev: Device, muted: boolean | "toggle"): Promise<unknown> {
+    return this.wpctl(["set-mute", String(dev.id), muted === "toggle" ? "toggle" : muted ? "1" : "0"]);
+  }
+
   private play(args: string[], input?: Buffer): Promise<unknown> {
     let pid: number | undefined;
     const opts: RunOptions = {

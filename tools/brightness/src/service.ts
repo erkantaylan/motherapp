@@ -335,7 +335,7 @@ export class BrightnessService {
     if (t.get("all.brightness") !== value || t.isStale("all.brightness") !== stale) t.set("all.brightness", value, { stale });
     const note = equal
       ? undefined
-      : `The monitors differ (${vals.map((x) => `${x.title} ${x.v}%`).join(", ")}). The slider shows the average; moving it sets all of them to the same value.`;
+      : `The monitors differ (${vals.map((x) => `${x.title} ${x.v}%`).join(", ")}). The All monitors slider shows the average; moving it sets all of them to the same value.`;
     if (note === undefined) {
       if (t.get("allNote") !== undefined) t.delete("allNote");
     } else if (t.get("allNote") !== note) {

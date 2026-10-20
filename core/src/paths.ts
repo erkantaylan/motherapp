@@ -16,6 +16,11 @@ export function defaultToolsDir(env = process.env): string {
   return env.MOTHERAPP_TOOLS_DIR ? path.resolve(env.MOTHERAPP_TOOLS_DIR) : path.join(repoRoot, "tools");
 }
 
+/** build-info.json, written by scripts/build-info.sh (npm run build, ./install.sh). */
+export function buildInfoFile(env = process.env): string {
+  return env.MOTHERAPP_BUILD_INFO ? path.resolve(env.MOTHERAPP_BUILD_INFO) : path.join(repoRoot, "build-info.json");
+}
+
 export function defaultWebDir(env = process.env): string {
   return env.MOTHERAPP_WEB_DIR ? path.resolve(env.MOTHERAPP_WEB_DIR) : path.join(repoRoot, "web", "dist");
 }

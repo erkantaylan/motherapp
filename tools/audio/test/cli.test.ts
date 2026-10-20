@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
-import { parsePercent, runCli } from "../src/cli.ts";
+import { parseMasterArgs, parseMasterPercent, parsePercent, runCli } from "../src/cli.ts";
 import { FakeRunner, arctisText, dumpText } from "./fakes.ts";
 
 let dump = dumpText;
@@ -108,6 +108,72 @@ test("errors: usage problems exit 2, failures exit 1, with a message on stderr",
   r = await cli();
   assert.equal(r.code, 2);
   assert.equal((await cli("help")).code, 0);
+});
+
+test("volume / mute: print the default output's (or --input's) value; set quietly by id", async () => {
+  // no value: print it, plainly, for scripts
+  let r = await cli("volume");
+  assert.deepEqual([r.code, r.out, r.err, r.lines], [0, "70\n", "", ["pw-dump"]]);
+  r = await cli("volume", "--input");
+  assert.equal(r.out, "90\n");
+  r = await cli("mute");
+  assert.equal(r.out, "off\n");
+  r = await cli("mute", "--input");
+  assert.equal(r.out, "off\n");
+
+  // with a value: one wpctl on the default's id, nothing printed
+  const set = async (...argv: string[]) => {
+    const x = await cli(...argv);
+    assert.deepEqual([x.code, x.out, x.err], [0, "", ""], argv.join(" "));
+    assert.equal(x.lines[0], "pw-dump");
+    return x.lines.slice(1);
+  };
+  assert.deepEqual(await set("volume", "+5"), ["wpctl set-volume 48 0.75"]);
+  assert.deepEqual(await set("volume", "-10%"), ["wpctl set-volume 48 0.60"]);
+  assert.deepEqual(await set("volume", "42"), ["wpctl set-volume 48 0.42"]);
+  assert.deepEqual(await set("volume", "120%"), ["wpctl set-volume 48 1.20"]);
+  assert.deepEqual(await set("volume", "--input", "+5"), ["wpctl set-volume 50 0.95"]);
+  assert.deepEqual(await set("volume", "+50", "--input"), ["wpctl set-volume 50 1.00"]); // +N stops at 100
+  assert.deepEqual(await set("mute", "toggle"), ["wpctl set-mute 48 toggle"]);
+  assert.deepEqual(await set("mute", "on"), ["wpctl set-mute 48 1"]);
+  assert.deepEqual(await set("mute", "--input", "off"), ["wpctl set-mute 50 0"]);
+  assert.deepEqual(await set("mute", "--input", "toggle"), ["wpctl set-mute 50 toggle"]);
+});
+
+test("volume / mute: usage errors exit 2 before touching PipeWire, failures exit 1", async () => {
+  for (const argv of [["volume", "loud"], ["volume", "5", "6"], ["volume", "--input", "x%"], ["mute", "maybe"], ["mute", "--input", "on", "off"]]) {
+    const r = await cli(...argv);
+    assert.equal(r.code, 2, argv.join(" "));
+    assert.deepEqual(r.lines, [], argv.join(" "));
+    assert.match(r.err, /^audioctl: .*\n\nusage: audioctl/);
+  }
+  // no default output (PipeWire restarting): exit 1 with a message, no wpctl
+  const noDefault = JSON.stringify((JSON.parse(dumpText()) as any[]).filter((o) => o.type !== "PipeWire:Interface:Metadata"));
+  dump = () => noDefault;
+  try {
+    for (const argv of [["volume"], ["volume", "+5"], ["mute", "toggle"], ["mute", "--input"]]) {
+      const r = await cli(...argv);
+      assert.equal(r.code, 1, argv.join(" "));
+      assert.deepEqual(r.lines, ["pw-dump"]);
+      assert.match(r.err, /^audioctl: there is no default (output|input) right now\n$/);
+    }
+  } finally {
+    dump = dumpText;
+  }
+});
+
+test("parseMasterPercent: like parsePercent, but +N stops at 100 unless already above", () => {
+  assert.equal(parseMasterPercent("+5", 98), 100);
+  assert.equal(parseMasterPercent("+5", 100), 100);
+  assert.equal(parseMasterPercent("+5", 120), 125);
+  assert.equal(parseMasterPercent("+50", 140), 150);
+  assert.equal(parseMasterPercent("-5", 120), 115);
+  assert.equal(parseMasterPercent("130", 10), 130);
+  assert.equal(parseMasterPercent("-5", 2), 0);
+  assert.throws(() => parseMasterPercent("+", 0), /percentage/);
+  assert.deepEqual(parseMasterArgs("volume", ["--input"]), { kind: "input" });
+  assert.deepEqual(parseMasterArgs("volume", ["-5", "--input"]), { kind: "input", value: "-5" });
+  assert.deepEqual(parseMasterArgs("mute", []), { kind: "output" });
 });
 
 test("parsePercent: absolute, relative, clamped", () => {

@@ -8,8 +8,20 @@ import { PwMonitor, realTimers } from "./monitor.ts";
 import type { Timers } from "./monitor.ts";
 import { AudioOps } from "./ops.ts";
 import type { OpsOptions } from "./ops.ts";
-import { DERIVED_KEYS, MAX_APP_VOLUME, PwModel, appMuted, buildView, viewToState } from "./pipewire.ts";
-import type { AppGroup, AudioView, Device } from "./pipewire.ts";
+import {
+  DERIVED_KEYS,
+  MASTER_KINDS,
+  MAX_APP_VOLUME,
+  MAX_MASTER_VOLUME,
+  PwModel,
+  appMuted,
+  buildView,
+  defaultDevice,
+  masterItem,
+  masterState,
+  viewToState,
+} from "./pipewire.ts";
+import type { AppGroup, AudioView, Device, MasterKind } from "./pipewire.ts";
 import type { Runner } from "./runner.ts";
 
 export interface ServiceOptions {
@@ -21,7 +33,14 @@ export interface ServiceOptions {
   ownPidGraceMs?: number;
 }
 
-export const INITIAL_STATE: JsonObject = { sinks: {}, sources: {}, defaultSink: "", defaultSource: "", apps: {} };
+export const INITIAL_STATE: JsonObject = {
+  sinks: {},
+  sources: {},
+  defaultSink: "",
+  defaultSource: "",
+  apps: {},
+  master: { output: masterItem("output", undefined), input: masterItem("input", undefined) },
+};
 
 const invalid = (msg: string) => new RpcError(-32602, msg);
 
@@ -31,6 +50,14 @@ function argId(args: JsonObject): number {
   if (!Number.isInteger(n)) throw invalid("id must be a PipeWire object id");
   return n;
 }
+
+function argKind(args: JsonObject): MasterKind {
+  const k = args.kind ?? "output";
+  if (k !== "output" && k !== "input") throw invalid('kind must be "output" or "input"');
+  return k;
+}
+
+const isObj = (v: unknown): v is JsonObject => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function argApp(args: JsonObject): string {
   if (typeof args.app !== "string" || args.app === "") throw invalid("app must be a string");
@@ -70,6 +97,17 @@ export class AudioService {
     this.tool.set("apps", {}, { stale: true });
     for (const k of DERIVED_KEYS) if (!this.tool.isStale(k)) this.tool.markStale(k);
     if (this.tool.get("status") !== undefined) this.tool.delete("status");
+    // The master rows keep their last values (or a placeholder) and stay stale, row by row,
+    // until the first dump confirms them, so the sliders start where they were.
+    const saved = this.tool.get("master");
+    const master: JsonObject = {};
+    for (const k of MASTER_KINDS) {
+      const old = isObj(saved) ? saved[k] : undefined;
+      const base = masterItem(k, undefined);
+      master[k] = isObj(old) ? { ...base, ...old, role: base.role!, order: base.order! } : base;
+    }
+    this.tool.set("master", master);
+    for (const k of MASTER_KINDS) this.tool.markStale(`master.${k}`);
     this.monitor.start();
   }
 
@@ -98,11 +136,35 @@ export class AudioService {
         else this.tool.set(c.path, c.value);
       }
     }
+    this.refreshMaster();
     if (full && this.tool.get("status") !== undefined) this.tool.delete("status");
+  }
+
+  /**
+   * The master rows follow the defaults: deltas when the default's volume or mute changes, or
+   * when the default switches. With no default (PipeWire restarting, or the device unplugged
+   * before WirePlumber picks another) a row keeps its last values and is marked stale.
+   */
+  private refreshMaster(): void {
+    const next = masterState(this.view);
+    for (const k of MASTER_KINDS) {
+      const path = `master.${k}`;
+      const item = next[k];
+      if (!item) {
+        if (!this.tool.isStale(path)) this.tool.markStale(path);
+        continue;
+      }
+      for (const c of diffState(path, this.tool.get(path), item)) {
+        if (c.value === null) this.tool.delete(c.path);
+        else this.tool.set(c.path, c.value);
+      }
+      if (this.tool.isStale(path)) this.tool.markFresh(path);
+    }
   }
 
   private onDown(reason: string, retryInMs: number): void {
     for (const k of DERIVED_KEYS) this.tool.markStale(k);
+    for (const k of MASTER_KINDS) if (!this.tool.isStale(`master.${k}`)) this.tool.markStale(`master.${k}`);
     this.tool.set("status", `Can't read PipeWire (pw-dump: ${reason}). Retrying in ${Math.round(retryInMs / 1000)} s.`);
   }
 
@@ -119,6 +181,13 @@ export class AudioService {
     const list = kind === "sink" ? this.view.sinks : kind === "source" ? this.view.sources : [...this.view.sinks, ...this.view.sources];
     const d = list.find((x) => x.id === id);
     if (!d) throw new Error(`That ${kind === "sink" ? "output" : kind === "source" ? "input" : "device"} is gone (id ${id})`);
+    return d;
+  }
+
+  /** The current default output or input, from the model (so writes hit the node the page shows). */
+  defaultOf(kind: MasterKind): Device {
+    const d = defaultDevice(this.view, kind);
+    if (!d) throw new Error(`There is no default ${kind} right now`);
     return d;
   }
 
@@ -177,6 +246,33 @@ export class AudioService {
         const app = this.app(key);
         await this.ops.setStreamsMute(app.streams, muted);
         if (t.get(`apps.${key}`) !== undefined) t.set(`apps.${key}.muted`, muted);
+      });
+    });
+
+    // Master volume and mute of the default output/input, by the default's id in the model.
+    // Writes are serialized and coalesced like the app sliders. The default is looked up when
+    // the write runs, so a drag that outlives a default switch lands on the device shown then.
+    t.action("setMasterVolume", async (args) => {
+      const kind = argKind(args);
+      if (typeof args.value !== "number" || !Number.isFinite(args.value)) throw invalid("value must be a number");
+      const percent = Math.round(Math.max(0, Math.min(MAX_MASTER_VOLUME, args.value)));
+      this.defaultOf(kind); // fail fast when there is none
+      await this.writes.run(`master-volume:${kind}`, async () => {
+        const dev = this.defaultOf(kind);
+        await this.ops.setDeviceVolume(dev, percent);
+        if (t.get(`master.${kind}.id`) === String(dev.id)) t.set(`master.${kind}.volume`, percent);
+      });
+    });
+
+    t.action("setMasterMute", async (args) => {
+      const kind = argKind(args);
+      const v = args.value;
+      if (typeof v !== "boolean" && v !== "toggle") throw invalid('value must be true, false or "toggle"');
+      const muted = v === "toggle" ? !this.defaultOf(kind).muted : v;
+      await this.writes.run(`master-mute:${kind}`, async () => {
+        const dev = this.defaultOf(kind);
+        await this.ops.setDeviceMute(dev, muted);
+        if (t.get(`master.${kind}.id`) === String(dev.id)) t.set(`master.${kind}.muted`, muted);
       });
     });
 

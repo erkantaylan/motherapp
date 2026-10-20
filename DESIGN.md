@@ -56,16 +56,17 @@ GNOME 48 unless its author updates it.
 | Cockpit-style pages | **Write actions from the start**, not read-only first. |
 | Network switch scope | **All or none.** When it is on, everything is reachable from the LAN. No per-action local-only flag for now. |
 | Network pairing | QR + one-time-token pairing is **nice to have**, not required for the first version. **No auto-off**: no timeout, nothing on screen lock. |
-| Control feedback | The UI shows the last known value immediately (the brightness tool holds its last set value). Each control has a **small status dot**: setting / set / failed. |
+| Control feedback | The UI shows the last known value immediately (the brightness tool holds its last set value). Each control has a **small status dot**: setting / set / failed. Set is shown for ~2 s, then fades; failed stays until the next success. |
 | Retiring predecessors | Retire audio-switch and the Per App Volume extension once the audio tool ships. **The user decides when.** |
 | UI model | **Hybrid** (§ 4.1, § 4.5): declarative pages by default, TS custom pages as the escape hatch. |
 | Protocol, contract, discovery, crashes | As written in **§ 4.6–4.9**, accepted 2026-10-19. |
 | Runtime | **Node 24 LTS** (§ 4.10). It gets installed on the machine. |
 | Frontend | **Plain TS + Vite + Bootstrap 6 (alpha, pinned)**, web components for custom pages (§ 4.11). |
 | Launcher | **Served on the web only**: open `http://127.0.0.1:7323` in a browser. No tray icon for now. |
-| Audio scope, first version | **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
+| Audio scope, first version | **Master volume and mute** for the default output and the default input (mic), following whichever device is the default (#13). **Per-app volume and mute** for apps that are playing sound. Per-app output routing comes later ([#1](https://github.com/erkantaylan/motherapp/issues/1)). |
 | Per-app rows | **One row per app.** All of an app's streams are grouped, e.g. one Firefox row. |
 | Audio test tools | **Keep audio-switch's**: L/R test, live mic meter, record-and-playback. |
+| Device volume | **Master sliders only** (default output + default mic, #13). No volume slider on each device row: tried as a mockup (Option B) and rejected as too crowded. |
 | Brightness UI | **Both**: a slider per monitor plus a linked "all monitors" slider. |
 | Brightness backend | **`libddcutil` kept loaded** in the brightness tool's serve process. It needs installing on the machine. |
 | Brightness FFI | **`koffi`** (npm, prebuilt binaries, so no compiler or dev headers on the machine) loads `libddcutil.so.4` by soname. All libddcutil calls run on one `worker_threads` worker, because they block and the library keeps per-thread state; the serve loop never waits on DDC/CI. Before the library loads, fd 1 is pointed at stderr, because libddcutil 1.4 prints to C stdout from its constructor. If the library can't be loaded, the tool falls back to the `ddcutil` command and shows a warning. Built in `tools/brightness/` (`brightctl`). |
@@ -79,6 +80,8 @@ GNOME 48 unless its author updates it.
 | tmux tool | `tools/tmux/` per issue #6: polled every 2 s, copy and kill-with-confirm per session. |
 | Shortcuts tool | `tools/shortcuts/` per issue #7: owns only `motherapp-*` custom keybindings; key capture via a custom page. |
 | Inbox tool | `tools/inbox/` per #11: own 127.0.0.1 listener exposed only via cloudflared (quick or named tunnel); hashed tokens, idle-only delivery, peer-message rule in CLAUDE.md. A narrow exception to the all-or-none network switch. |
+| Version scheme | **`v<N>-<hash>[-dirty]`** (#17): `<N>` is a hand-bumped number in `VERSION` (starts at `1`; the npm `0.1.0` fields are never shown), `<hash>` the short git hash, `-dirty` when `git status --porcelain` isn't empty at build time. `scripts/build-info.sh` computes it; `npm run build` and `install.sh` write the gitignored `build-info.json` (`version`, `hash`, `dirty`, `builtAt`), which the core reads at start (missing → `v?-unknown`). Shown in the sidebar footer, Settings, the "motherapp core starting" log entry, `motherapp --version` and `install.sh` (`OK version …`). The core caches the checkout's HEAD (`git rev-parse`, at most once a minute, "Check again" refreshes) and reports "running v1-abc1234, checkout is at v1-def5678, run `motherapp install`" via `version.get` and `/api/status`. |
+| `motherapp` command | `~/.local/bin/motherapp` (#17), written by `install.sh` like the tool wrappers; runs `scripts/motherapp.sh` (bash; Node only reads the core's status JSON). `install`/`update`: `git fetch` + `git pull --ff-only` on `main`, refusing on local changes, another branch or diverged history (never stashes, resets or merges), then `./install.sh --yes` (no `--allow-removals`), then old → new version, the new commits and the HTTP check; "already up to date" re-installs only when the build is missing or stale. Also `status`, `version`/`--version`, `check`, `logs`, `open`, `uninstall`, `help`. `make doctor`/`npm run doctor` are gone; `check` stays. |
 
 ## 4. Details
 

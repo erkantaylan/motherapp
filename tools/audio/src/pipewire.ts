@@ -146,6 +146,9 @@ export interface Device {
   title: string;
   /** Second line: node.nick when it adds something to the title (e.g. an HDMI monitor's name), else "". */
   subtitle: string;
+  /** Linear average channel volume from the node's Props, if it has reported one. */
+  linear?: number;
+  muted: boolean;
 }
 
 export interface AppStream {
@@ -254,7 +257,9 @@ export function buildView(objects: Iterable<PwObject>, opts: ViewOptions = {}): 
       const name = str(p["node.name"]);
       if (!name) continue;
       const { title, subtitle } = deviceTitles(p, name);
-      const dev: Device = { id: o.id, kind: cls === "Audio/Sink" ? "sink" : "source", name, title, subtitle };
+      const dev: Device = { id: o.id, kind: cls === "Audio/Sink" ? "sink" : "source", name, title, subtitle, muted: nodeMuted(o) };
+      const lin = nodeLinearVolume(o);
+      if (lin !== undefined) dev.linear = lin;
       (dev.kind === "sink" ? view.sinks : view.sources).push(dev);
     } else if (cls === "Stream/Output/Audio") {
       const role = str(p["media.role"]);
@@ -332,6 +337,50 @@ export function viewToState(view: AudioView): DerivedState {
     defaultSource: idOf(view.sources, view.defaultSourceName),
     apps,
   };
+}
+
+// ---- master volume: the default output and input ----
+//
+// State key "master": { output: {...}, input: {...} }, rendered as a two-row list at the top of
+// the page: a slider and a mute toggle per row, with a one-line "Acts on: <device>" caption.
+// Each item follows whichever device is the default. The caption is never empty, so nothing
+// on the page appears or vanishes while a slider is dragged (#12).
+
+export type MasterKind = "output" | "input";
+export const MASTER_KINDS: readonly MasterKind[] = ["output", "input"];
+export const MAX_MASTER_VOLUME = MAX_APP_VOLUME;
+
+const MASTER_ROLE: Record<MasterKind, { role: string; order: number; none: string }> = {
+  output: { role: "Output", order: 0, none: "No default output" },
+  input: { role: "Mic", order: 1, none: "No default input" },
+};
+
+/** The device the default metadata names, if it is in the graph. */
+export function defaultDevice(view: AudioView, kind: MasterKind): Device | undefined {
+  const [list, name] = kind === "output" ? [view.sinks, view.defaultSinkName] : [view.sources, view.defaultSourceName];
+  return name === undefined ? undefined : list.find((d) => d.name === name);
+}
+
+/** The percentage `wpctl get-volume` shows for a device (100 until its Props are known). */
+export function deviceVolume(d: Device): number {
+  return d.linear === undefined ? 100 : linearToPercent(d.linear);
+}
+
+/** A master row for this device; `undefined` device = the placeholder shown before any default is known. */
+export function masterItem(kind: MasterKind, d: Device | undefined): Dict {
+  const r = MASTER_ROLE[kind];
+  if (!d) return { role: r.role, order: r.order, id: "", caption: r.none, volume: 0, muted: false };
+  return { role: r.role, order: r.order, id: String(d.id), caption: `Acts on: ${d.title}`, volume: deviceVolume(d), muted: d.muted };
+}
+
+/** The master rows for the defaults present in the graph; a kind with no default is left out. */
+export function masterState(view: AudioView): Partial<Record<MasterKind, Dict>> {
+  const out: Partial<Record<MasterKind, Dict>> = {};
+  for (const k of MASTER_KINDS) {
+    const d = defaultDevice(view, k);
+    if (d) out[k] = masterItem(k, d);
+  }
+  return out;
 }
 
 // ---- lookups for the CLI and actions ----

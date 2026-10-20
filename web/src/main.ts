@@ -20,7 +20,15 @@ const menuBtn = h("button", { class: "menu-btn btn-outline theme-secondary btn-s
 menuBtn.type = "button";
 menuBtn.setAttribute("aria-label", "Toggle sidebar");
 menuBtn.setAttribute("aria-expanded", "false");
-const sidebar = h("aside", { class: "sidebar" }, h("div", { class: "brand", text: "motherapp" }), toolNav, h("div", { class: "spacer" }), builtinNav);
+// Sidebar footer: the running version (v1-abc1234); "update available" when the checkout moved on.
+const versionEl = h("div", { class: "sidebar-version muted fs-xs px-4 py-2" });
+const sidebar = h("aside", { class: "sidebar" }, h("div", { class: "brand", text: "motherapp" }), toolNav, h("div", { class: "spacer" }), builtinNav, versionEl);
+const showVersion = () => {
+  const v = app.version;
+  versionEl.textContent = v ? `${v.running.string}${v.status === "behind" ? " · update available" : ""}` : "";
+  versionEl.title = v ? (v.message ?? `built ${v.running.builtAt ?? "(unknown)"}`) : "";
+};
+app.onVersion(showVersion);
 const connBanner = h("div", { class: "conn-banner", text: "Disconnected from motherapp — reconnecting…" });
 const content = h("main", { class: "content" });
 const shell = h("div", { class: "shell" }, sidebar, h("div", { class: "main-col" }, h("div", { class: "topbar" }, menuBtn, h("span", { class: "brand", text: "motherapp" })), connBanner, content));

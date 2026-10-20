@@ -5,7 +5,7 @@ SERVICE := motherapp
 URL     := http://127.0.0.1:$(or $(MOTHERAPP_PORT),7323)/
 
 .DEFAULT_GOAL := help
-.PHONY: help install check doctor uninstall purge deps build test typecheck verify \
+.PHONY: help install check uninstall purge deps build test typecheck verify \
         dev start status restart stop logs open clean
 
 help: ## List targets
@@ -18,8 +18,6 @@ install: ## Check deps, install missing ones (asks first), build, set up the ser
 
 check: ## Report dependency and service status, change nothing
 	./install.sh --check
-
-doctor: check ## Same as check
 
 uninstall: ## Stop and remove the service, keep config and state
 	./install.sh --uninstall
@@ -67,4 +65,4 @@ open: ## Open the UI in the default browser
 	xdg-open $(URL)
 
 clean: ## Remove build output
-	rm -rf web/dist
+	rm -rf web/dist build-info.json

@@ -19,11 +19,15 @@ REAL_NODE="$(command -v node)" || { echo "Bail out! needs node on PATH"; exit 1;
 
 PASSED=0 FAILED=0 CASE="" C="" OUT="" CODE=0
 
+# git for the test's own repos: no system or user config, a fixed identity.
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+export GIT_AUTHOR_NAME=tester GIT_AUTHOR_EMAIL=tester@example.com GIT_COMMITTER_NAME=tester GIT_COMMITTER_EMAIL=tester@example.com
+
 # Real utilities the installer (and the stubs) may use; nothing else from the host is on PATH.
 SYSBIN="$TMP/sysbin"
 mkdir -p "$SYSBIN"
 for t in bash sh env cat cp mv rm mkdir rmdir ls ln chmod touch readlink dirname basename head \
-  tail tr cut sort uniq wc grep sed awk sleep install mktemp diff cmp uname find tee date printf; do
+  tail tr cut sort uniq wc grep sed awk sleep install mktemp diff cmp uname find tee date printf git; do
   p="$(command -v "$t")" && [[ $p == /* ]] && ln -s "$p" "$SYSBIN/$t"
 done
 
@@ -60,8 +64,9 @@ new_case() {
   C="$TMP/$CASE"
   R="$C/repo dir"            # space on purpose: quoting must hold
   HOME_="$C/home" ROOT="$C/root" FAKE="$C/fake" STUB="$C/stub"
-  mkdir -p "$R/packaging" "$HOME_" "$ROOT" "$FAKE"/{apt,dpkg,active,enabled} "$STUB"
-  cp "$REPO/install.sh" "$R/"
+  mkdir -p "$R/packaging" "$R/scripts" "$HOME_" "$ROOT" "$FAKE"/{apt,dpkg,active,enabled} "$STUB"
+  cp "$REPO/install.sh" "$REPO/VERSION" "$REPO/.gitignore" "$R/"
+  cp "$REPO/scripts/build-info.sh" "$REPO/scripts/motherapp.sh" "$R/scripts/"
   cp "$REPO/packaging/motherapp.service" "$R/packaging/"
   local t
   for t in "$REPO"/tools/*/manifest.json; do   # the real manifests (audio declares "bin")
@@ -158,12 +163,14 @@ case $cmd in
   disable) rm -f "$FAKE/enabled/$u" "$FAKE/active/$u" "$FAKE/http_up" ;;
 esac
 exit 0'
+  # $FAKE/api_status, when a case writes one, is the running core's /api/status answer.
   stub curl 'url="${*: -1}"; echo "curl $url" >>"$FAKE/calls"
 case $url in
   *nodesource*) echo FAKE-KEY ;;
+  http://127.0.0.1:*/api/status*) [[ -f $FAKE/api_status ]] || exit 7; cat "$FAKE/api_status" ;;
   http://127.0.0.1:*) [[ -f $FAKE/http_up ]] || exit 7 ;;
 esac'
-  stub journalctl 'echo "fake journal line"'
+  stub journalctl 'echo "journalctl $*" >>"$FAKE/calls"; echo "fake journal line"'
 }
 
 # run_installer [args...]  (stdin is passed through; default </dev/null)
@@ -176,6 +183,21 @@ run_installer() {
     MOTHERAPP_INSTALL_ROOT="$ROOT" MOTHERAPP_INSTALL_WAIT=1 "${EXTRA_ENV[@]}" \
     bash "$R/install.sh" "$@") >"$OUT" 2>&1
   CODE=$?
+}
+
+# run_motherapp [args...]  runs the checkout's scripts/motherapp.sh like the wrapper does, from
+# another directory, with the same fake machine as run_installer.
+run_motherapp() {
+  local path="$STUB:$SYSBIN"
+  [[ -n $NODE_PATH_DIR ]] && path="$NODE_PATH_DIR:$path"
+  OUT="$C/out.$(date +%s%N)"
+  (cd / && "$ENV_BIN" -i HOME="$HOME_" PATH="$path" FAKE="$FAKE" FAKE_STUB="$STUB" REAL_NODE="$REAL_NODE" \
+    MOTHERAPP_INSTALL_ROOT="$ROOT" "${EXTRA_ENV[@]}" bash "$R/scripts/motherapp.sh" "$@") >"$OUT" 2>&1
+  CODE=$?
+}
+
+git_commit_all() { # repo message
+  git -C "$1" add -A && git -C "$1" commit -q -m "$2"
 }
 
 # ------------------------------------------------------------------ assertions
@@ -235,6 +257,7 @@ check "--check after install: exit 0" exit_is 0
 check "--check: unit up to date" out_has '^OK +unit +.*up to date'
 check "--check: service active" out_has '^OK +service +active \(enabled\)'
 check "--check: wrapper up to date" out_has '^OK +audioctl +.*/\.local/bin/audioctl up to date'
+check "--check: motherapp wrapper up to date" out_has '^OK +motherapp +.*/\.local/bin/motherapp up to date'
 
 new_case node22
 NODE_PATH_DIR="$C/node22/bin"
@@ -523,6 +546,15 @@ check "no wrapper for the demo tool (no bin)" bash -c '! ls -A "$1" | grep -qi d
 WOUT="$("$ENV_BIN" -i "$(WRAP)" list "a b" 2>&1)"
 check "wrapper runs with an empty environment" test "$WOUT" = \
   "fake-node --disable-warning=ExperimentalWarning $R/tools/audio/audioctl.ts list a b"
+check "motherapp wrapper written" out_has "^OK +motherapp +wrote $HOME_/\\.local/bin/motherapp \\(node: "
+check "motherapp wrapper is executable" test -x "$(WRAP motherapp)"
+check "motherapp wrapper carries the marker on line 2" bash -c '[[ "$(sed -n 2p "$1")" == "$2" ]]' _ "$(WRAP motherapp)" "$MARKER"
+check "motherapp wrapper passes the chosen Node" file_has "$(WRAP motherapp)" "export MOTHERAPP_NODE=$(printf %q "$NODE_PATH_DIR/node")"
+check "motherapp wrapper execs scripts/motherapp.sh by absolute path" \
+  file_has "$(WRAP motherapp)" " $(printf %q "$R/scripts/motherapp.sh") \"\$@\""
+check "motherapp wrapper runs bash by absolute path" bash -c 'grep -qE "^exec /[^ ]*/bash " "$1"' _ "$(WRAP motherapp)"
+WOUT="$(cd / && "$ENV_BIN" -i "$(WRAP motherapp)" --version 2>&1)"
+check "motherapp wrapper runs from / with an empty environment" test "$WOUT" = "motherapp v1-unknown"
 check "\$HOME/.local/bin not on PATH: WARN" out_has '^WARN +bin-path +.*/\.local/bin is not on PATH'
 check "PATH WARN explains the re-login" out_has "fix: log out and back in: Ubuntu's ~/\\.profile adds ~/\\.local/bin"
 check "PATH WARN suggests the absolute path for shortcuts" out_has "absolute path, e\\.g\\. $HOME_/\\.local/bin/audioctl"
@@ -583,6 +615,8 @@ printf '#!/bin/sh\necho %s\n' "$MARKER" >"$(WRAP mine2)"   # marker text, but no
 run_installer --uninstall
 check "exit 0" exit_is 0
 check "marked wrapper removed" test ! -e "$(WRAP)"
+check "motherapp wrapper removed" test ! -e "$(WRAP motherapp)"
+check "motherapp removal reported" out_has '^OK +motherapp +removed .*/\.local/bin/motherapp'
 check "removal reported" out_has '^OK +audioctl +removed .*/\.local/bin/audioctl'
 check "unmarked files kept" test -f "$(WRAP mine)" -a -f "$(WRAP mine2)"
 check "the bin directory itself is kept" test -d "$HOME_/.local/bin"
@@ -769,6 +803,244 @@ check "unparsable list: list untouched" file_has "$FAKE/gs/list" "['/odd\"path/'
 printf '%s\n' "['/back\\\\slash/', '$SC_DIR/motherapp-x/']" >"$FAKE/gs/list"
 run_installer --check
 check "a backslash in a path: WARN, not misread" out_has "^WARN +shortcuts +can't read the custom-keybindings list safely"
+
+# ------------------------------------------------------------------ version (v<N>-<hash>[-dirty])
+
+json_field() { # file field -> the value as JSON
+  "$REAL_NODE" -e 'const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(JSON.stringify(j[process.argv[2]]))' "$1" "$2"
+}
+is_iso_utc() { [[ $1 =~ ^\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\"$ ]]; }
+
+check "package.json: npm run build writes build-info.json" file_has "$REPO/package.json" '"build": "bash scripts/build-info.sh --write && '
+check "VERSION is a plain number" bash -c '[[ "$(<"$1")" =~ ^[0-9]+$ ]]' _ "$REPO/VERSION"
+
+new_case version-no-git
+run_installer --yes
+check "not a git checkout: OK v1-unknown" out_has '^OK +version +v1-unknown \(not a git checkout'
+check "not a git checkout: hash unknown in build-info.json" test "$(json_field "$R/build-info.json" hash)" = '"unknown"'
+
+new_case version
+echo "notes" >"$R/README.md"
+git init -q -b main "$R" && git_commit_all "$R" "first"
+H="$(git -C "$R" rev-parse --short=7 HEAD)"
+check "build-info.sh prints the version string" test "$(bash "$R/scripts/build-info.sh")" = "v1-$H"
+run_installer --yes
+check "clean: OK version v1-<hash>" out_has "^OK +version +v1-$H\$"
+check "clean: the version row comes right after the build" \
+  bash -c 'grep -A1 -E "^OK +build " "$1" | grep -qE "^OK +version "' _ "$OUT"
+check "build-info.json: version" test "$(json_field "$R/build-info.json" version)" = '"1"'
+check "build-info.json: hash" test "$(json_field "$R/build-info.json" hash)" = "\"$H\""
+check "build-info.json: dirty false" test "$(json_field "$R/build-info.json" dirty)" = false
+check "build-info.json: builtAt is ISO 8601 UTC" is_iso_utc "$(json_field "$R/build-info.json" builtAt)"
+check "build-info.json: nothing else" test "$("$REAL_NODE" -e 'console.log(Object.keys(JSON.parse(require("fs").readFileSync(process.argv[1]))).join())' "$R/build-info.json")" = "version,hash,dirty,builtAt"
+check "the build leaves the tree clean (build output is gitignored)" test -z "$(git -C "$R" status --porcelain)"
+run_installer --check
+check "--check: built = checkout" out_has "^OK +version +built v1-$H, checkout at v1-$H\$"
+echo "local edit" >>"$R/README.md"
+check "build-info.sh: a local edit gives -dirty" test "$(bash "$R/scripts/build-info.sh")" = "v1-$H-dirty"
+run_installer --yes
+check "dirty: OK version v1-<hash>-dirty" out_has "^OK +version +v1-$H-dirty\$"
+check "dirty: build-info.json dirty true" test "$(json_field "$R/build-info.json" dirty)" = true
+git_commit_all "$R" "second"
+H2="$(git -C "$R" rev-parse --short=7 HEAD)"
+run_installer --check
+check "--check: checkout moved on: WARN" out_has "^WARN +version +built v1-$H-dirty, checkout is at v1-$H2\$"
+check "--check: points at motherapp install" out_has 'fix: motherapp install'
+echo 2 >"$R/VERSION"
+check "build-info.sh: the number comes from VERSION" test "$(bash "$R/scripts/build-info.sh")" = "v2-$H2-dirty"
+echo "x.y" >"$R/VERSION"
+check "build-info.sh: a bad VERSION gives v?" test "$(bash "$R/scripts/build-info.sh")" = "v?-$H2-dirty"
+
+# ------------------------------------------------------------------ the motherapp command
+
+# A fake "origin" (bare repo), a "seed" clone to push from, and the checkout "$R" cloned from
+# origin. The checkout's install.sh is a stub that writes build-info.json like the real one and
+# prints the rows `motherapp install` reads.
+upd_case() {
+  new_case "$1"
+  ORIGIN="$C/origin.git" SEED="$C/seed"
+  git init -q --bare -b main "$ORIGIN"
+  git clone -q "$ORIGIN" "$SEED" 2>/dev/null
+  mkdir -p "$SEED/scripts"
+  cp "$REPO/VERSION" "$REPO/.gitignore" "$SEED/"
+  cp "$REPO/scripts/build-info.sh" "$REPO/scripts/motherapp.sh" "$SEED/scripts/"
+  cat >"$SEED/install.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "install.sh $*" >>"$FAKE/calls"
+v="$(bash "$(dirname "$0")/scripts/build-info.sh" --write)"
+echo "OK       version              $v"
+if [[ -f $FAKE/http_broken ]]; then echo "FAIL     http                 http://127.0.0.1:7323/ didn't respond within 15s"; exit 1; fi
+echo "OK       http                 http://127.0.0.1:7323/ responds"
+echo "RESULT: OK (0 warning(s))"
+EOF
+  git -C "$SEED" checkout -q -b main 2>/dev/null
+  git_commit_all "$SEED" "first commit" && git -C "$SEED" push -q origin main 2>/dev/null
+  rm -rf "$R"
+  git clone -q "$ORIGIN" "$R" 2>/dev/null
+  (cd "$R" && FAKE="$FAKE" bash install.sh >/dev/null)   # the build that is "running"
+  : >"$FAKE/calls"
+  touch "$FAKE/active/motherapp.service" "$FAKE/enabled/motherapp.service"
+  H1="$(git -C "$R" rev-parse --short=7 HEAD)"
+}
+seed_commit() { # message
+  echo "$1" >>"$SEED/changes.txt"
+  git_commit_all "$SEED" "$1" && git -C "$SEED" push -q origin main 2>/dev/null
+}
+head_of() { git -C "$1" rev-parse HEAD; }
+
+upd_case upd-current
+run_motherapp install
+check "up to date: says so" out_has "^already up to date \\(v1-$H1, origin/main has nothing new\\)"
+check "up to date: fetched" out_has '\+ git fetch origin'
+check "up to date: install.sh not run" calls_lacks '^install\.sh'
+check "up to date: exit 0" exit_is 0
+run_motherapp update
+check "update is an alias" out_has '^already up to date'
+run_motherapp install --yes
+check "install takes no options: exit 2" exit_is 2
+rm "$R/build-info.json"
+run_motherapp install
+check "up to date but no build: says what it does" out_has "^already up to date with origin/main, but no build found \\(build-info\\.json is missing\\): running \\./install\\.sh --yes"
+check "up to date but no build: install.sh --yes ran" calls_has "install.sh --yes"
+check "up to date but no build: exit 0" exit_is 0
+: >"$FAKE/calls"
+rm "$FAKE/active/motherapp.service"
+run_motherapp install
+check "up to date but service stopped: re-installs" out_has "but the service isn't running: running \\./install\\.sh"
+check "up to date but service stopped: install.sh ran" calls_has "install.sh --yes"
+
+upd_case upd-pull
+seed_commit "add feature A"
+seed_commit "fix bug B"
+H3="$(git -C "$SEED" rev-parse --short=7 HEAD)"
+run_motherapp status
+check "status before the pull: the built line" out_has "^built +v1-$H1\$"
+check "status: service line" out_has '^service +active \(enabled\)'
+check "status: not behind before the pull (HEAD hasn't moved)" out_lacks 'run `motherapp install`'
+run_motherapp install
+check "pull: exit 0" exit_is 0
+check "pull: fast-forwarded" test "$(head_of "$R")" = "$(head_of "$SEED")"
+check "pull: ran git pull --ff-only" out_has '\+ git pull --ff-only origin main'
+check "pull: ran ./install.sh --yes" calls_has "install.sh --yes"
+check "pull: no --allow-removals" calls_lacks 'allow-removals'
+check "pull: old -> new" out_has "^    v1-$H1 → v1-$H3\$"
+check "pull: commit list, newest first" \
+  bash -c 'grep -A2 "^    commits:" "$1" | sed -n "2,3p" | sed -E "s/^      [0-9a-f]{7,} //" | tr "\n" "," | grep -qx "fix bug B,add feature A,"' _ "$OUT"
+check "pull: the first commit isn't listed" out_lacks '^      [0-9a-f]+ first commit'
+check "pull: HTTP check result" out_has '^    OK http http://127\.0\.0\.1:7323/ responds$'
+run_motherapp install
+check "pull, again: already up to date" out_has "^already up to date \\(v1-$H3,"
+seed_commit "broken release"
+touch "$FAKE/http_broken"
+run_motherapp install
+check "failing install: exit code passed on" exit_is 1
+check "failing install: HTTP failure shown" out_has "^    FAIL http http://127\\.0\\.0\\.1:7323/ didn't respond"
+check "failing install: says install.sh failed" out_has '\./install\.sh exited with 1'
+
+upd_case upd-dirty
+echo "scratch" >"$R/notes.txt"
+echo "tweak" >>"$R/VERSION"
+seed_commit "upstream change"
+before="$(head_of "$R")"
+run_motherapp install
+check "dirty: exit 1" exit_is 1
+check "dirty: refuses" out_has 'refusing: the checkout has local changes'
+check "dirty: lists the changes" out_has '^    \?\? notes\.txt$'
+check "dirty: says it never stashes" out_has 'never stashes, resets or merges'
+check "dirty: no pull" test "$(head_of "$R")" = "$before"
+check "dirty: no stash made" test -z "$(git -C "$R" stash list)"
+check "dirty: changes kept" bash -c 'test -f "$1/notes.txt" && grep -q tweak "$1/VERSION"' _ "$R"
+check "dirty: install.sh not run" calls_lacks '^install\.sh'
+
+upd_case upd-branch
+git -C "$R" switch -q -c feature
+run_motherapp install
+check "not main: exit 1" exit_is 1
+check "not main: refuses and names the branch" out_has "refusing: the checkout is on branch 'feature', not main"
+check "not main: install.sh not run" calls_lacks '^install\.sh'
+git -C "$R" switch -q --detach main
+run_motherapp install
+check "detached HEAD: refuses" out_has 'refusing: HEAD is detached'
+
+upd_case upd-diverged
+echo local >"$R/local.txt"
+git_commit_all "$R" "local commit"
+seed_commit "remote commit"
+before="$(head_of "$R")"
+run_motherapp install
+check "diverged: exit 1" exit_is 1
+check "diverged: refuses with the counts" out_has 'refusing: main and origin/main have diverged \(1 local and 1 remote commit\(s\)\)'
+check "diverged: HEAD unchanged" test "$(head_of "$R")" = "$before"
+check "diverged: no merge commit" test "$(git -C "$R" rev-list --count HEAD)" = 2
+check "diverged: install.sh not run" calls_lacks '^install\.sh'
+
+upd_case upd-ahead
+echo local >"$R/local.txt"
+git_commit_all "$R" "local commit"
+(cd "$R" && FAKE="$FAKE" bash install.sh >/dev/null)
+: >"$FAKE/calls"
+run_motherapp install
+check "only ahead: not refused, up to date" out_has '^already up to date'
+check "only ahead: mentions the unpushed commit" out_has 'main has 1 local commit\(s\) that aren.t on origin yet'
+
+upd_case upd-status
+seed_commit "new thing"
+git -C "$R" pull -q --ff-only origin main 2>/dev/null   # pulled by hand, not installed
+H2="$(git -C "$R" rev-parse --short=7 HEAD)"
+run_motherapp status
+check "status, core down: built vs checkout" out_has "^built v1-$H1, checkout is at v1-$H2, run \`motherapp install\`\$"
+cat >"$FAKE/api_status" <<EOF
+{"version":{"running":{"version":"1","hash":"$H1","dirty":false,"builtAt":"2026-10-20T10:00:00Z","string":"v1-$H1"},"checkout":{},"status":"behind"},
+ "tools":[{"id":"audio","title":"Audio","enabled":true,"status":"running"},
+          {"id":"brightness","title":"Brightness","enabled":true,"status":"failed","statusText":"5 crashes in 2 min"},
+          {"id":"demo","title":"Demo","enabled":false,"status":"stopped"}]}
+EOF
+run_motherapp status
+check "status, core up: running version" out_has "^running +v1-$H1\$"
+check "status, core up: the behind message" out_has "^running v1-$H1, checkout is at v1-$H2, run \`motherapp install\`\$"
+check "status: the checkout line" out_has "^checkout +v1-$H2 "
+check "status: a running tool" out_has '^  audio +running$'
+check "status: a crashed tool, with why" out_has '^  brightness +failed \(5 crashes in 2 min\)$'
+check "status: a disabled tool" out_has '^  demo +disabled$'
+check "status: asked the core for a fresh checkout" calls_has "api/status?refresh=1"
+check "status: exit 0 while active" exit_is 0
+git -C "$R" reset -q --hard "$H1"   # back where the running build is
+run_motherapp status
+check "status, current: no behind message" out_lacks 'run `motherapp install`'
+rm "$FAKE/active/motherapp.service" "$FAKE/api_status"
+run_motherapp status
+check "status, stopped: says so" out_has '^service +inactive'
+check "status, stopped: not running" out_has '^running +not running$'
+check "status, stopped: exit 1" exit_is 1
+
+upd_case upd-misc
+run_motherapp version
+check "version: the built version" test "$(cat "$OUT")" = "motherapp v1-$H1"
+run_motherapp --version
+check "--version" test "$(cat "$OUT")" = "motherapp v1-$H1"
+rm "$R/build-info.json"
+run_motherapp version
+check "version without a build: v?-unknown" out_has '^motherapp v\?-unknown \(no build-info\.json'
+check "version without a build: exit 0" exit_is 0
+run_motherapp help
+check "help: exit 0" exit_is 0
+check "help: lists install/update" out_has '^  install, update '
+check "help: no doctor" out_lacks doctor
+run_motherapp
+check "no command: help" out_has '^Usage: motherapp <command>'
+run_motherapp bogus
+check "unknown command: exit 2" exit_is 2
+run_motherapp check
+check "check runs install.sh --check" calls_has "install.sh --check"
+run_motherapp uninstall --purge
+check "uninstall passes options on" calls_has "install.sh --uninstall --purge"
+run_motherapp logs
+check "logs: journalctl -f -o cat" calls_has "journalctl --user -u motherapp -f -o cat"
+mkdir -p "$HOME_/.config/motherapp"
+echo '{ "port": 7999 }' >"$HOME_/.config/motherapp/config.json"
+stub xdg-open 'echo "xdg-open $*" >>"$FAKE/calls"'
+run_motherapp open
+check "open: the config.json port" calls_has "xdg-open http://127.0.0.1:7999/"
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 (( FAILED == 0 ))

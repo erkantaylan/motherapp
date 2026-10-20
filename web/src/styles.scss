@@ -135,6 +135,8 @@
   .w-text { margin: 0; }
   .w-text.heading { margin: var(--bs-spacer-5) 0 0; font-size: var(--bs-font-size-md); font-weight: 600; }
   .w-text.muted { color: var(--muted); }
+  // A bound text keeps one line while its value is absent (textWidget.ts, issue #12).
+  .w-text.reserve { min-height: 1lh; }
   .control { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4); align-items: center; }
   .control-label { min-width: 140px; margin: 0; }
   .list-row .control-label { min-width: 0; }
@@ -152,11 +154,18 @@
   }
   .list-row .meter { width: min(120px, 30vw); }
 
-  // status dot: setting / set / failed
+  // status dot: setting / set / failed. "set" fades out after ~2 s (DotStatus adds
+  // data-faded and keeps data-status, so the colour stays while the opacity runs down).
+  // The dot always keeps its 8px, so nothing around it moves. A new status removes
+  // data-faded, which shows the dot again at once (the transition is only on the way out).
   .dot { flex: none; width: 8px; height: 8px; background: transparent; border-radius: 50%; }
   .dot[data-status="setting"] { background: var(--bs-warning-base); animation: ma-pulse .8s ease-in-out infinite alternate; }
   .dot[data-status="set"] { background: var(--bs-success-base); }
   .dot[data-status="failed"] { cursor: help; background: var(--bs-danger-base); }
+  .dot[data-faded] { opacity: 0; transition: opacity .3s ease-out; }
+  @media (prefers-reduced-motion: reduce) {
+    .dot[data-faded] { transition: none; }
+  }
   @keyframes ma-pulse {
     from { opacity: .35; }
     to { opacity: 1; }
@@ -173,9 +182,22 @@
   .list-group:empty { display: none; }
   .list-row { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4) var(--bs-spacer-5); align-items: center; }
   .list-row.selected { background-color: color-mix(in oklch, var(--bs-primary-bg-subtle) 60%, var(--bs-bg-body)); }
-  .row-labels { flex: 1 1 160px; min-width: 0; }
-  .row-title { font-weight: 550; overflow-wrap: anywhere; }
-  .row-sub { font-size: var(--bs-font-size-sm); color: var(--muted); }
+  .row-labels { flex: 1 1 160px; min-width: 0; margin: 0; }
+  .row-title { display: block; font-weight: 550; overflow-wrap: anywhere; }
+  // A row whose title selects its radio (renderer.ts, issue #14): Bootstrap's list-group
+  // action look while the labels are hovered. Only the labels are a click target.
+  .row-selectable > .row-labels { cursor: pointer; }
+  .row-selectable:not(.selected):has(> .row-labels:hover) {
+    color: var(--bs-list-group-action-hover-color);
+    background-color: var(--bs-list-group-action-hover-bg);
+  }
+  .row-selectable:not(.selected):has(> .row-labels:active) {
+    color: var(--bs-list-group-action-active-color);
+    background-color: var(--bs-list-group-action-active-bg);
+  }
+  // One line, always: a note added to a subtitle must not make the row taller (issue #12).
+  // The full text is in the title attribute.
+  .row-sub { display: block; overflow: hidden; font-size: var(--bs-font-size-sm); color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
   .row-controls { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4); align-items: center; }
   .row-controls .control { gap: var(--bs-spacer-3); }
   .list-empty[hidden] { display: none; }

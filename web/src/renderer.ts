@@ -14,13 +14,15 @@ import type {
   Widget,
 } from "@motherapp/protocol";
 import { joinPath } from "@motherapp/protocol";
-import { ActionRunner } from "./actionRunner.ts";
+import { ActionRunner, DotStatus } from "./actionRunner.ts";
 import { KeyedList, listEntries } from "./keyedList.ts";
 import type { Row, RowHost } from "./keyedList.ts";
 import type { ToolStore } from "./store.ts";
 import { buttonStyle, clickButton, copyToClipboard } from "./button.ts";
 import type { CopyEnv } from "./button.ts";
 import { interpolate, interpolateWidget } from "./template.ts";
+import { textView } from "./textWidget.ts";
+import { rowSelectRadio } from "./rowSelect.ts";
 import type { TemplateContext } from "./template.ts";
 
 export interface RenderContext {
@@ -50,29 +52,33 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-/** Small status dot: setting / set / failed (message on hover). */
-export function statusDot(): { el: HTMLElement; set(status: ControlStatus, error?: string): void } {
+/**
+ * Small status dot: setting / set / failed (message on hover). `set` fades out after ~2 s
+ * (DotStatus); the dot keeps its space in every state, so nothing around it moves.
+ */
+export function statusDot(): { el: HTMLElement; set(status: ControlStatus, error?: string): void; dispose(): void } {
   const el = h("span", { class: "dot" });
   el.dataset.status = "idle";
-  return {
-    el,
-    set(status, error) {
+  const state = new DotStatus((status, error) => {
+    if (status === "idle") {
+      // Keep the last colour (data-status) while the opacity transition runs; see styles.scss.
+      if (el.dataset.status !== "idle") el.dataset.faded = "";
+      el.title = "";
+    } else {
+      delete el.dataset.faded;
       el.dataset.status = status;
-      el.title = status === "failed" ? `Failed: ${error ?? "unknown error"}` : status === "setting" ? "Setting…" : status === "set" ? "Set" : "";
-      el.setAttribute("aria-label", el.title);
-    },
-  };
+      el.title = status === "failed" ? `Failed: ${error ?? "unknown error"}` : status === "setting" ? "Setting…" : "Set";
+    }
+    if (el.title) el.setAttribute("aria-label", el.title);
+    else el.removeAttribute("aria-label");
+  });
+  return { el, set: (status, error) => state.set(status, error), dispose: () => state.cancel() };
 }
 
 function markStale(el: HTMLElement, stale: boolean): void {
   el.classList.toggle("stale", stale);
   if (stale) el.dataset.staleHint = "not confirmed yet";
   else delete el.dataset.staleHint;
-}
-
-function display(v: JsonValue | undefined): string {
-  if (v === undefined || v === null) return "";
-  return typeof v === "object" ? JSON.stringify(v) : String(v);
 }
 
 /** A labelled control row. With `target`, the label is a `<label for>` that names that input. */
@@ -113,8 +119,9 @@ function text(w: TextWidget, ctx: RenderContext): Mounted {
   const tag = w.style === "heading" ? "h3" : "p";
   const el = h(tag, { class: `w-text ${w.style ?? "body"}` });
   const update = () => {
-    const v = w.bind ? ctx.store.get(w.bind) : undefined;
-    el.textContent = v !== undefined ? display(v) : (w.text ?? "");
+    const view = textView(w, w.bind ? ctx.store.get(w.bind) : undefined);
+    el.textContent = view.text;
+    el.classList.toggle("reserve", view.reserve);
     if (w.bind) markStale(el, ctx.store.isStale(w.bind));
   };
   update();
@@ -249,7 +256,7 @@ function button(w: ButtonWidget, ctx: RenderContext): Mounted {
     });
   });
   const el = h("div", { class: "control w-button" }, btn, runner ? dot.el : null);
-  return { el, destroy: () => runner?.dispose() };
+  return { el, destroy: () => (runner?.dispose(), dot.dispose()) };
 }
 
 function toggle(w: ToggleWidget, ctx: RenderContext): Mounted {
@@ -273,7 +280,7 @@ function toggle(w: ToggleWidget, ctx: RenderContext): Mounted {
   el.classList.add("w-toggle");
   sync();
   const off = ctx.store.subscribe(w.bind, sync);
-  return { el, destroy: () => (off(), runner.dispose()) };
+  return { el, destroy: () => (off(), runner.dispose(), dot.dispose()) };
 }
 
 function slider(w: SliderWidget, ctx: RenderContext): Mounted {
@@ -328,6 +335,7 @@ function slider(w: SliderWidget, ctx: RenderContext): Mounted {
     destroy: () => {
       off();
       runner.dispose();
+      dot.dispose();
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     },
@@ -381,7 +389,7 @@ function radio(w: RadioWidget, ctx: RenderContext): Mounted {
   sync();
   if (single) queueMicrotask(sync); // the row exists once this widget is attached
   const off = ctx.store.subscribe(w.bind, sync);
-  return { el, destroy: () => (off(), runner.dispose()) };
+  return { el, destroy: () => (off(), runner.dispose(), dot.dispose()) };
 }
 
 function meter(w: MeterWidget, ctx: RenderContext): Mounted {
@@ -453,9 +461,12 @@ function list(w: ListWidget, ctx: RenderContext): Mounted {
     const path = joinPath(w.bind, key);
     const tctx = () => ({ key, path, item: current });
     let current = item;
-    const title = h("div", { class: "row-title" });
-    const sub = h("div", { class: "row-sub" });
-    const labels = h("div", { class: "row-labels" }, title, sub);
+    const title = h("span", { class: "row-title" });
+    const sub = h("span", { class: "row-sub" });
+    const widgets = (w.item.widgets ?? []).map((x) => interpolateWidget(x, tctx()));
+    // With one "default device" radio, the title and subtitle are its <label> (issue #14).
+    const selectIndex = rowSelectRadio(widgets);
+    const labels = h(selectIndex !== undefined ? "label" : "div", { class: "row-labels" }, title, sub);
     const controls = h("div", { class: "row-controls" });
     const node = h("div", { class: "list-group-item list-row" }, labels, controls);
     node.dataset.key = key;
@@ -463,12 +474,26 @@ function list(w: ListWidget, ctx: RenderContext): Mounted {
       const t = w.item.label ? interpolate(w.item.label, tctx()) : key;
       if (title.textContent !== t) title.textContent = t;
       const s = w.item.sublabel ? interpolate(w.item.sublabel, tctx()) : "";
-      if (sub.textContent !== s) sub.textContent = s;
+      if (sub.textContent !== s) {
+        sub.textContent = s;
+        sub.title = s; // the line is cut with an ellipsis when it doesn't fit
+      }
       sub.hidden = s === "";
     };
     setLabels();
-    const widgets = (w.item.widgets ?? []).map((x) => interpolateWidget(x, tctx()));
     const cleanup = renderWidgets(widgets, controls, { ...ctx, template: tctx });
+    const radioInput = selectIndex !== undefined ? controls.querySelector<HTMLInputElement>("input.radio") : null;
+    if (labels instanceof HTMLLabelElement && radioInput) {
+      // Clicks on the labels go to the radio (arrow keys stay native); the other controls are
+      // outside the <label>, so they never select the row. The title alone names the radio.
+      labels.htmlFor = radioInput.id;
+      node.classList.add("row-selectable");
+      title.id = `t${++uid}`;
+      sub.id = `s${uid}`;
+      radioInput.removeAttribute("aria-label");
+      radioInput.setAttribute("aria-labelledby", title.id);
+      radioInput.setAttribute("aria-describedby", sub.id);
+    }
     const staleSync = () => markStale(node, ctx.store.isStale(path));
     staleSync();
     return {

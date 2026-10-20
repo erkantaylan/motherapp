@@ -542,8 +542,8 @@
             "volume": 1,
             "mute": false,
             "channelVolumes": [
-              1,
-              1
+              0.343,
+              0.343
             ],
             "volumeBase": 1,
             "volumeStep": 0.000015,
@@ -704,8 +704,8 @@
             "volume": 1,
             "mute": false,
             "channelVolumes": [
-              1,
-              1
+              0.729,
+              0.729
             ],
             "volumeBase": 1,
             "volumeStep": 0.000015,
@@ -2191,8 +2191,8 @@
             "volume": 1,
             "mute": false,
             "channelVolumes": [
-              1,
-              1
+              0.343,
+              0.343
             ],
             "volumeBase": 1,
             "volumeStep": 0.000015,
@@ -2402,8 +2402,8 @@
             "volume": 1,
             "mute": false,
             "channelVolumes": [
-              1,
-              1
+              0.512,
+              0.512
             ],
             "volumeBase": 1,
             "volumeStep": 0.000015,
@@ -3216,6 +3216,706 @@
   {
     "id": 70,
     "info": null
+  },
+  {
+    "id": 34,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "props": {
+      "client.id": 33,
+      "factory.id": 13,
+      "metadata.name": "default",
+      "object.serial": 34
+    },
+    "metadata": [
+      {
+        "subject": 0,
+        "key": "default.audio.sink",
+        "type": "Spa:String:JSON",
+        "value": {
+          "name": "alsa_output.pci-0000_00_1f.3.analog-stereo"
+        }
+      }
+    ]
+  }
+]
+[
+  {
+    "id": 48,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "max-input-ports": 65,
+      "max-output-ports": 0,
+      "change-mask": [
+        "params"
+      ],
+      "n-input-ports": 2,
+      "n-output-ports": 2,
+      "state": "running",
+      "error": null,
+      "props": {
+        "alsa.card": 0,
+        "alsa.card_name": "HDA Intel PCH",
+        "alsa.class": "generic",
+        "alsa.device": 0,
+        "alsa.driver_name": "snd_hda_intel",
+        "alsa.id": "ALC1220 Analog",
+        "alsa.name": "ALC1220 Analog",
+        "alsa.resolution_bits": 16,
+        "alsa.subclass": "generic-mix",
+        "alsa.subdevice": 0,
+        "alsa.subdevice_name": "subdevice #0",
+        "api.alsa.card.name": "HDA Intel PCH",
+        "api.alsa.path": "front:0",
+        "api.alsa.pcm.card": 0,
+        "api.alsa.pcm.stream": "playback",
+        "audio.channels": 2,
+        "audio.position": "FL,FR",
+        "card.profile.device": 9,
+        "client.id": 33,
+        "device.api": "alsa",
+        "device.class": "sound",
+        "device.id": 42,
+        "device.profile.description": "Analog Stereo",
+        "device.profile.name": "analog-stereo",
+        "device.routes": 1,
+        "factory.id": 18,
+        "factory.mode": "merge",
+        "factory.name": "api.alsa.pcm.sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "node.description": "Built-in Audio Analog Stereo",
+        "node.driver": true,
+        "node.name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+        "node.nick": "ALC1220 Analog",
+        "node.pause-on-idle": false,
+        "object.path": "alsa:pcm:0:front:0:playback",
+        "object.serial": 49,
+        "port.group": "playback",
+        "priority.driver": 1009,
+        "priority.session": 1009,
+        "object.id": 48
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": {
+              "default": "F32P",
+              "alt1": [
+                "F32P",
+                "F32"
+              ]
+            },
+            "rate": {
+              "default": 48000,
+              "min": 1,
+              "max": 2147483647
+            },
+            "channels": 2
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": {
+              "default": 1,
+              "min": 0,
+              "max": 10
+            }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": false
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1,
+            "mute": false,
+            "channelVolumes": [
+              0.125,
+              0.125
+            ],
+            "volumeBase": 1,
+            "volumeStep": 0.000015,
+            "channelMap": [
+              "FL",
+              "FR"
+            ],
+            "softMute": false,
+            "softVolumes": [
+              0.512,
+              0.512
+            ],
+            "monitorMute": false,
+            "monitorVolumes": [
+              1,
+              1
+            ]
+          },
+          {
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.normalize",
+              false,
+              "resample.quality",
+              4
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32P",
+            "rate": 48000,
+            "channels": 2,
+            "position": [
+              "FL",
+              "FR"
+            ]
+          }
+        ],
+        "EnumPortConfig": [],
+        "PortConfig": [],
+        "Latency": [],
+        "ProcessLatency": [],
+        "Tag": []
+      }
+    }
+  }
+]
+[
+  {
+    "id": 48,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "max-input-ports": 65,
+      "max-output-ports": 0,
+      "change-mask": [
+        "params"
+      ],
+      "n-input-ports": 2,
+      "n-output-ports": 2,
+      "state": "running",
+      "error": null,
+      "props": {
+        "alsa.card": 0,
+        "alsa.card_name": "HDA Intel PCH",
+        "alsa.class": "generic",
+        "alsa.device": 0,
+        "alsa.driver_name": "snd_hda_intel",
+        "alsa.id": "ALC1220 Analog",
+        "alsa.name": "ALC1220 Analog",
+        "alsa.resolution_bits": 16,
+        "alsa.subclass": "generic-mix",
+        "alsa.subdevice": 0,
+        "alsa.subdevice_name": "subdevice #0",
+        "api.alsa.card.name": "HDA Intel PCH",
+        "api.alsa.path": "front:0",
+        "api.alsa.pcm.card": 0,
+        "api.alsa.pcm.stream": "playback",
+        "audio.channels": 2,
+        "audio.position": "FL,FR",
+        "card.profile.device": 9,
+        "client.id": 33,
+        "device.api": "alsa",
+        "device.class": "sound",
+        "device.id": 42,
+        "device.profile.description": "Analog Stereo",
+        "device.profile.name": "analog-stereo",
+        "device.routes": 1,
+        "factory.id": 18,
+        "factory.mode": "merge",
+        "factory.name": "api.alsa.pcm.sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "node.description": "Built-in Audio Analog Stereo",
+        "node.driver": true,
+        "node.name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+        "node.nick": "ALC1220 Analog",
+        "node.pause-on-idle": false,
+        "object.path": "alsa:pcm:0:front:0:playback",
+        "object.serial": 49,
+        "port.group": "playback",
+        "priority.driver": 1009,
+        "priority.session": 1009,
+        "object.id": 48
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": {
+              "default": "F32P",
+              "alt1": [
+                "F32P",
+                "F32"
+              ]
+            },
+            "rate": {
+              "default": 48000,
+              "min": 1,
+              "max": 2147483647
+            },
+            "channels": 2
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": {
+              "default": 1,
+              "min": 0,
+              "max": 10
+            }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": false
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1,
+            "mute": true,
+            "channelVolumes": [
+              0.125,
+              0.125
+            ],
+            "volumeBase": 1,
+            "volumeStep": 0.000015,
+            "channelMap": [
+              "FL",
+              "FR"
+            ],
+            "softMute": false,
+            "softVolumes": [
+              0.512,
+              0.512
+            ],
+            "monitorMute": false,
+            "monitorVolumes": [
+              1,
+              1
+            ]
+          },
+          {
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.normalize",
+              false,
+              "resample.quality",
+              4
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32P",
+            "rate": 48000,
+            "channels": 2,
+            "position": [
+              "FL",
+              "FR"
+            ]
+          }
+        ],
+        "EnumPortConfig": [],
+        "PortConfig": [],
+        "Latency": [],
+        "ProcessLatency": [],
+        "Tag": []
+      }
+    }
+  },
+  {
+    "id": 50,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 65,
+      "change-mask": [
+        "params"
+      ],
+      "n-input-ports": 0,
+      "n-output-ports": 2,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "alsa.card": 0,
+        "alsa.card_name": "HDA Intel PCH",
+        "alsa.class": "generic",
+        "alsa.device": 0,
+        "alsa.driver_name": "snd_hda_intel",
+        "alsa.id": "ALC1220 Analog",
+        "alsa.name": "ALC1220 Analog",
+        "alsa.resolution_bits": 16,
+        "alsa.subclass": "generic-mix",
+        "alsa.subdevice": 0,
+        "alsa.subdevice_name": "subdevice #0",
+        "api.alsa.card.name": "HDA Intel PCH",
+        "api.alsa.path": "front:0",
+        "api.alsa.pcm.card": 0,
+        "api.alsa.pcm.stream": "capture",
+        "audio.channels": 2,
+        "audio.position": "FL,FR",
+        "card.profile.device": 10,
+        "client.id": 33,
+        "device.api": "alsa",
+        "device.class": "sound",
+        "device.id": 42,
+        "device.profile.description": "Analog Stereo",
+        "device.profile.name": "analog-stereo",
+        "device.routes": 1,
+        "factory.id": 18,
+        "factory.mode": "merge",
+        "factory.name": "api.alsa.pcm.source",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Source",
+        "node.description": "Built-in Audio Analog Stereo",
+        "node.driver": true,
+        "node.name": "alsa_input.pci-0000_00_1f.3.analog-stereo",
+        "node.nick": "ALC1220 Analog",
+        "node.pause-on-idle": false,
+        "object.path": "alsa:pcm:0:front:0:capture",
+        "object.serial": 51,
+        "port.group": "capture",
+        "priority.driver": 2009,
+        "priority.session": 2009,
+        "object.id": 50
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": {
+              "default": "F32P",
+              "alt1": [
+                "F32P",
+                "F32"
+              ]
+            },
+            "rate": {
+              "default": 48000,
+              "min": 1,
+              "max": 2147483647
+            },
+            "channels": 2
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": {
+              "default": 1,
+              "min": 0,
+              "max": 10
+            }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": false
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1,
+            "mute": true,
+            "channelVolumes": [
+              0.216,
+              0.216
+            ],
+            "volumeBase": 1,
+            "volumeStep": 0.000015,
+            "channelMap": [
+              "FL",
+              "FR"
+            ],
+            "softMute": false,
+            "softVolumes": [
+              1,
+              1
+            ],
+            "monitorMute": false,
+            "monitorVolumes": [
+              1,
+              1
+            ]
+          },
+          {
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.normalize",
+              false,
+              "resample.quality",
+              4
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32P",
+            "rate": 48000,
+            "channels": 2,
+            "position": [
+              "FL",
+              "FR"
+            ]
+          }
+        ],
+        "EnumPortConfig": [],
+        "PortConfig": [],
+        "Latency": [],
+        "ProcessLatency": [],
+        "Tag": []
+      }
+    }
+  }
+]
+[
+  {
+    "id": 48,
+    "info": null
+  },
+  {
+    "id": 34,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "props": {
+      "client.id": 33,
+      "factory.id": 13,
+      "metadata.name": "default",
+      "object.serial": 34
+    },
+    "metadata": [
+      {
+        "subject": 0,
+        "key": "default.audio.sink",
+        "type": null,
+        "value": null
+      }
+    ]
+  }
+]
+[
+  {
+    "id": 48,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x",
+      "m"
+    ],
+    "info": {
+      "max-input-ports": 65,
+      "max-output-ports": 0,
+      "change-mask": [
+        "input-ports",
+        "output-ports",
+        "state",
+        "props",
+        "params"
+      ],
+      "n-input-ports": 2,
+      "n-output-ports": 2,
+      "state": "running",
+      "error": null,
+      "props": {
+        "alsa.card": 0,
+        "alsa.card_name": "HDA Intel PCH",
+        "alsa.class": "generic",
+        "alsa.device": 0,
+        "alsa.driver_name": "snd_hda_intel",
+        "alsa.id": "ALC1220 Analog",
+        "alsa.name": "ALC1220 Analog",
+        "alsa.resolution_bits": 16,
+        "alsa.subclass": "generic-mix",
+        "alsa.subdevice": 0,
+        "alsa.subdevice_name": "subdevice #0",
+        "api.alsa.card.name": "HDA Intel PCH",
+        "api.alsa.path": "front:0",
+        "api.alsa.pcm.card": 0,
+        "api.alsa.pcm.stream": "playback",
+        "audio.channels": 2,
+        "audio.position": "FL,FR",
+        "card.profile.device": 9,
+        "client.id": 33,
+        "device.api": "alsa",
+        "device.class": "sound",
+        "device.id": 42,
+        "device.profile.description": "Analog Stereo",
+        "device.profile.name": "analog-stereo",
+        "device.routes": 1,
+        "factory.id": 18,
+        "factory.mode": "merge",
+        "factory.name": "api.alsa.pcm.sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "node.description": "Built-in Audio Analog Stereo",
+        "node.driver": true,
+        "node.name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+        "node.nick": "ALC1220 Analog",
+        "node.pause-on-idle": false,
+        "object.path": "alsa:pcm:0:front:0:playback",
+        "object.serial": 49,
+        "port.group": "playback",
+        "priority.driver": 1009,
+        "priority.session": 1009,
+        "object.id": 48
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": {
+              "default": "F32P",
+              "alt1": [
+                "F32P",
+                "F32"
+              ]
+            },
+            "rate": {
+              "default": 48000,
+              "min": 1,
+              "max": 2147483647
+            },
+            "channels": 2
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": {
+              "default": 1,
+              "min": 0,
+              "max": 10
+            }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": false
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1,
+            "mute": false,
+            "channelVolumes": [
+              0.343,
+              0.343
+            ],
+            "volumeBase": 1,
+            "volumeStep": 0.000015,
+            "channelMap": [
+              "FL",
+              "FR"
+            ],
+            "softMute": false,
+            "softVolumes": [
+              0.512,
+              0.512
+            ],
+            "monitorMute": false,
+            "monitorVolumes": [
+              1,
+              1
+            ]
+          },
+          {
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.normalize",
+              false,
+              "resample.quality",
+              4
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32P",
+            "rate": 48000,
+            "channels": 2,
+            "position": [
+              "FL",
+              "FR"
+            ]
+          }
+        ],
+        "EnumPortConfig": [],
+        "PortConfig": [],
+        "Latency": [],
+        "ProcessLatency": [],
+        "Tag": []
+      }
+    }
   },
   {
     "id": 34,
