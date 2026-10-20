@@ -240,7 +240,7 @@ export async function harness(opts: { settings?: Partial<Settings>; service?: Pa
     out.push(...parts.filter(Boolean));
   });
   const tool = createTool({ id: "inbox", title: "Inbox", initialState: INITIAL_STATE, persist: false, input, output, captureConsole: false });
-  const settings: Settings = { ...defaultSettings(), port: 0, sendDelayMs: 0, verifyDelayMs: 0, ...opts.settings };
+  const settings: Settings = { ...defaultSettings(), port: 0, sendDelayMs: 0, verifyDelayMs: 0, checkScreen: true, ...opts.settings };
   const service = new InboxService({
     tool,
     panes: new TmuxPanes({ runner, exists: () => true }),

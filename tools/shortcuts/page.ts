@@ -1,17 +1,21 @@
 /// <reference lib="dom" />
 // The shortcuts tool's custom page (a light-DOM custom element, docs/extension-contract.md § 6).
 // A form to add or edit a motherapp shortcut (suggested command, name, command, key capture,
-// live conflict warnings), then the motherapp shortcuts and the read-only rest. Styled only
-// with the documented theme variables. Remove buttons come from ctx.render, so they get the
-// shell's confirm dialog and status dot.
+// live conflict warnings), then the motherapp shortcuts and the read-only rest, both in
+// collapsible groups (src/groups.ts; which groups are open is remembered per browser). Styled
+// with the documented theme variables plus Bootstrap 6 badges. Remove buttons come from
+// ctx.render, so they get the shell's confirm dialog and status dot.
 import type { JsonValue } from "@motherapp/protocol";
 import type { PageContext } from "@motherapp/protocol/page";
 import { accelLabel, bindingProblem, bindingWarning, captureKey } from "./src/accel.ts";
 import { commandFromLine } from "./src/command.ts";
 import { conflictsFor } from "./src/conflicts.ts";
 import type { BindingUse } from "./src/conflicts.ts";
+import { COLLAPSE_AT, groupProblem, groupShortcuts, plural, splitPrefix } from "./src/groups.ts";
+import type { Entry, Group } from "./src/groups.ts";
 
 interface Row {
+  id: string;
   path: string;
   name: string;
   command: string;
@@ -48,7 +52,7 @@ const STYLE = `
 .msc input:focus, .msc select:focus, .msc-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .msc .msc-mono, .msc code, .msc kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .msc code { font-size: 0.85em; word-break: break-all; }
-.msc kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 6px; background: var(--bg);
+.msc kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 6px; background: var(--bg); color: var(--fg);
   font-size: 0.85em; white-space: nowrap; }
 .msc-btn { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--fg);
   cursor: pointer; font: inherit; white-space: nowrap; }
@@ -73,7 +77,39 @@ const STYLE = `
 .msc-row .msc-full { flex: 1 1 100%; min-width: 0; }
 .msc-row .msc-buttons { display: flex; gap: 8px; align-items: center; }
 .msc-stale { opacity: 0.6; }
+.msc-group { border-top: 1px solid var(--border); }
+.msc-group:first-child { border-top: 0; }
+.msc-group-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; padding: 8px 4px; margin: 0;
+  border: 0; border-radius: 6px; background: none; color: var(--fg); font: inherit; text-align: start; cursor: pointer; }
+.msc-group-head:hover { background: var(--bg); }
+.msc-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.msc-caret { display: inline-block; width: 1em; color: var(--muted); }
+.msc-group-keys { color: var(--muted); font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.msc-group-head[aria-expanded="true"] .msc-group-conflicts { display: none; }
+.msc-group-body { padding-left: 1.5em; }
+.msc-group-body > .msc-row { border-top-style: dashed; }
+.msc-group-body > .msc-row:first-of-type { border-top: 1px dashed var(--border); }
 `;
+
+/** localStorage key: which groups the viewer opened or closed ({ "own:audio": true, … }). */
+const OPEN_KEY = "motherapp.shortcuts.openGroups";
+
+function loadOpen(): Record<string, boolean> {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(OPEN_KEY) ?? "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveOpen(v: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify(v));
+  } catch {
+    // a private window or blocked storage: the choice just isn't remembered
+  }
+}
 
 /** Braces in user text would be read as {placeholders} by the confirm template. */
 const noPlaceholders = (s: string) => s.replace(/\{/g, "{​");
@@ -102,11 +138,14 @@ export default class ShortcutsPage extends HTMLElement {
   private editing: string | undefined;
   private recording = false;
   private chosen: Suggestion | undefined;
+  private open = loadOpen();
 
   private root = el("div", { class: "msc" });
   private status = el("p", { class: "msc-err" });
   private formTitle = el("h3", { text: "Add a shortcut" });
   private suggest = el("select");
+  private group = el("input");
+  private groupList = el("datalist");
   private name = el("input");
   private command = el("input", { class: "msc-mono" });
   private preview = el("div", { class: "msc-preview" });
@@ -127,6 +166,10 @@ export default class ShortcutsPage extends HTMLElement {
     kb?.getLayoutMap?.().then((m) => (this.layout = m)).catch(() => {});
 
     this.name.placeholder = "Mute Firefox";
+    this.group.placeholder = "None";
+    this.groupList.id = "msc-group-names";
+    this.group.setAttribute("list", this.groupList.id);
+    this.group.autocomplete = "off";
     this.command.placeholder = "audioctl app-mute firefox toggle";
     this.command.spellcheck = false;
     this.accel.placeholder = "<Control><Shift>F9";
@@ -134,6 +177,7 @@ export default class ShortcutsPage extends HTMLElement {
     for (const [input, label] of [
       [this.suggest, "Suggested command"],
       [this.name, "Name"],
+      [this.group, "Group"],
       [this.command, "Command"],
       [this.accel, "Key combination"],
     ] as const) {
@@ -155,6 +199,10 @@ export default class ShortcutsPage extends HTMLElement {
       this.suggest,
       label("Name", this.name),
       this.name,
+      label("Group (optional)", this.group),
+      this.group,
+      this.groupList,
+      el("div", { class: "msc-preview", text: 'Saved in the name as "Group: name", so GNOME Settings shows it too.' }),
       label("Command", this.command),
       this.command,
       this.preview,
@@ -178,7 +226,7 @@ export default class ShortcutsPage extends HTMLElement {
     this.append(this.root);
 
     this.suggest.addEventListener("change", () => this.pickSuggestion());
-    for (const i of [this.name, this.command, this.accel]) i.addEventListener("input", () => this.validate());
+    for (const i of [this.name, this.group, this.command, this.accel]) i.addEventListener("input", () => this.validate());
     this.record.addEventListener("click", () => (this.recording ? this.stopRecording() : this.startRecording()));
     this.record.addEventListener("keydown", (e) => this.onKey(e));
     this.record.addEventListener("blur", () => this.stopRecording());
@@ -310,6 +358,8 @@ export default class ShortcutsPage extends HTMLElement {
     this.preview.replaceChildren();
     if (p.command) this.preview.append("GNOME will run: ", el("code", { text: p.command }));
     if (p.error) notes.push(["msc-err", p.error]);
+    const gp = groupProblem(this.group.value);
+    if (gp) notes.push(["msc-err", gp]);
     const binding = this.accel.value.trim();
     if (binding) {
       const problem = bindingProblem(binding);
@@ -326,7 +376,7 @@ export default class ShortcutsPage extends HTMLElement {
       notes.push(["msc-warn", `${this.chosen.bin} isn't installed in ${String(ctx.get("binDir"))} yet: run ./install.sh.`]);
     }
     this.notes.replaceChildren(...notes.map(([cls, text]) => el("li", { class: cls, text })));
-    const ok = this.name.value.trim() !== "" && !!p.command && binding !== "" && !bindingProblem(binding);
+    const ok = this.name.value.trim() !== "" && !gp && !!p.command && binding !== "" && !bindingProblem(binding);
     this.submit.disabled = !ok;
     return ok;
   }
@@ -340,6 +390,7 @@ export default class ShortcutsPage extends HTMLElement {
     this.suggest.disabled = false;
     this.suggest.value = "";
     this.name.value = "";
+    this.group.value = "";
     this.command.value = "";
     this.accel.value = "";
     this.validate();
@@ -352,7 +403,9 @@ export default class ShortcutsPage extends HTMLElement {
     this.submit.textContent = "Save changes";
     this.cancel.hidden = false;
     this.suggest.value = "";
-    this.name.value = row.name;
+    const pre = splitPrefix(row.name);
+    this.group.value = pre?.group ?? "";
+    this.name.value = pre?.rest ?? row.name;
     this.command.value = row.command;
     this.accel.value = row.binding;
     this.result.textContent = "";
@@ -370,11 +423,14 @@ export default class ShortcutsPage extends HTMLElement {
       let r: JsonValue;
       if (this.editing) {
         const row = asMap<Row>(ctx.get("shortcuts"))[this.editing];
-        const args: Record<string, string> = { id: this.editing, name: this.name.value, binding: this.accel.value.trim() };
+        // The group always goes along, so emptying the field takes the shortcut out of its group.
+        const args: Record<string, string> = { id: this.editing, name: this.name.value, group: this.group.value, binding: this.accel.value.trim() };
         if (!row || this.command.value !== row.command) args.command = this.command.value;
         r = await ctx.action("edit", args);
       } else {
-        r = await ctx.action("add", { name: this.name.value, binding: this.accel.value.trim(), command: this.command.value });
+        const args: Record<string, string> = { name: this.name.value, binding: this.accel.value.trim(), command: this.command.value };
+        if (this.group.value.trim()) args.group = this.group.value;
+        r = await ctx.action("add", args);
       }
       const warnings = (r as { warnings?: string[] } | null)?.warnings ?? [];
       const what = this.editing ? "Saved." : "Added. Press the keys to try it.";
@@ -392,22 +448,70 @@ export default class ShortcutsPage extends HTMLElement {
 
   private renderRows(): void {
     const ctx = this.ctx!;
+    const focused = (document.activeElement as HTMLElement | null)?.dataset?.group;
     this.rowCleanups.forEach((f) => f());
     this.rowCleanups = [];
-    const rows = Object.entries(asMap<Row>(ctx.get("shortcuts"))).sort(([, a], [, b]) => a.order - b.order);
+    const rows = Object.entries(asMap<Row>(ctx.get("shortcuts"))).map(([id, r]) => ({ ...r, id }));
+    const binTools = asMap<string>(ctx.get("binTools"));
     const stale = ctx.isStale("shortcuts");
     this.owned.classList.toggle("msc-stale", stale);
     this.foreign.classList.toggle("msc-stale", stale);
-    const mine = rows.filter(([, r]) => r.owned);
-    const theirs = rows.filter(([, r]) => !r.owned);
-    this.owned.replaceChildren(...(mine.length ? mine.map(([id, r]) => this.ownedRow(id, r)) : [el("p", { class: "msc-muted", text: "None yet. Add one above." })]));
-    this.foreign.replaceChildren(...(theirs.length ? theirs.map(([, r]) => this.foreignRow(r)) : [el("p", { class: "msc-muted", text: "None." })]));
-    if (this.editing && !mine.some(([id]) => id === this.editing)) this.resetForm();
+    const mine = groupShortcuts(rows.filter((r) => r.owned), binTools);
+    const theirs = groupShortcuts(rows.filter((r) => !r.owned), binTools);
+    this.owned.replaceChildren(...(mine.length ? mine.map((e) => this.entry("own", e, (r, label) => this.ownedRow(r.id, r, label))) : [el("p", { class: "msc-muted", text: "None yet. Add one above." })]));
+    this.foreign.replaceChildren(...(theirs.length ? theirs.map((e) => this.entry("other", e, (r, label) => this.foreignRow(r, label))) : [el("p", { class: "msc-muted", text: "None." })]));
+    // Every group name and prefix in use, for the form's Group field.
+    const names = new Set<string>();
+    for (const e of [...mine, ...theirs]) if (e.kind === "group") names.add(e.name);
+    for (const r of rows) {
+      const p = splitPrefix(r.name);
+      if (p) names.add(p.group);
+    }
+    this.groupList.replaceChildren(...[...names].sort((a, b) => a.localeCompare(b)).map((n) => new Option(n)));
+    if (focused) this.querySelector<HTMLElement>(`[data-group="${CSS.escape(focused)}"]`)?.focus();
+    if (this.editing && !rows.some((r) => r.owned && r.id === this.editing)) this.resetForm();
     else this.validate();
   }
 
-  private common(r: Row): HTMLElement[] {
-    const out: HTMLElement[] = [el("span", { class: "msc-name", text: r.name || "(no name)" }), el("kbd", { text: r.label, class: "" })];
+  private entry(card: string, e: Entry<Row>, row: (r: Row, label: string) => HTMLElement): HTMLElement {
+    return e.kind === "single" ? row(e.item, e.label) : this.groupEl(`${card}:${e.key}`, e, row);
+  }
+
+  private groupEl(key: string, g: Group<Row>, row: (r: Row, label: string) => HTMLElement): HTMLElement {
+    const head = el("button", { class: "msc-group-head" });
+    head.type = "button";
+    head.dataset.group = key;
+    const body = el("div", { class: "msc-group-body" }, ...g.members.map((m) => row(m.item, m.label)));
+    body.id = `msc-g-${key.replace(/[^a-z0-9_-]/gi, (c) => `_${c.codePointAt(0)!.toString(16)}`)}`;
+    body.setAttribute("role", "group");
+    body.setAttribute("aria-label", g.name);
+    head.setAttribute("aria-controls", body.id);
+    const count = el("span", { class: "badge badge-subtle theme-secondary", text: plural(g.members.length, "shortcut") });
+    const keys = el("span", { class: "msc-group-keys", text: g.keys });
+    const caret = el("span", { class: "msc-caret" });
+    caret.setAttribute("aria-hidden", "true");
+    const parts: HTMLElement[] = [caret, el("span", { class: "msc-name", text: g.name }), count, keys];
+    if (g.conflicts) parts.push(el("span", { class: "msc-group-conflicts badge badge-subtle theme-warning", text: plural(g.conflicts, "conflict") }));
+    head.append(...parts);
+    const set = (open: boolean) => {
+      head.setAttribute("aria-expanded", String(open));
+      caret.textContent = open ? "▾" : "▸";
+      body.hidden = !open;
+    };
+    set(this.open[key] ?? g.members.length < COLLAPSE_AT);
+    head.addEventListener("click", () => {
+      const open = head.getAttribute("aria-expanded") !== "true";
+      set(open);
+      this.open[key] = open;
+      saveOpen(this.open);
+    });
+    return el("div", { class: "msc-group" }, head, body);
+  }
+
+  private common(r: Row, label = r.name): HTMLElement[] {
+    const name = el("span", { class: "msc-name", text: label || "(no name)" });
+    if (label !== r.name) name.title = r.name;
+    const out: HTMLElement[] = [name, el("kbd", { text: r.label, class: "" })];
     out[1]!.title = r.binding;
     const full: HTMLElement[] = [el("code", { text: r.command || "(no command)" })];
     if (r.error) full.push(el("div", { class: "msc-err", text: `Can't read this entry: ${r.error}` }));
@@ -416,7 +520,7 @@ export default class ShortcutsPage extends HTMLElement {
     return [...out, el("span", { class: "msc-grow" }), el("div", { class: "msc-full" }, ...full)];
   }
 
-  private ownedRow(id: string, r: Row): HTMLElement {
+  private ownedRow(id: string, r: Row, label?: string): HTMLElement {
     const edit = button("Edit");
     edit.addEventListener("click", () => this.startEdit(id, r));
     const remove = el("span");
@@ -434,12 +538,12 @@ export default class ShortcutsPage extends HTMLElement {
         remove,
       ),
     );
-    const [name, kbd, grow, full] = this.common(r);
+    const [name, kbd, grow, full] = this.common(r, label);
     return el("div", { class: "msc-row" }, name!, kbd!, grow!, el("span", { class: "msc-buttons" }, edit, remove), full!);
   }
 
-  private foreignRow(r: Row): HTMLElement {
-    const [name, kbd, grow, full] = this.common(r);
+  private foreignRow(r: Row, label?: string): HTMLElement {
+    const [name, kbd, grow, full] = this.common(r, label);
     return el("div", { class: "msc-row" }, name!, kbd!, grow!, el("span", { class: "msc-muted", text: "read-only" }), full!);
   }
 }

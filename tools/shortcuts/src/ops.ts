@@ -10,6 +10,7 @@ import type { CommandContext } from "./command.ts";
 import { conflictsFor } from "./conflicts.ts";
 import type { BindingUse } from "./conflicts.ts";
 import { GnomeError } from "./gnome.ts";
+import { groupProblem, joinGroup, splitPrefix } from "./groups.ts";
 import { readToolCommands } from "./suggestions.ts";
 import type { ToolCommands } from "./suggestions.ts";
 
@@ -56,6 +57,18 @@ export function checkBinding(binding: unknown): string {
   const p = bindingProblem(b);
   if (p) throw new GnomeError(p);
   return b;
+}
+
+/**
+ * The name to store when a group is given ("<Group>: <name>"; "" = no group). Without a new
+ * name (an edit that only changes the group), the current name's old prefix is replaced.
+ */
+export function groupedName(group: unknown, name: string | undefined, current = ""): string {
+  if (typeof group !== "string") throw new GnomeError("group must be a string");
+  const p = groupProblem(group);
+  if (p) throw new GnomeError(p);
+  const base = name ?? splitPrefix(current)?.rest ?? current;
+  return joinGroup(group, base);
 }
 
 /** Text for a missing program, or "" (absolute paths only; a bare name is looked up on PATH). */

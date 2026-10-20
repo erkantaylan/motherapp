@@ -2,11 +2,12 @@
 // Holds no domain logic.
 import { EventEmitter } from "node:events";
 import type { JsonObject, JsonValue, ProgressParams, StateChange, ToolInfo } from "@motherapp/protocol";
-import { loadConfig, saveConfig } from "./config.ts";
+import { loadConfig, updateConfigFile } from "./config.ts";
 import type { Config } from "./config.ts";
 import type { LogService } from "./logService.ts";
 import { discoverTools } from "./manifest.ts";
 import type { DiscoveredTool } from "./manifest.ts";
+import { mergeOrder, orderToSave } from "./toolOrder.ts";
 import { ToolHost } from "./toolHost.ts";
 import type { Clock, SpawnFn } from "./toolHost.ts";
 import type { RestartPolicyOptions } from "./restartPolicy.ts";
@@ -107,14 +108,71 @@ export class Manager extends EventEmitter<ManagerEvents> {
     return info;
   }
 
+  /** Tool ids in display order (issue #20; rules in toolOrder.ts). */
+  order(): string[] {
+    const tools = [...this.hosts.values()].map((h) => (h.manifest.order === undefined ? { id: h.id } : { id: h.id, order: h.manifest.order }));
+    return mergeOrder(tools, this.config.order);
+  }
+
+  /** True when the user has saved an order (so "Reset to default order" has something to do). */
+  get orderSaved(): boolean {
+    return (this.config.order?.length ?? 0) > 0;
+  }
+
+  /** Every tool, in display order. */
   list(): ToolInfo[] {
-    return [...this.hosts.values()].map((h) => this.info(h));
+    return this.order().map((id) => this.info(this.hosts.get(id)!));
+  }
+
+  /**
+   * Saves a new order as config.json's `order` (other keys kept). Unknown ids are dropped, and
+   * tools the request left out follow in their current order.
+   */
+  setOrder(requested: unknown): void {
+    let order: string[];
+    try {
+      order = orderToSave(requested, this.order());
+    } catch (e) {
+      throw new RpcError(ErrorCode.InvalidParams, (e as Error).message);
+    }
+    this.writeConfig((raw) => {
+      raw.order = order;
+    });
+    this.config.order = order;
+    this.opts.log.core("info", "tool order changed", { order });
+    this.emit("tools");
+  }
+
+  /** Forgets the saved order: back to the manifest hints, then alphabetical. */
+  resetOrder(): void {
+    this.writeConfig((raw) => {
+      delete raw.order;
+    });
+    delete this.config.order;
+    this.opts.log.core("info", "tool order reset to default", { order: this.order() });
+    this.emit("tools");
+  }
+
+  /** Edits config.json in place (other keys kept); a failure becomes an error for the caller. */
+  private writeConfig(patch: (raw: Record<string, unknown>) => void): void {
+    try {
+      updateConfigFile(this.opts.configFile, patch);
+    } catch (e) {
+      this.opts.log.core("error", `cannot save config: ${(e as Error).message}`, { file: this.opts.configFile });
+      throw new RpcError(ErrorCode.ActionFailed, `Not saved: ${(e as Error).message}`);
+    }
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<void> {
     const host = this.host(id);
+    this.writeConfig((raw) => {
+      const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+      const tools = isObj(raw.tools) ? raw.tools : {};
+      const prev = tools[id];
+      tools[id] = { ...(isObj(prev) ? prev : {}), enabled };
+      raw.tools = tools;
+    });
     this.config.tools[id] = { enabled };
-    saveConfig(this.opts.configFile, this.config);
     this.opts.log.core("info", enabled ? "enabled" : "disabled", undefined, id);
     if (enabled) host.start();
     else await host.stop();

@@ -125,6 +125,12 @@ export function accelLabel(s: string): string {
   return [...a.mods.map((m) => MOD_LABEL[m]), keyLabel(a.key)].join("+");
 }
 
+/** The two halves of accelLabel(): { mods: "Ctrl+Shift", key: "F9" } (mods "" without any); null when it doesn't parse. */
+export function accelParts(s: string): { mods: string; key: string } | null {
+  const a = parseAccel(s);
+  return a ? { mods: a.mods.map((m) => MOD_LABEL[m]).join("+"), key: keyLabel(a.key) } : null;
+}
+
 function keyLabel(k: string): string {
   if (KEY_LABEL[k]) return KEY_LABEL[k]!;
   const ch = CHAR_FROM_KEYSYM[k];

@@ -29,6 +29,7 @@ tools/<id>/
 | `serve` | Command line, relative to the tool dir. `"node"` means the Node that runs the core (so systemd's PATH doesn't matter). A command with a `/` is resolved against the tool dir. Any language works. |
 | `page` | Optional custom page module (see § 6). |
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
+| `order` | Optional number, a default sidebar position hint: lower comes first, and tools without one follow alphabetically by id. It applies only until the user re-orders the tools on the Settings page; after that their saved order rules, and a newly installed tool is appended at the end (alphabetically among other new ones), hint or not. Audio has `"order": 1` so it comes first out of the box. |
 | `bin` | Optional. `{ "<command>": "<script relative to the tool dir>" }`, e.g. `{"audioctl": "audioctl.ts"}`. For each entry `install.sh` writes `~/.local/bin/<command>`, a bash wrapper that runs the script with the installer's Node 24 by absolute path (so an older `node` on PATH or a keyboard shortcut's minimal PATH doesn't matter), and `--uninstall` removes it. The script must be a Node script; the command name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and must be unique across tools. The core ignores this field. |
 
 | `commands` | Optional. Suggested invocations of the tool's `bin` commands that are worth binding to a key: `{ "<command>": [{ "title": "<what it does>", "args": ["<arg>", …] }] }`, keyed by a command from `bin`. The shortcuts tool (`tools/shortcuts/`) offers them in its "Suggested command" list and writes the command as the `~/.local/bin` wrapper's absolute path plus the quoted `args`. Keep `title` short and imperative. The core and the installer ignore this field. |
@@ -45,7 +46,11 @@ tools/<id>/
 
 The core reads `tools/*/manifest.json` at startup. Enabled/disabled is stored in
 `~/.config/motherapp/config.json` (`{"port": 7323, "tools": {"<id>": {"enabled": true}}}`) and can
-be changed on the Settings page. Unknown manifest fields are ignored. After adding a tool, run `npm install` once at the repo root
+be changed on the Settings page. The sidebar order the user sets there (drag or the arrow
+buttons) is saved in the same file as `"order": ["audio", "brightness", …]`; ids of tools that no
+longer exist are ignored and dropped on the next save, and "Reset to default order" removes the
+key. The core writes the file atomically and keeps every key it doesn't know. Logs and Settings
+are core pages and always sit at the bottom of the sidebar. Unknown manifest fields are ignored. After adding a tool, run `npm install` once at the repo root
 (the tool is a workspace) and restart the core.
 
 ## 2. Serve mode: messages
@@ -296,13 +301,14 @@ forms, buttons, list group, nav, badge, dialog, toast, progress, theme colors, a
 utilities): see `web/src/styles.scss` and `web/src/_utilities-subset.scss`. Bootstrap's
 JavaScript is not loaded.
 
-`tools/shortcuts/page.ts` is a working example: its own form and rows, styled only with the
-theme variables above (an unlayered `<style>` scoped by a class on its root, so it doesn't
-depend on Bootstrap's classes),
+`tools/shortcuts/page.ts` is a working example: its own form and rows, styled with the theme
+variables above (an unlayered `<style>` scoped by a class on its root) plus Bootstrap's
+`badge` classes, collapsible groups whose headers are buttons with `aria-expanded`, the open
+ones remembered in `localStorage` (wrapped in try/catch),
 plus `ctx.render` for single `button` widgets, so Remove gets the shell's confirm dialog and
 status dot. Outside a list a button's `confirm` has no row, so text you put in it must not
 contain `{word}` placeholders (that page inserts a zero-width space after each `{`). Logic the
-page and the tool share (`src/accel.ts`, `src/command.ts`) imports nothing, so the browser can
+page and the tool share (`src/accel.ts`, `src/command.ts`, `src/groups.ts`) imports nothing, so the browser can
 load it through relative `./src/….ts` imports. `tools/inbox/page.ts` is another one: a form,
 a one-time secret display with `copy` buttons from `ctx.render`, and text from strangers shown
 with `textContent` only.

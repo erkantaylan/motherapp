@@ -5,9 +5,10 @@ import { PassThrough } from "node:stream";
 import { createTool } from "@motherapp/tool-sdk";
 import { LineDecoder } from "@motherapp/protocol";
 import { Gnome } from "../src/gnome.ts";
+import { groupShortcuts } from "../src/groups.ts";
 import { INITIAL_STATE, POLL_MS, ShortcutsService } from "../src/service.ts";
 import type { Row } from "../src/service.ts";
-import { DIR, FakeGnome, FakeTimers, LIST, MACHINE, MACHINE_PATHS, machineSnapshot, testEnv, tick, waitFor } from "./fakes.ts";
+import { DIR, FakeGnome, FakeTimers, LIST, MACHINE, MACHINE_19, MACHINE_PATHS, machineSnapshot, machineStore, testEnv, tick, waitFor } from "./fakes.ts";
 
 type Msg = { id?: number; method?: string; params?: any; result?: any; error?: { code: number; message: string } };
 
@@ -195,5 +196,39 @@ test("no dconf: still works, full re-read every few ticks; gsettings errors keep
   }
   assert.equal(t.tool.isStale("shortcuts"), false);
   assert.equal(t.tool.get("status"), undefined);
+  await t.end();
+});
+
+test("groups (#19): add/edit take a group and write 'Group: name'; renaming out of a prefix leaves the group", async () => {
+  const t = setup(new FakeGnome(machineStore(MACHINE_19)));
+  t.service.start();
+  await t.settle();
+  assert.deepEqual((t.tool.get("binTools") as Record<string, string>).audioctl, "Audio");
+  const grouped = () => {
+    const rows = Object.entries(t.rows()).map(([id, r]) => ({ ...r, id }));
+    return [true, false].map((owned) => groupShortcuts(rows.filter((r) => r.owned === owned), t.tool.get("binTools") as Record<string, string>).map((e) => (e.kind === "group" ? `${e.name}: ${e.members.map((m) => m.label).join(", ")}` : e.label)));
+  };
+  const a = await t.action("add", { name: "reset", group: "Dead Cells map", binding: "<Control><Shift>F12", command: "/home/erkan/.local/bin/dc-map reset" });
+  assert.equal(a.error, undefined);
+  const b = await t.action("add", { name: "map off", group: "Dead Cells map", binding: "<Control><Shift>F8", command: "/opt/other/map-off" });
+  assert.equal(b.error, undefined);
+  await t.settle();
+  assert.equal(t.fake.store.values[`${DIR}${a.result.id}/name`], "Dead Cells map: reset");
+  assert.deepEqual(grouped()[0], ["Dead Cells map: map off, reset"]);
+  // the page sends the group with every edit; "" takes it out, and the group shrinks live
+  const e = await t.action("edit", { id: a.result.id, name: "reset", group: "", binding: "<Control><Shift>F12" });
+  assert.equal(e.error, undefined);
+  await t.settle();
+  assert.equal(t.rows()[a.result.id]!.name, "reset");
+  assert.deepEqual(grouped()[0], ["Dead Cells map: map off", "reset"], "a lone prefix is a plain row");
+  // a rename by hand (no group field) that drops the prefix does the same
+  await t.action("edit", { id: b.result.id, name: "map off for good" });
+  await t.settle();
+  assert.deepEqual(grouped()[0], ["map off for good", "reset"]);
+  assert.equal(grouped()[1]!.length, 2, "the other 8 untouched: CopyQ and the Dead Cells map group");
+  const bad = await t.action("add", { name: "x", group: "a: b", binding: "<Super>F1", command: "x" });
+  assert.match(bad.error?.message ?? "", /can't contain/);
+  const bad2 = await t.action("edit", { id: b.result.id, group: 5 });
+  assert.match(bad2.error?.message ?? "", /group must be a string/);
   await t.end();
 });

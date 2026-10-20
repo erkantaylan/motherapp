@@ -330,7 +330,7 @@ test("on start, active links are listed and logged (ids only) and the tunnel com
     tool: h2.tool,
     panes: { list: async () => ({ kind: "ok", panes: [] }), capture: async () => "", sendLiteral: async () => {}, sendEnter: async () => {} },
     store,
-    settings: { port: 0, sendDelayMs: 0, verifyDelayMs: 0, paneCommands: [] },
+    settings: { port: 0, sendDelayMs: 0, verifyDelayMs: 0, paneCommands: [], checkScreen: true },
     runner: h2.runner,
     stateDir: h.stateDir,
     timers: h2.timers,

@@ -95,6 +95,13 @@ export interface UiRequests {
   /** Manual restart; also the way out of `failed`. */
   "tool.restart": { params: { tool: string }; result: null };
   "tool.setEnabled": { params: { tool: string; enabled: boolean }; result: null };
+  /**
+   * Saves the sidebar order (config.json `order`). Unknown ids are dropped; tools left out
+   * follow in their current order. Every client then gets a `tools` notification.
+   */
+  "tools.setOrder": { params: { order: string[] }; result: null };
+  /** Forgets the saved order (back to manifest `order` hints, then alphabetical). */
+  "tools.resetOrder": { params: Record<string, never>; result: null };
   /** Running build vs checkout. The checkout is cached; `refresh` asks git again. */
   "version.get": { params: { refresh?: boolean }; result: VersionInfo };
 }
@@ -102,7 +109,12 @@ export interface UiRequests {
 // ---- notifications (core -> browser) ----
 
 export interface UiNotifications {
-  tools: { tools: ToolInfo[] };
+  /**
+   * Every tool, in display order (the user's order from Settings, else the default). Sent on
+   * connect and to every client whenever a tool, its status or the order changes.
+   * `orderSaved`: the user has saved an order (so "Reset to default order" would change it).
+   */
+  tools: { tools: ToolInfo[]; orderSaved?: boolean };
   /** Full cached state of one tool (on connect and after the tool (re)starts). */
   snapshot: { tool: string; state: StateObject; stale: string[] };
   state: { tool: string; changes: StateChange[] };

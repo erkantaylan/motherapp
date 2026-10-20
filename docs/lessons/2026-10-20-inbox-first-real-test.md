@@ -13,6 +13,9 @@ and the per-link max uses / max length options were removed, and hold reasons go
   was written from memory, and the fixtures in `test/fixtures/screens/` are hand-written. → Don't
   guess a new heuristic. Collect real screens first (below), add them as fixtures, then change
   the rules. A local Claude on the machine has an issue for that.
+- [both] A local session landed `checkScreen` (default `false`, #22) while this was being built:
+  by default nothing is held, so the diagnostics and "Deliver now" below only matter with
+  `"checkScreen": true` in `~/.config/motherapp/inbox.json`. "Save screen" works either way.
 - [both] To tell *which* rule fails, a held message now carries a check name: `no-prompt-line`,
   `no-rule-above`, `no-rule-below`, `too-many-lines-below`, `input-not-empty`, `busy-marker`
   (plus `copy-mode`). It shows on the page ("[check: …]") and in the journal (`check` field of

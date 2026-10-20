@@ -1,5 +1,5 @@
 // ~/.config/motherapp/inbox.json. Every field is optional; missing ones take the defaults.
-//   { "port": 7324, "sendDelayMs": 200, "verifyDelayMs": 600, "paneCommands": [] }
+//   { "port": 7324, "sendDelayMs": 200, "verifyDelayMs": 600, "paneCommands": [], "checkScreen": false }
 // The tunnel is always a cloudflared quick tunnel (the user's decision, 2026-10-20), so there
 // is nothing to configure for it. An old `"tunnel"` field is ignored.
 import * as fs from "node:fs";
@@ -15,12 +15,18 @@ export interface Settings {
   verifyDelayMs: number;
   /** Extra `pane_current_command` values that count as Claude (see panes.ts). */
   paneCommands: string[];
+  /**
+   * Read the pane before typing (idle.ts) and hold messages while Claude looks busy. Off by
+   * default: the rules don't match the real Claude Code screen yet (#22), so messages are
+   * typed and submitted straight away.
+   */
+  checkScreen?: boolean;
 }
 
 export const DEFAULT_PORT = 7324;
 
 export function defaultSettings(): Settings {
-  return { port: DEFAULT_PORT, sendDelayMs: 200, verifyDelayMs: 600, paneCommands: [] };
+  return { port: DEFAULT_PORT, sendDelayMs: 200, verifyDelayMs: 600, paneCommands: [], checkScreen: false };
 }
 
 export function settingsFile(env: NodeJS.ProcessEnv = process.env): string {
@@ -37,6 +43,7 @@ export function loadSettings(file: string, env: NodeJS.ProcessEnv = process.env)
     if (typeof r.port === "number" && Number.isInteger(r.port) && r.port >= 0 && r.port < 65536) s.port = r.port;
     s.sendDelayMs = ms(r.sendDelayMs, s.sendDelayMs);
     s.verifyDelayMs = ms(r.verifyDelayMs, s.verifyDelayMs);
+    if (typeof r.checkScreen === "boolean") s.checkScreen = r.checkScreen;
     if (Array.isArray(r.paneCommands)) s.paneCommands = r.paneCommands.filter((c): c is string => typeof c === "string" && c !== "" && c !== "node");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") error = `cannot read ${file}: ${(e as Error).message}`;

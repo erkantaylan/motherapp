@@ -7,7 +7,10 @@ type ProgressCb = (text: string, fraction?: number) => void;
 
 export class App {
   readonly conn: Connection;
+  /** Every tool in display order, as the core sends it. */
   tools: ToolInfo[] = [];
+  /** The user has saved an order on Settings (so "Reset to default order" would change it). */
+  orderSaved = false;
   /** True once the first `tools` notification arrived. */
   toolsLoaded = false;
   private stores = new Map<string, ToolStore>();
@@ -83,7 +86,9 @@ export class App {
   private onNotify<K extends keyof UiNotifications>(method: K, params: UiNotifications[K]): void {
     switch (method) {
       case "tools": {
-        this.tools = (params as UiNotifications["tools"]).tools;
+        const p = params as UiNotifications["tools"];
+        this.tools = p.tools; // already in display order (the user's order from Settings)
+        this.orderSaved = p.orderSaved === true;
         this.toolsLoaded = true;
         for (const t of this.tools) this.store(t.id).setDown(t.status !== "running");
         this.emitTools();

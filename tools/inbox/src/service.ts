@@ -320,17 +320,21 @@ export class InboxService {
   }
 
   /**
-   * Checks the pane is the same Claude pane and idle, then types the line. `still` runs first
-   * in the serial slot: false (the message was delivered by hand meanwhile) skips it.
+   * Checks the pane is the same Claude pane (and idle, with checkScreen), then types the line.
+   * `still` runs first in the serial slot: false (the message was delivered by hand meanwhile)
+   * skips it.
    */
   private attempt(link: LinkRecord, line: string, still: () => boolean = () => true): Promise<Attempt> {
     return this.serial(async () => {
       if (!still()) return { kind: "skipped" };
       const pane = await this.boundPane(link);
       if ("gone" in pane) return { kind: "gone", reason: pane.gone };
-      const idle = idleState(await this.panes.capture(pane.id), pane.inMode);
-      if (!idle.idle) return { kind: "held", reason: idle.reason, check: idle.check };
-      const d = await typeAndSubmit({ keys: this.panes, sleep: this.sleep, delayMs: this.settings.sendDelayMs, verifyDelayMs: this.settings.verifyDelayMs }, pane.id, line);
+      const checkScreen = this.settings.checkScreen === true;
+      if (checkScreen) {
+        const idle = idleState(await this.panes.capture(pane.id), pane.inMode);
+        if (!idle.idle) return { kind: "held", reason: idle.reason, check: idle.check };
+      }
+      const d = await typeAndSubmit({ keys: this.panes, sleep: this.sleep, delayMs: this.settings.sendDelayMs, verifyDelayMs: this.settings.verifyDelayMs, checkScreen }, pane.id, line);
       return { kind: "done", result: d.result };
     });
   }
