@@ -144,7 +144,7 @@ test("real tmux + service: POST while the user types is held, then delivered and
     tool: h.tool,
     panes: panes(),
     store: new Store(h.stateDir),
-    settings: { port: 0, tunnel: { mode: "quick" }, sendDelayMs: 200, verifyDelayMs: 300, paneCommands: [] },
+    settings: { port: 0, tunnel: { mode: "quick" }, sendDelayMs: 200, verifyDelayMs: 300, paneCommands: [], checkScreen: true },
     runner: mixedRunner(h.runner),
     stateDir: h.stateDir,
     timers: h.timers,

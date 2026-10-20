@@ -97,7 +97,7 @@ test("core + inbox tool: link over the WebSocket and inboxctl, delivery, revoke,
   fs.mkdirSync(cfgDir, { recursive: true });
   const others = ["audio", "brightness", "tmux", "shortcuts", "demo"];
   fs.writeFileSync(path.join(cfgDir, "config.json"), JSON.stringify({ port: 0, tools: Object.fromEntries(others.map((id) => [id, { enabled: false }])) }));
-  fs.writeFileSync(path.join(cfgDir, "inbox.json"), JSON.stringify({ port: 0, sendDelayMs: 10, verifyDelayMs: 10 }));
+  fs.writeFileSync(path.join(cfgDir, "inbox.json"), JSON.stringify({ port: 0, sendDelayMs: 10, verifyDelayMs: 10, checkScreen: true }));
   const calls = () =>
     fs.existsSync(path.join(fake, "calls.log")) ? fs.readFileSync(path.join(fake, "calls.log"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]) : [];
 

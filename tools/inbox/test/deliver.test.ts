@@ -87,3 +87,11 @@ test("which commands count as Claude", () => {
   for (const c of ["node", "bash", "Claude", "claude-code", "vim", "2.0", ""]) assert.ok(!isClaudeCommand(c), c);
   assert.ok(isClaudeCommand("claude-code", ["claude-code"]));
 });
+
+test("checkScreen false: text, wait, Enter; the screen is never read", async () => {
+  const { fake, opts, sleeps } = setup();
+  const r = await typeAndSubmit({ ...opts, checkScreen: false }, "%1", "[inbox: cloud] hi");
+  assert.deepEqual(r, { result: "sent (screen not checked)", submitted: true });
+  assert.deepEqual(fake.calls.map((c) => c.join(" ")), ["send-keys -t %1 -l -- [inbox: cloud] hi", "send-keys -t %1 Enter"]);
+  assert.deepEqual(sleeps, [200]);
+});

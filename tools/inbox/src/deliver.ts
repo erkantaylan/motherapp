@@ -22,9 +22,11 @@ export interface DeliverOptions {
   sleep: (ms: number) => Promise<void>;
   delayMs: number;
   verifyDelayMs: number;
+  /** false: type, wait, press Enter, without reading the screen (settings.checkScreen). */
+  checkScreen?: boolean;
 }
 
-export type DeliveryResult = "submitted" | "submitted: retried" | "not submitted: text not seen in Claude's input box";
+export type DeliveryResult = "submitted" | "submitted: retried" | "sent (screen not checked)" | "not submitted: text not seen in Claude's input box";
 
 export interface Delivery {
   result: DeliveryResult;
@@ -44,6 +46,10 @@ export async function typeAndSubmit(opts: DeliverOptions, paneId: string, line: 
   const { keys, sleep } = opts;
   await keys.sendLiteral(paneId, line);
   await sleep(opts.delayMs);
+  if (opts.checkScreen === false) {
+    await keys.sendEnter(paneId);
+    return { result: "sent (screen not checked)", submitted: true };
+  }
   if (!showsOurLine(await keys.capture(paneId))) {
     return { result: "not submitted: text not seen in Claude's input box", submitted: false };
   }

@@ -306,14 +306,17 @@ export class InboxService {
     return pane;
   }
 
-  /** Checks the pane is the same Claude pane and idle, then types the line. */
+  /** Checks the pane is the same Claude pane (and idle, with checkScreen), then types the line. */
   private attempt(link: LinkRecord, line: string): Promise<Attempt> {
     return this.serial(async () => {
       const pane = await this.boundPane(link);
       if ("gone" in pane) return { kind: "gone", reason: pane.gone };
-      const idle = idleState(await this.panes.capture(pane.id), pane.inMode);
-      if (!idle.idle) return { kind: "held", reason: idle.reason };
-      const d = await typeAndSubmit({ keys: this.panes, sleep: this.sleep, delayMs: this.settings.sendDelayMs, verifyDelayMs: this.settings.verifyDelayMs }, pane.id, line);
+      const checkScreen = this.settings.checkScreen === true;
+      if (checkScreen) {
+        const idle = idleState(await this.panes.capture(pane.id), pane.inMode);
+        if (!idle.idle) return { kind: "held", reason: idle.reason };
+      }
+      const d = await typeAndSubmit({ keys: this.panes, sleep: this.sleep, delayMs: this.settings.sendDelayMs, verifyDelayMs: this.settings.verifyDelayMs, checkScreen }, pane.id, line);
       return { kind: "done", result: d.result };
     });
   }
