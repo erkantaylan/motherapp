@@ -24,6 +24,10 @@ transient unit), `MOTHERAPP_UNATTENDED` sudo handling in `install.sh`, the relea
   command in the background, and holds an "active" file that the fake `systemctl is-active`
   reports. The real bash wrapper and `update.log` parsing are exercised that way. Redirect the
   background job's stdio (`</dev/null >/dev/null 2>&1 &`), or `execFile` waits for it.
+- [cloud] `git push` refused the commit that added `.github/workflows/release.yml`:
+  "refusing to allow an OAuth App to create or update workflow … without `workflow` scope".
+  → The workflow is parked at `docs/releases/release.yml`. A cloud session can't add or
+  change workflows. Leave that to the user, or to the local session if its token has the scope.
 - [cloud] The worktree guard refused a `python3` heredoc that edited a file containing "git",
   and `sed -n "$(grep …)p"`. → Use Edit, or sed with literal line numbers.
 

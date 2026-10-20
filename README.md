@@ -102,8 +102,10 @@ with "run `motherapp install` in a terminal", because the browser can't ask for 
 is `~/.local/state/motherapp/update.log`.
 
 **Releases** are tags `v<N>` on `main` (the `VERSION` number), each with a GitHub Release
-([.github/workflows/release.yml](.github/workflows/release.yml), notes from
-`docs/releases/v<N>.md`). The core asks GitHub for the latest release at start, every 6 h, and
+(`.github/workflows/release.yml`, notes from `docs/releases/v<N>.md`). Until someone with
+`workflow` scope moves it there, the workflow is parked at
+[docs/releases/release.yml](docs/releases/release.yml), so a release is made by hand:
+`gh release create v<N> --verify-tag --notes-file docs/releases/v<N>.md`. The core asks GitHub for the latest release at start, every 6 h, and
 on Settings → "Check for updates". The request is unauthenticated, and the answer and its ETag
 are cached in `~/.local/state/motherapp/release-check.json`. When a newer release exists, the
 sidebar says "· v3 available", and Settings shows it with a link to its release page. A failed

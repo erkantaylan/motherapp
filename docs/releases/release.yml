@@ -1,0 +1,31 @@
+# Belongs in .github/workflows/release.yml. It is parked here because the cloud session's
+# GitHub token may not create workflow files (no `workflow` scope). Move it there from a
+# machine that can: git mv docs/releases/release.yml .github/workflows/release.yml
+#
+# A pushed tag v<N> (annotated, on main) becomes a GitHub Release. The body is
+# docs/releases/<tag>.md when that file exists, else GitHub's generated notes. The core's
+# "vN available" check reads releases/latest (DESIGN.md § 3 "Releases").
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "motherapp $GITHUB_REF_NAME" --notes-file "$notes"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "motherapp $GITHUB_REF_NAME" --generate-notes
+          fi
