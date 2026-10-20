@@ -3,3 +3,4 @@ dist/
 *.tmp
 .vite/
 .claude/worktrees/
+build-info.json

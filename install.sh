@@ -3,11 +3,14 @@
 # anything uses sudo/apt) or says how to install them, then builds the app and sets up the
 # systemd user service. It also writes a small wrapper in ~/.local/bin for each command a tool
 # declares in its manifest ("bin", e.g. audioctl), so tool CLIs work from any terminal and from
-# GNOME keyboard shortcuts. Target: Ubuntu 24.04, GNOME 46, Wayland. Safe to re-run.
+# GNOME keyboard shortcuts, plus ~/.local/bin/motherapp (scripts/motherapp.sh: `motherapp
+# install` pulls main and re-runs this script, `motherapp status`, ...). It records the version
+# it built (v<N>-<hash>[-dirty], scripts/build-info.sh) in build-info.json for the core.
+# Target: Ubuntu 24.04, GNOME 46, Wayland. Safe to re-run.
 #
 #   ./install.sh               interactive: asks y/N before each sudo/apt step and before
 #                              enabling the service
-#   ./install.sh --check       report only, change nothing (also: npm run doctor)
+#   ./install.sh --check       report only, change nothing
 #   ./install.sh --yes         accept every prompt, except an apt install that would remove
 #                              packages (add --allow-removals to accept that too)
 #   ./install.sh --uninstall   stop + disable the service, remove the unit file and the
@@ -54,6 +57,12 @@ PW_TOOLS=(pw-dump pw-play pw-record pw-metadata wpctl)
 # Candidate names for the libddcutil shared library package, newest soname first. Which one
 # exists is decided at runtime with apt-cache (noble ships libddcutil4 for ddcutil 1.4.x).
 LIBDDCUTIL_CANDIDATES=(libddcutil5 libddcutil4 libddcutil0)
+BUILD_INFO_SH="$REPO_DIR/scripts/build-info.sh"
+BUILD_INFO="$REPO_DIR/build-info.json"
+MOTHERAPP_SH="$REPO_DIR/scripts/motherapp.sh"
+# mbi_* version helpers (sourcing defines functions only)
+# shellcheck source=scripts/build-info.sh
+[[ -r $BUILD_INFO_SH ]] && . "$BUILD_INFO_SH"
 
 # ---------------------------------------------------------------- options
 
@@ -69,7 +78,9 @@ Usage: ./install.sh [--check | --uninstall [--purge]] [--yes [--allow-removals]]
   (no option)   Check dependencies, offer to install missing ones (asks before every
                 sudo/apt step), run npm ci + npm run build, write the systemd user unit,
                 ask before enabling it, then check http://127.0.0.1:7323/. Writes a
-                wrapper in ~/.local/bin for each tool command (e.g. audioctl).
+                wrapper in ~/.local/bin for each tool command (e.g. audioctl) and for
+                the motherapp command (motherapp install/update pulls main and re-runs
+                this; motherapp help lists the rest).
                 Node 24: offers nvm/fnm first when you have one (no sudo), then the
                 NodeSource apt repo, showing first what that install would remove.
   --check       Only report status. Changes nothing, asks nothing.
@@ -798,6 +809,7 @@ app_setup() {
     record FAIL build "npm run build failed (output above)"
     return
   fi
+  write_version
 
   local unit
   if ! unit="$(render_unit)"; then
@@ -853,6 +865,38 @@ app_setup() {
   fi
 }
 
+# Records the version just built in build-info.json (npm run build writes it too; this makes
+# sure it describes exactly this install) and prints "OK version v1-<hash>".
+write_version() {
+  local v
+  if ! declare -F mbi_write >/dev/null; then
+    record WARN version "$BUILD_INFO_SH missing; build-info.json not written" "" 0
+  elif v="$(mbi_write "$REPO_DIR")"; then
+    if [[ $v == *-unknown* ]]; then
+      record OK version "$v (not a git checkout, so there is no hash)"
+    else
+      record OK version "$v"
+    fi
+  else
+    record WARN version "couldn't write $BUILD_INFO; the UI will show v?-unknown" "check that $REPO_DIR is writable, then re-run" 0
+  fi
+}
+
+# --check: what was built vs where the checkout is now.
+version_status() {
+  local built now
+  declare -F mbi_built >/dev/null || return 0
+  now="$(mbi_string "$REPO_DIR")"
+  if ! built="$(mbi_built "$BUILD_INFO")"; then
+    [[ -f $REPO_DIR/web/dist/index.html ]] || return 0   # not built at all: the build row says so
+    record WARN version "no build-info.json; the checkout is at $now" "./install.sh (or: motherapp install)" 0
+  elif [[ ${built%-dirty} == "${now%-dirty}" ]]; then
+    record OK version "built $built${now:+, checkout at $now}"
+  else
+    record WARN version "built $built, checkout is at $now" "motherapp install (or ./install.sh)" 0
+  fi
+}
+
 # Read-only version of app_setup for --check.
 app_status() {
   section "App"
@@ -866,6 +910,7 @@ app_status() {
   else
     record MISSING build "web/dist not built" "./install.sh (runs npm run build)"
   fi
+  version_status
   local unit
   if [[ ! -f $UNIT_FILE ]]; then
     record MISSING unit "$UNIT_FILE not installed" "./install.sh"
@@ -918,6 +963,7 @@ for (const d of fs.readdirSync(root).sort()) {
     if (typeof rel !== "string" || rel === "" || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..") || /[\t\n\r]/.test(rel)) {
       out("bad", d, cmd + ": the script must be a relative path inside the tool directory"); continue;
     }
+    if (cmd === "motherapp") { out("bad", d, "motherapp: reserved for the motherapp command"); continue; }
     if (seen.has(cmd)) { out("bad", d, cmd + ": already provided by tools/" + seen.get(cmd)); continue; }
     const abs = path.join(root, d, rel);
     if (/[\t\n\r]/.test(abs) || !fs.statSync(abs, { throwIfNoEntry: false })?.isFile()) { out("bad", d, cmd + ": " + clean(rel) + " not found"); continue; }
@@ -958,17 +1004,64 @@ is_managed() {
     [[ "$(head -c 512 -- "$1" 2>/dev/null | tr -d '\0' | sed -n '1{/^#!/!q;};2p')" == "$BIN_MARKER" ]]
 }
 
-is_bin_cmd() { local c; for c in "${BIN_CMDS[@]}"; do [[ $c == "$1" ]] && return 0; done; return 1; }
+is_bin_cmd() {
+  local c
+  [[ $1 == "$APP_CMD" ]] && return 0
+  for c in "${BIN_CMDS[@]}"; do [[ $c == "$1" ]] && return 0; done
+  return 1
+}
+
+# ~/.local/bin/motherapp: scripts/motherapp.sh run by absolute path with this bash, and the
+# chosen Node passed in MOTHERAPP_NODE (the script uses it to read the core's status JSON).
+APP_CMD=motherapp
+render_app_wrapper() {
+  printf '#!/usr/bin/env bash\n%s\n# The motherapp command: runs %s with the Node chosen by ./install.sh.\n# Re-run ./install.sh to update it; ./install.sh --uninstall removes it.\nexport MOTHERAPP_NODE=%q\nexec %q %q "$@"\n' \
+    "$BIN_MARKER" "${MOTHERAPP_SH#"$REPO_DIR"/}" "$NODE_BIN" "$BASH" "$MOTHERAPP_SH"
+}
+
+# Writes one wrapper (unless a file that isn't ours is in the way) and records the result.
+write_wrapper() { # command content fix-hint
+  local cmd=$1 want=$2 f="$BIN_DIR/$1" verb=wrote
+  if [[ -e $f || -L $f ]] && ! is_managed "$f"; then
+    record WARN "$cmd" "$f exists and wasn't written by install.sh; left alone" \
+      "remove or rename it and re-run ./install.sh, or call $3 directly" 0
+  elif [[ -f $f && "$(<"$f")" == "$want" ]]; then
+    record OK "$cmd" "$f unchanged"
+  else
+    [[ -f $f ]] && verb=updated
+    if printf '%s\n' "$want" >"$f.tmp" && chmod 755 "$f.tmp" && mv -f "$f.tmp" "$f"; then
+      record OK "$cmd" "$verb $f (node: $NODE_BIN)"
+    else
+      rm -f "$f.tmp"
+      record FAIL "$cmd" "couldn't write $f"
+    fi
+  fi
+}
+
+# --check for one wrapper.
+wrapper_status() { # command content
+  local f="$BIN_DIR/$1"
+  if [[ ! -e $f && ! -L $f ]]; then
+    record MISSING "$1" "$f not installed" "./install.sh"
+  elif ! is_managed "$f"; then
+    record WARN "$1" "$f exists and wasn't written by install.sh; the installer leaves it alone" \
+      "remove or rename it, then re-run ./install.sh" 0
+  elif [[ "$(<"$f")" == "$2" ]]; then
+    record OK "$1" "$f up to date"
+  else
+    record WARN "$1" "$f differs from what the installer would write now (Node or checkout moved?)" "./install.sh" 0
+  fi
+}
 
 check_bin_path() {
-  (( ${#BIN_CMDS[@]} )) || return 0
+  local ex=${BIN_CMDS[0]:-$APP_CMD}
   if [[ ":$PATH:" == *":$BIN_DIR:"* || ":$PATH:" == *":$BIN_DIR/:"* ]]; then
     record OK bin-path "$BIN_DIR is on PATH"
   else
-    record WARN bin-path "$BIN_DIR is not on PATH here, so \`${BIN_CMDS[0]}\` isn't found by name" \
+    record WARN bin-path "$BIN_DIR is not on PATH here, so \`$APP_CMD\` and \`$ex\` aren't found by name" \
       "log out and back in: Ubuntu's ~/.profile adds ~/.local/bin to PATH at login once the directory exists (a first install creates it)
 or add to ~/.bashrc: export PATH=\"\$HOME/.local/bin:\$PATH\"
-GNOME keyboard shortcuts use the login session's PATH; if in doubt, give them the absolute path, e.g. $BIN_DIR/${BIN_CMDS[0]}" 0
+GNOME keyboard shortcuts use the login session's PATH; if in doubt, give them the absolute path, e.g. $BIN_DIR/$ex" 0
   fi
 }
 
@@ -978,27 +1071,12 @@ bin_setup() {
     record SKIP commands "Node >= ${MIN_NODE} missing; wrappers not written" "install Node ${MIN_NODE} (see node above), then re-run ./install.sh" 0
     return
   fi
+  mkdir -p "$BIN_DIR"
+  write_wrapper "$APP_CMD" "$(render_app_wrapper)" "bash $MOTHERAPP_SH"
   load_bins || return
-  local i cmd f want verb
-  (( ${#BIN_CMDS[@]} )) && mkdir -p "$BIN_DIR"
+  local i f
   for i in "${!BIN_CMDS[@]}"; do
-    cmd=${BIN_CMDS[$i]} f="$BIN_DIR/${BIN_CMDS[$i]}"
-    want="$(render_wrapper "${BIN_SCRIPTS[$i]}")"
-    if [[ -e $f || -L $f ]] && ! is_managed "$f"; then
-      record WARN "$cmd" "$f exists and wasn't written by install.sh; left alone" \
-        "remove or rename it and re-run ./install.sh, or call $NODE_BIN ${BIN_SCRIPTS[$i]} directly" 0
-    elif [[ -f $f && "$(<"$f")" == "$want" ]]; then
-      record OK "$cmd" "$f unchanged"
-    else
-      verb=wrote
-      [[ -f $f ]] && verb=updated
-      if printf '%s\n' "$want" >"$f.tmp" && chmod 755 "$f.tmp" && mv -f "$f.tmp" "$f"; then
-        record OK "$cmd" "$verb $f (node: $NODE_BIN)"
-      else
-        rm -f "$f.tmp"
-        record FAIL "$cmd" "couldn't write $f"
-      fi
-    fi
+    write_wrapper "${BIN_CMDS[$i]}" "$(render_wrapper "${BIN_SCRIPTS[$i]}")" "$NODE_BIN ${BIN_SCRIPTS[$i]}"
   done
   # Wrappers for commands no tool declares any more (skipped while a manifest has a bad "bin").
   if (( ! BIN_BAD )); then
@@ -1018,20 +1096,11 @@ bin_status() {
     record SKIP commands "can't check the wrappers without Node >= ${MIN_NODE}" "" 0
     return
   fi
+  wrapper_status "$APP_CMD" "$(render_app_wrapper)"
   load_bins || return
-  local i cmd f
+  local i f
   for i in "${!BIN_CMDS[@]}"; do
-    cmd=${BIN_CMDS[$i]} f="$BIN_DIR/${BIN_CMDS[$i]}"
-    if [[ ! -e $f && ! -L $f ]]; then
-      record MISSING "$cmd" "$f not installed" "./install.sh"
-    elif ! is_managed "$f"; then
-      record WARN "$cmd" "$f exists and wasn't written by install.sh; the installer leaves it alone" \
-        "remove or rename it, then re-run ./install.sh" 0
-    elif [[ "$(<"$f")" == "$(render_wrapper "${BIN_SCRIPTS[$i]}")" ]]; then
-      record OK "$cmd" "$f up to date"
-    else
-      record WARN "$cmd" "$f differs from what the installer would write now (Node or checkout moved?)" "./install.sh" 0
-    fi
+    wrapper_status "${BIN_CMDS[$i]}" "$(render_wrapper "${BIN_SCRIPTS[$i]}")"
   done
   for f in "$BIN_DIR"/*; do
     if ! is_managed "$f" || is_bin_cmd "${f##*/}"; then continue; fi

@@ -45,6 +45,44 @@ export interface LogEntry {
   fields?: JsonObject;
 }
 
+// ---- version (DESIGN.md § 3 "Version scheme") ----
+
+/** What the running core was built from (build-info.json). */
+export interface BuildInfo {
+  /** The hand-bumped number from VERSION, or "?". */
+  version: string;
+  /** Short git hash, or "unknown". */
+  hash: string;
+  dirty: boolean;
+  /** ISO 8601, or null when unknown. */
+  builtAt: string | null;
+  /** v<version>-<hash>[-dirty], e.g. "v1-abc1234". */
+  string: string;
+  /** Why the info is unknown (build-info.json missing or broken). */
+  error?: string;
+}
+
+/** Where the checkout's HEAD is now (cached by the core, refreshed on demand). */
+export interface CheckoutInfo {
+  /** Full commit hash, or null when git couldn't tell. */
+  hash: string | null;
+  short: string | null;
+  version: string;
+  /** v<version>-<short>, or null. */
+  string: string | null;
+  checkedAt: string;
+  error?: string;
+}
+
+export interface VersionInfo {
+  running: BuildInfo;
+  checkout: CheckoutInfo;
+  /** behind: the checkout has moved on since this build (run `motherapp install`). */
+  status: "current" | "behind" | "unknown";
+  /** For "behind": "running v1-abc1234, checkout is at v1-def5678, run `motherapp install`". */
+  message?: string;
+}
+
 // ---- requests (browser -> core) ----
 
 export interface UiRequests {
@@ -57,6 +95,8 @@ export interface UiRequests {
   /** Manual restart; also the way out of `failed`. */
   "tool.restart": { params: { tool: string }; result: null };
   "tool.setEnabled": { params: { tool: string; enabled: boolean }; result: null };
+  /** Running build vs checkout. The checkout is cached; `refresh` asks git again. */
+  "version.get": { params: { refresh?: boolean }; result: VersionInfo };
 }
 
 // ---- notifications (core -> browser) ----

@@ -4,16 +4,26 @@
 //   MOTHERAPP_PORT       listen port (otherwise config.json `port`, default 7323)
 //   MOTHERAPP_TOOLS_DIR  directory scanned for tools/*/manifest.json (default <repo>/tools)
 //   MOTHERAPP_WEB_DIR    built frontend (default <repo>/web/dist)
+//   MOTHERAPP_BUILD_INFO build-info.json to report (default <repo>/build-info.json)
 //   XDG_CONFIG_HOME, XDG_STATE_HOME as usual
 import * as path from "node:path";
 import { LogService, RotatingFile } from "./logService.ts";
 import { Manager } from "./manager.ts";
-import { configDir, defaultToolsDir, defaultWebDir, stateDir } from "./paths.ts";
+import { buildInfoFile, configDir, defaultToolsDir, defaultWebDir, repoRoot, stateDir } from "./paths.ts";
 import { startServer } from "./server.ts";
+import { Checkout, readBuildInfo, VersionSource } from "./version.ts";
 
 async function main(): Promise<void> {
   const log = new LogService({ file: new RotatingFile({ file: path.join(stateDir(), "log.jsonl") }) });
-  log.core("info", "motherapp core starting", { node: process.version, pid: process.pid });
+  const build = readBuildInfo(buildInfoFile());
+  log.core("info", `motherapp core starting ${build.string}`, {
+    version: build.string,
+    builtAt: build.builtAt,
+    ...(build.error ? { buildInfo: build.error } : {}),
+    node: process.version,
+    pid: process.pid,
+  });
+  const version = new VersionSource(build, new Checkout({ repo: repoRoot }));
 
   const manager = new Manager({
     toolsDir: defaultToolsDir(),
@@ -26,7 +36,7 @@ async function main(): Promise<void> {
   const port = envPort !== undefined && envPort !== "" ? Number(envPort) : manager.config.port;
   let server;
   try {
-    server = await startServer({ manager, log, webDir: defaultWebDir(), port });
+    server = await startServer({ manager, log, webDir: defaultWebDir(), port, version });
   } catch (e) {
     log.core("error", `cannot listen on 127.0.0.1:${port}: ${(e as Error).message}`);
     await manager.shutdown();

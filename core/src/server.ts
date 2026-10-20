@@ -1,6 +1,8 @@
 // HTTP + WebSocket server on 127.0.0.1 (DESIGN.md § 3: localhost only by default).
 //   /ws               JSON-RPC channel to the browser (see @motherapp/protocol ui.ts)
 //   /tools/<id>/...   files of a tool (custom page modules; .ts is served type-stripped)
+//   /api/status       JSON for `motherapp status`: version info and each tool's state
+//                     (?refresh=1 looks the checkout up again)
 //   everything else   the built frontend (web/dist), index.html as fallback
 import * as fs from "node:fs";
 import * as http from "node:http";
@@ -13,6 +15,7 @@ import { ErrorCode, RpcError, RpcPeer } from "@motherapp/protocol";
 import type { JsonObject, UiNotifications, UiRequests } from "@motherapp/protocol";
 import type { LogService } from "./logService.ts";
 import type { Manager } from "./manager.ts";
+import type { VersionSource } from "./version.ts";
 
 export interface ServerOptions {
   manager: Manager;
@@ -20,6 +23,8 @@ export interface ServerOptions {
   webDir: string;
   port: number;
   host?: string;
+  /** Build and checkout info for `version.get` and /api/status. */
+  version?: VersionSource;
 }
 
 export interface RunningServer {
@@ -81,17 +86,29 @@ function send(res: http.ServerResponse, status: number, body: string | Buffer, t
 }
 
 export function startServer(opts: ServerOptions): Promise<RunningServer> {
-  const { manager, log, webDir } = opts;
+  const { manager, log, webDir, version } = opts;
   const clients = new Set<Client>();
 
   const handleHttp = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     if (!isAllowedRequest(req.headers)) return send(res, 403, "forbidden");
     if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "method not allowed");
     let pathname: string;
+    let url: URL;
     try {
-      pathname = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname);
+      url = new URL(req.url ?? "/", "http://x");
+      pathname = decodeURIComponent(url.pathname);
     } catch {
       return send(res, 400, "bad request");
+    }
+
+    if (pathname === "/api/status") {
+      const refresh = url.searchParams.get("refresh") === "1";
+      const tools = manager.list().map(({ id, title, enabled, status, statusText }) => ({ id, title, enabled, status, ...(statusText ? { statusText } : {}) }));
+      void (version ? version.get(refresh) : Promise.resolve(null)).then(
+        (v) => send(res, 200, JSON.stringify({ version: v, tools }) + "\n", MIME[".json"]),
+        (e: Error) => send(res, 500, e.message),
+      );
+      return;
     }
 
     const toolMatch = /^\/tools\/([^/]+)\/(.+)$/.exec(pathname);
@@ -133,7 +150,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const client = new Client(ws, manager, log);
+      const client = new Client(ws, manager, log, version);
       clients.add(client);
       ws.on("close", () => {
         client.dispose();
@@ -179,11 +196,13 @@ class Client {
   private peer: RpcPeer;
   private streams = new Set<string>();
   private unsubscribeLogs: (() => void) | undefined;
+  private version: VersionSource | undefined;
 
-  constructor(ws: WebSocket, manager: Manager, log: LogService) {
+  constructor(ws: WebSocket, manager: Manager, log: LogService, version?: VersionSource) {
     this.ws = ws;
     this.manager = manager;
     this.log = log;
+    this.version = version;
     this.peer = new RpcPeer({
       send: (msg) => {
         if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -260,6 +279,9 @@ class Client {
         await this.manager.setEnabled(str("tool"), p.enabled);
         return null;
       }
+      case "version.get":
+        if (!this.version) throw new RpcError(ErrorCode.MethodNotFound, "version info not available");
+        return this.version.get(p.refresh === true);
       default:
         throw new RpcError(ErrorCode.MethodNotFound, `method not found: ${method}`);
     }
