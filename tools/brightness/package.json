@@ -1,0 +1,14 @@
+{
+  "name": "@motherapp/tool-brightness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Brightness tool: monitor brightness over DDC/CI through libddcutil (koffi), with the ddcutil CLI as fallback.",
+  "bin": {
+    "brightctl": "./brightctl.ts"
+  },
+  "dependencies": {
+    "@motherapp/tool-sdk": "*",
+    "koffi": "3.3.3"
+  }
+}

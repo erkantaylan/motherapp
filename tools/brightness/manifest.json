@@ -1,0 +1,8 @@
+{
+  "id": "brightness",
+  "title": "Brightness",
+  "icon": "🔆",
+  "serve": ["node", "brightctl.ts", "serve"],
+  "bin": { "brightctl": "brightctl.ts" },
+  "defaultEnabled": true
+}
