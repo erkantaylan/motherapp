@@ -26,6 +26,8 @@ export interface ToolCommands {
   suggestions: Suggestion[];
   /** Every `bin` command of every tool, for turning "audioctl …" into its absolute path. */
   bins: string[];
+  /** Each `bin` command's tool title ("audioctl" → "Audio"), for grouping motherapp's shortcuts. */
+  binTools: Record<string, string>;
   /** Problems with manifests, for the log. */
   problems: string[];
 }
@@ -35,12 +37,13 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 export function readToolCommands(toolsDir: string, binDir: string, exists: (p: string) => boolean = fs.existsSync): ToolCommands {
   const suggestions: Suggestion[] = [];
   const bins: string[] = [];
+  const binTools: Record<string, string> = {};
   const problems: string[] = [];
   let dirs: string[];
   try {
     dirs = fs.readdirSync(toolsDir).sort();
   } catch (e) {
-    return { suggestions, bins, problems: [`can't read ${toolsDir}: ${(e as Error).message}`] };
+    return { suggestions, bins, binTools, problems: [`can't read ${toolsDir}: ${(e as Error).message}`] };
   }
   for (const d of dirs) {
     const file = path.join(toolsDir, d, "manifest.json");
@@ -57,6 +60,7 @@ export function readToolCommands(toolsDir: string, binDir: string, exists: (p: s
     const toolTitle = typeof m.title === "string" ? m.title : toolId;
     const toolBins = Object.keys(m.bin).filter((b) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(b));
     bins.push(...toolBins);
+    for (const b of toolBins) binTools[b] = toolTitle;
     if (m.commands === undefined) continue;
     if (!isObj(m.commands)) {
       problems.push(`tools/${d}/manifest.json: "commands" must be an object keyed by bin command`);
@@ -89,5 +93,5 @@ export function readToolCommands(toolsDir: string, binDir: string, exists: (p: s
       }
     }
   }
-  return { suggestions, bins, problems };
+  return { suggestions, bins, binTools, problems };
 }

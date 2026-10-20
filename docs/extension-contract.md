@@ -296,13 +296,14 @@ forms, buttons, list group, nav, badge, dialog, toast, progress, theme colors, a
 utilities): see `web/src/styles.scss` and `web/src/_utilities-subset.scss`. Bootstrap's
 JavaScript is not loaded.
 
-`tools/shortcuts/page.ts` is a working example: its own form and rows, styled only with the
-theme variables above (an unlayered `<style>` scoped by a class on its root, so it doesn't
-depend on Bootstrap's classes),
+`tools/shortcuts/page.ts` is a working example: its own form and rows, styled with the theme
+variables above (an unlayered `<style>` scoped by a class on its root) plus Bootstrap's
+`badge` classes, collapsible groups whose headers are buttons with `aria-expanded`, the open
+ones remembered in `localStorage` (wrapped in try/catch),
 plus `ctx.render` for single `button` widgets, so Remove gets the shell's confirm dialog and
 status dot. Outside a list a button's `confirm` has no row, so text you put in it must not
 contain `{word}` placeholders (that page inserts a zero-width space after each `{`). Logic the
-page and the tool share (`src/accel.ts`, `src/command.ts`) imports nothing, so the browser can
+page and the tool share (`src/accel.ts`, `src/command.ts`, `src/groups.ts`) imports nothing, so the browser can
 load it through relative `./src/….ts` imports. `tools/inbox/page.ts` is another one: a form,
 a one-time secret display with `copy` buttons from `ctx.render`, and text from strangers shown
 with `textContent` only.

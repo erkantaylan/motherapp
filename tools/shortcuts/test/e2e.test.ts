@@ -150,7 +150,7 @@ test("core + shortcuts tool with fake gsettings/dconf: list, add, conflict, remo
   assert.ok(calls.every((x) => x.lcAll === "C.UTF-8"));
 
   // the custom page and its imports are served as JavaScript the browser can parse
-  for (const file of ["page.ts", "src/accel.ts", "src/command.ts", "src/conflicts.ts"]) {
+  for (const file of ["page.ts", "src/accel.ts", "src/command.ts", "src/conflicts.ts", "src/groups.ts"]) {
     const res = await fetch(`http://127.0.0.1:${port}/tools/shortcuts/${file}`);
     assert.equal(res.status, 200, file);
     assert.match(res.headers.get("content-type") ?? "", /javascript/);

@@ -4,18 +4,24 @@ import type { Writable } from "node:stream";
 import { accelLabel } from "./accel.ts";
 import { bindingUses, conflictsFor } from "./conflicts.ts";
 import { Gnome, GnomeError } from "./gnome.ts";
+import { groupOf, groupShortcuts, plural } from "./groups.ts";
 import type { Shortcut } from "./gnome.ts";
-import { buildCommand, checkBinding, commandContext, loadTools, warningsFor } from "./ops.ts";
+import { buildCommand, checkBinding, commandContext, groupedName, loadTools, warningsFor } from "./ops.ts";
 import type { Env } from "./ops.ts";
 import type { Runner } from "./runner.ts";
 
 export const USAGE = `usage: shortcutsctl <command> [args]
 
-  list [--json]                         every GNOME custom shortcut: name, key, command
-                                        (* = made by motherapp, editable; the rest are read-only)
-  add <name> <binding> -- <command…>    add a motherapp shortcut
-  edit <name> [--name <new>] [--binding <b>] [-- <command…>]
-                                        change a motherapp shortcut
+  list [--flat] [--json]                every GNOME custom shortcut: name, key, command
+                                        (* = made by motherapp, editable; the rest are read-only),
+                                        grouped like the page: a "Group: " name prefix, the
+                                        tool, or the same program. --flat: ungrouped, in GNOME's
+                                        order. --json: each one gets "group" (a name or null)
+  add [--group <g>] <name> <binding> -- <command…>
+                                        add a motherapp shortcut; --group names it "<g>: <name>"
+  edit <name> [--name <new>] [--group <g>] [--binding <b>] [-- <command…>]
+                                        change a motherapp shortcut (--group "" takes it out
+                                        of its group)
   remove <name>                         remove a motherapp shortcut
   suggestions [--json]                  commands the tools suggest binding to keys
   serve                                 JSON-RPC serve mode (started by the motherapp core)
@@ -45,6 +51,17 @@ function splitDashDash(args: string[]): [string[], string[] | undefined] {
   return i < 0 ? [args, undefined] : [args.slice(0, i), args.slice(i + 1)];
 }
 
+/** Pulls `--group <g>` out of the arguments before "--". */
+function takeGroup(args: string[]): [string[], string | undefined] {
+  const i = args.indexOf("--group");
+  if (i < 0) return [args, undefined];
+  const v = args[i + 1];
+  if (v === undefined) throw new UsageError("--group needs a value");
+  const rest = [...args.slice(0, i), ...args.slice(i + 2)];
+  if (rest.includes("--group")) throw new UsageError("--group given twice");
+  return [rest, v];
+}
+
 function find(list: Shortcut[], name: string): Shortcut {
   const owned = list.filter((s) => s.owned);
   const byName = owned.filter((s) => s.name === name);
@@ -62,42 +79,67 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
   try {
     switch (cmd) {
       case "list": {
-        const bad = args.find((a) => a !== "--json");
+        const bad = args.find((a) => a !== "--json" && a !== "--flat");
         if (bad !== undefined) throw new UsageError(`unknown option "${bad}"`);
         const list = await gnome.list();
         const builtins = await gnome.builtins();
         const uses = bindingUses(list, builtins);
+        const rows = list.map((s) => ({ ...s, conflicts: conflictsFor(s.binding, uses, s.id) }));
+        type R = (typeof rows)[number];
+        const { binTools } = loadTools(io.env);
+        const mine = groupShortcuts(rows.filter((r) => r.owned), binTools);
+        const theirs = groupShortcuts(rows.filter((r) => !r.owned), binTools);
         if (args.includes("--json")) {
-          line(io.stdout, JSON.stringify(list.map((s) => ({ ...s, conflicts: conflictsFor(s.binding, uses, s.id) })), null, 2));
+          const group = new Map([...groupOf(mine), ...groupOf(theirs)]);
+          line(io.stdout, JSON.stringify(rows.map((r) => ({ ...r, group: group.get(r.id) ?? null })), null, 2));
           return 0;
         }
         if (list.length === 0) {
           line(io.stdout, "No custom shortcuts.");
           return 0;
         }
-        const wn = Math.max(...list.map((s) => s.name.length));
-        const wb = Math.max(...list.map((s) => s.binding.length));
-        for (const s of list) {
-          const c = conflictsFor(s.binding, uses, s.id);
-          const tail = s.error ? `  (can't read: ${s.error})` : c.length ? `  (also: ${c.join(", ")})` : "";
-          line(io.stdout, `${s.owned ? "*" : " "} ${s.name.padEnd(wn)}  ${s.binding.padEnd(wb)}  ${s.command}${tail}`);
+        const tail = (s: R) => (s.error ? `  (can't read: ${s.error})` : s.conflicts.length ? `  (also: ${s.conflicts.join(", ")})` : "");
+        // --flat: GNOME's order, as before. Otherwise motherapp's own first, then the rest, each
+        // group's rows indented under a header line.
+        const out: ({ head: string } | { row: R; label: string })[] = [];
+        if (args.includes("--flat")) out.push(...rows.map((row) => ({ row, label: row.name })));
+        else {
+          for (const e of [...mine, ...theirs]) {
+            if (e.kind === "single") {
+              out.push({ row: e.item, label: e.label });
+              continue;
+            }
+            const extra = [plural(e.members.length, "shortcut"), e.keys, e.conflicts ? plural(e.conflicts, "conflict") : ""].filter(Boolean);
+            out.push({ head: `${e.members[0]!.item.owned ? "*" : " "} ${e.name}  (${extra.join(", ")})` });
+            for (const m of e.members) out.push({ row: m.item, label: `  ${m.label}` });
+          }
+        }
+        const rowsOut = out.filter((o): o is { row: R; label: string } => "row" in o);
+        const wn = Math.max(...rowsOut.map((o) => o.label.length));
+        const wb = Math.max(...rowsOut.map((o) => o.row.binding.length));
+        for (const o of out) {
+          if ("head" in o) line(io.stdout, o.head);
+          else line(io.stdout, `${o.row.owned ? "*" : " "} ${o.label.padEnd(wn)}  ${o.row.binding.padEnd(wb)}  ${o.row.command}${tail(o.row)}`);
         }
         return 0;
       }
       case "add": {
-        const [pos, command] = splitDashDash(args);
+        const [all, command] = splitDashDash(args);
+        const [pos, group] = takeGroup(all);
         if (pos.length !== 2) throw new UsageError(pos.length < 2 ? "add needs <name> and <binding>" : "add takes <name> <binding> -- <command…> (quote names with spaces)");
         if (!command || command.length === 0) throw new UsageError('add needs the command after "--"');
         const binding = checkBinding(pos[1]);
+        const name = group === undefined ? pos[0]! : groupedName(group, pos[0]!);
         const c = buildCommand(command, commandContext(io.env, loadTools(io.env)));
         const uses = bindingUses(await gnome.list(), await gnome.builtins());
         warn(warningsFor(binding, c, uses, io.env));
-        const s = await gnome.add({ name: pos[0]!, binding, command: c });
+        const s = await gnome.add({ name, binding, command: c });
         line(io.stdout, `added '${s.name}' (${accelLabel(binding)}): ${c}`);
         return 0;
       }
       case "edit": {
-        const [pos, command] = splitDashDash(args);
+        const [all, command] = splitDashDash(args);
+        const [pos, group] = takeGroup(all);
         const fields: { name?: string; binding?: string; command?: string } = {};
         const rest: string[] = [];
         for (let i = 0; i < pos.length; i++) {
@@ -115,9 +157,10 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
           if (command.length === 0) throw new UsageError('nothing after "--"');
           fields.command = buildCommand(command, commandContext(io.env, loadTools(io.env)));
         }
-        if (Object.keys(fields).length === 0) throw new UsageError("nothing to change: give --name, --binding or -- <command…>");
+        if (Object.keys(fields).length === 0 && group === undefined) throw new UsageError("nothing to change: give --name, --group, --binding or -- <command…>");
         const list = await gnome.list();
         const s = find(list, rest[0]!);
+        if (group !== undefined) fields.name = groupedName(group, fields.name, s.name);
         warn(warningsFor(fields.binding ?? s.binding, fields.command ?? s.command, bindingUses(list, await gnome.builtins()), io.env, s.id));
         await gnome.edit(s.path, fields);
         line(io.stdout, `changed '${fields.name ?? s.name}'`);

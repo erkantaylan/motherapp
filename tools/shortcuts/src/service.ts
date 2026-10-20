@@ -10,7 +10,7 @@ import type { BindingUse } from "./conflicts.ts";
 import { diffState } from "./diff.ts";
 import { GnomeError } from "./gnome.ts";
 import type { Builtin, Gnome, Shortcut } from "./gnome.ts";
-import { buildCommand, checkBinding, commandContext, loadTools, missingProgram, warningsFor } from "./ops.ts";
+import { buildCommand, checkBinding, commandContext, groupedName, loadTools, missingProgram, warningsFor } from "./ops.ts";
 import type { Env } from "./ops.ts";
 import type { ToolCommands } from "./suggestions.ts";
 
@@ -29,7 +29,7 @@ export const realTimers: Timers = {
 export const POLL_MS = 3000;
 export const FULL_MS = 60_000;
 export const NO_DCONF_EVERY = 4;
-export const INITIAL_STATE: JsonObject = { shortcuts: {}, suggestions: {}, bindings: [], binDir: "", bins: [], home: "" };
+export const INITIAL_STATE: JsonObject = { shortcuts: {}, suggestions: {}, bindings: [], binDir: "", bins: [], binTools: {}, home: "" };
 
 export interface Row {
   [k: string]: string | boolean | number;
@@ -94,7 +94,7 @@ export class ShortcutsService {
   private ticks = 0;
   private builtins: Builtin[] = [];
   private list: Shortcut[] = [];
-  private tools: ToolCommands = { suggestions: [], bins: [], problems: [] };
+  private tools: ToolCommands = { suggestions: [], bins: [], binTools: {}, problems: [] };
   private lastProblem = "";
 
   constructor(opts: ServiceOptions) {
@@ -131,6 +131,7 @@ export class ShortcutsService {
     this.setIfChanged("binDir", this.env.binDir);
     this.setIfChanged("home", this.env.home);
     this.setIfChanged("bins", this.tools.bins);
+    this.setIfChanged("binTools", this.tools.binTools);
   }
 
   private async tick(): Promise<void> {
@@ -234,7 +235,7 @@ export class ShortcutsService {
     const t = this.tool;
     t.action("add", (args) =>
       this.wrap(async () => {
-        const name = str(args.name, "name");
+        const name = args.group === undefined ? str(args.name, "name") : groupedName(args.group, str(args.name, "name"));
         const binding = checkBinding(args.binding);
         this.tools = loadTools(this.env);
         const command = buildCommand(args.command, commandContext(this.env, this.tools));
@@ -251,6 +252,7 @@ export class ShortcutsService {
         const path = this.ownedPath(args.id);
         const fields: { name?: string; binding?: string; command?: string } = {};
         if (args.name !== undefined) fields.name = str(args.name, "name");
+        if (args.group !== undefined) fields.name = groupedName(args.group, fields.name, (t.get(`shortcuts.${str(args.id, "id")}.name`) as string | undefined) ?? "");
         if (args.binding !== undefined) fields.binding = checkBinding(args.binding);
         if (args.command !== undefined) fields.command = buildCommand(args.command, commandContext(this.env, loadTools(this.env)));
         const id = str(args.id, "id");

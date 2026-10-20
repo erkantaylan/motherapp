@@ -33,6 +33,21 @@ export const MACHINE: { seg: string; name: string; binding: string; command: str
 ];
 export const MACHINE_PATHS = MACHINE.map((m) => `${DIR}${m.seg}/`);
 
+/**
+ * The same 8 as the user listed them in issue #19 (names and bindings as reported there; the
+ * dconf segments and commands are still made up, all Dead Cells ones calling one script).
+ */
+export const MACHINE_19: typeof MACHINE = [
+  { seg: "custom0", name: "Dead Cells map: show / hide", binding: "<Control>F9", command: "/home/erkan/.local/bin/dc-map toggle" },
+  { seg: "custom1", name: "Dead Cells map: opacity", binding: "<Control>F10", command: "/home/erkan/.local/bin/dc-map opacity" },
+  { seg: "custom2", name: "Dead Cells map: zoom out", binding: "<Control>F11", command: "/home/erkan/.local/bin/dc-map zoomout" },
+  { seg: "custom3", name: "Dead Cells map: zoom in", binding: "<Control>F12", command: "/home/erkan/.local/bin/dc-map zoomin" },
+  { seg: "custom4", name: "Dead Cells map: whole level", binding: "<Control><Shift>F9", command: "/home/erkan/.local/bin/dc-map fit" },
+  { seg: "custom5", name: "Dead Cells map: follow the hero", binding: "<Control><Shift>F10", command: "/home/erkan/.local/bin/dc-map follow" },
+  { seg: "custom6", name: "Dead Cells map: take clicks", binding: "<Control><Shift>F11", command: "/home/erkan/.local/bin/dc-map clicks" },
+  { seg: "custom7", name: "CopyQ", binding: "<Primary><Alt><Shift>0", command: "copyq toggle" },
+];
+
 /** `gsettings list-recursively` of GNOME 46's keybinding schemas, captured in the container. */
 export function builtinLines(): Record<string, string[]> {
   const out: Record<string, string[]> = {};
@@ -44,9 +59,9 @@ export function builtinLines(): Record<string, string[]> {
   return out;
 }
 
-export function machineStore(): Store {
-  const values: Record<string, GValue> = { [LIST]: [...MACHINE_PATHS] };
-  for (const m of MACHINE) {
+export function machineStore(entries = MACHINE): Store {
+  const values: Record<string, GValue> = { [LIST]: entries.map((m) => `${DIR}${m.seg}/`) };
+  for (const m of entries) {
     values[`${DIR}${m.seg}/name`] = m.name;
     values[`${DIR}${m.seg}/binding`] = m.binding;
     values[`${DIR}${m.seg}/command`] = m.command;
