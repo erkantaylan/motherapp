@@ -165,8 +165,14 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     drag = undefined;
     refs.get(id)?.node.classList.remove("dragging");
     rowsEl.classList.remove("is-dragging");
-    if (rowsEl.hasPointerCapture(pointerId)) rowsEl.releasePointerCapture(pointerId);
-    window.removeEventListener("keydown", onDragKey, true);
+    if (rowsEl.hasPointerCapture(pointerId)) {
+      try {
+        rowsEl.releasePointerCapture(pointerId);
+      } catch {
+        // already gone
+      }
+    }
+    dragListeners(false);
     const order = shownOrder();
     if (commit && !sameOrder(order, start)) {
       model.propose(order);
@@ -189,12 +195,22 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     if (drag || (e.pointerType === "mouse" && e.button !== 0)) return;
     e.preventDefault(); // no text selection, no native drag
     drag = { id, pointerId: e.pointerId, start: shownOrder() };
-    rowsEl.setPointerCapture(e.pointerId);
+    // Capture keeps the moves coming when the pointer leaves the list. It throws when the
+    // browser no longer counts the pointer as active (released already, or an event a script
+    // made); the drag then still works while the pointer stays over the list.
+    try {
+      rowsEl.setPointerCapture(e.pointerId);
+    } catch {
+      // no capture
+    }
     rowsEl.classList.add("is-dragging");
     refs.get(id)?.node.classList.add("dragging");
-    window.addEventListener("keydown", onDragKey, true);
+    dragListeners(true);
   };
-  rowsEl.addEventListener("pointermove", (e) => {
+  // Move, up and cancel are heard on the window while a drag runs: with the capture they reach
+  // it through the list, and without one (see startDrag) a release outside the list still ends
+  // the drag instead of leaving it stuck.
+  const onDragMove = (e: PointerEvent) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
     const ids = shownOrder();
     const from = ids.indexOf(drag.id);
@@ -208,13 +224,26 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
       model.propose(moveItem(ids, from, to));
       sync();
     }
-  });
-  rowsEl.addEventListener("pointerup", (e) => {
+  };
+  const onDragUp = (e: PointerEvent) => {
     if (drag && e.pointerId === drag.pointerId) endDrag(true);
-  });
-  rowsEl.addEventListener("pointercancel", (e) => {
+  };
+  const onDragCancel = (e: PointerEvent) => {
     if (drag && e.pointerId === drag.pointerId) endDrag(false);
-  });
+  };
+  const dragListeners = (on: boolean) => {
+    if (on) {
+      window.addEventListener("keydown", onDragKey, true);
+      window.addEventListener("pointermove", onDragMove);
+      window.addEventListener("pointerup", onDragUp);
+      window.addEventListener("pointercancel", onDragCancel);
+    } else {
+      window.removeEventListener("keydown", onDragKey, true);
+      window.removeEventListener("pointermove", onDragMove);
+      window.removeEventListener("pointerup", onDragUp);
+      window.removeEventListener("pointercancel", onDragCancel);
+    }
+  };
   rowsEl.addEventListener("lostpointercapture", (e) => {
     if (drag && e.pointerId === drag.pointerId) endDrag(false);
   });

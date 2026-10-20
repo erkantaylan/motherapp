@@ -40,9 +40,9 @@ a fresh link**. This skill makes one and hands it over.
 5. **Hand it to the user to paste into the cloud session's chat.** Show the link and expiry in one
    short line. SendMessage to the cloud session (`session_01EFxPjjS9Wk2VY1spHAdLEj`, "motherAPp")
    **does not reach it while it's idle**: it only queues the message, and an idle cloud session
-   never starts the turn that would read it (#23, three tries, 2026-10-20). You may still send it
-   there too (it's read on the cloud's next turn, e.g. once the user types anything there), but
-   don't rely on it.
+   never starts the turn that would read it (#23, three tries, 2026-10-20). It didn't show up on
+   the cloud's next turn either: on 2026-10-21 the user's next message woke the cloud session and
+   its notification queue was still empty. You may still send it there too, but don't rely on it.
 6. **Wait for the cloud to confirm.** Once it has the link, it POSTs a short
    `[inbox: cloud] got your link …` line through it, so the confirmation shows up in this pane.
 

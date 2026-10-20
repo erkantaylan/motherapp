@@ -202,6 +202,22 @@ export async function waitFor(pred: () => boolean, what: string, timeoutMs = 300
   }
 }
 
+/**
+ * Advances the fake clock by `stepMs` until `pred` holds. One `advance` isn't enough to make a
+ * periodic job run: the service re-arms a job only after its previous run finished, so a run
+ * still in flight when the test advances lands its next timer after that advance, and with a
+ * fake clock it would never fire (the flaky "expiry drops waiting messages" of issue #25).
+ * Stepping until the effect shows doesn't depend on how fast the previous run was.
+ */
+export async function advanceUntil(timers: FakeTimers, pred: () => boolean, what: string, stepMs = 1000, timeoutMs = 10_000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (!pred()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    timers.advance(stepMs);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 export function tmpDir(tag: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `ma-inbox-${tag}-`));
 }

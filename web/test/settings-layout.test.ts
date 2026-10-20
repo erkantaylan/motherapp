@@ -96,6 +96,9 @@ class Cdp {
   }
 }
 
+/** Two animation frames: layout and paint have caught up with the last change. */
+const settle = (cdp: Cdp) => cdp.eval(`new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 500); })`);
+
 const ORDER = `[...document.querySelectorAll(".tool-order .list-row")].map((r) => r.dataset.tool)`;
 
 // Per column: the left edge of that part in every row that shows it.
@@ -117,9 +120,21 @@ const COLUMNS = String.raw`
 test("Settings: tool rows keep their columns with or without Restart; keys and drag reorder", { skip: !browserBin && "no Chrome/Chromium found (set MOTHERAPP_TEST_CHROME)", timeout: 120_000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-settings-layout-"));
   const procs: ChildProcess[] = [];
-  t.after(() => {
-    for (const p of procs) if (p.exitCode === null) p.kill("SIGKILL");
-    fs.rmSync(tmp, { recursive: true, force: true });
+  t.after(async () => {
+    // Wait for the processes to be gone: a dying Chrome still writes to its profile in `tmp`,
+    // and removing the dir under it fails with ENOTEMPTY.
+    await Promise.all(
+      procs.map((p) =>
+        p.exitCode !== null || p.signalCode !== null
+          ? undefined
+          : new Promise<void>((res) => {
+              const done = setTimeout(res, 5000);
+              p.once("exit", () => (clearTimeout(done), res()));
+              p.kill("SIGKILL");
+            }),
+      ),
+    );
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   const webDir = path.join(tmp, "web");
@@ -210,6 +225,16 @@ test("Settings: tool rows keep their columns with or without Restart; keys and d
     assert.ok(scroll <= 0, `${width}px: no horizontal scroll (${scroll} px)`);
   }
 
+  // The order is on disk, and the page has the core's answer (the order dot left "setting"; the
+  // `tools` broadcast comes before it), so the next step starts from a settled page.
+  const savedAt = async (i: number, want: string, what: string) => {
+    await waitFor(() => {
+      const cfg = JSON.parse(fs.readFileSync(path.join(cfgDir, "config.json"), "utf8")) as { order?: string[] };
+      return cfg.order?.[i] === want;
+    }, what, 10_000);
+    await cdp.until(`document.querySelector(".order-bar .dot").dataset.status !== "setting" && ${ORDER}[${i}] === ${JSON.stringify(want)}`, `${what}: the page has the answer`);
+  };
+
   // ---- keyboard: ArrowUp on the second row's handle, then End ----
   const before = await cdp.eval<string[]>(ORDER);
   const id = before[1]!;
@@ -224,26 +249,101 @@ test("Settings: tool rows keep their columns with or without Restart; keys and d
   await key("End", 35);
   await cdp.until(`${ORDER}[3] === ${JSON.stringify(id)}`, "End moved the row to the bottom");
   assert.equal(await cdp.eval<boolean>(focused), true, "focus still on the handle after End");
-  await waitFor(() => {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cfgDir, "config.json"), "utf8")) as { order?: string[] };
-    return cfg.order?.[3] === id;
-  }, "the keyboard order saved to config.json", 10_000);
+  await savedAt(3, id, "the keyboard order saved to config.json");
 
-  // ---- mouse drag: the top row's handle to below the last row ----
-  const top = (await cdp.eval<string[]>(ORDER))[0]!;
-  const pts = await cdp.eval<{ x: number; y: number; endY: number }>(`(() => {
+  // ---- drag, without input timing: pointer events dispatched to the handle in the page ----
+  // The same handlers as a real drag (pointerdown on the handle; moves and up on the window),
+  // with no browser input pipeline in between. A script-made pointer can't be captured, which
+  // startDrag allows for.
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await settle(cdp);
+  const scripted = (await cdp.eval<string[]>(ORDER))[0]!;
+  const scriptedResult = await cdp.eval<{ order: string[]; dragging: boolean }>(`(() => {
     const rows = [...document.querySelectorAll(".tool-order .list-row")];
-    const h = rows[0].querySelector(".drag-handle").getBoundingClientRect();
-    const last = rows.at(-1).getBoundingClientRect();
-    return { x: h.left + h.width / 2, y: h.top + h.height / 2, endY: last.bottom - 2 };
+    const handle = rows[0].querySelector(".drag-handle");
+    const h = handle.getBoundingClientRect();
+    const x = h.left + h.width / 2, y0 = h.top + h.height / 2, y1 = rows.at(-1).getBoundingClientRect().bottom - 2;
+    const ev = (type, y, buttons) => new PointerEvent(type, { pointerId: 7, pointerType: "mouse", isPrimary: true, button: 0, buttons, clientX: x, clientY: y, bubbles: true, cancelable: true, composed: true });
+    const list = document.querySelector(".tool-order");
+    handle.dispatchEvent(ev("pointerdown", y0, 1));
+    for (let y = y0; y < y1; y += 4) list.dispatchEvent(ev("pointermove", y, 1));
+    list.dispatchEvent(ev("pointermove", y1, 1));
+    list.dispatchEvent(ev("pointerup", y1, 0));
+    return { order: ${ORDER}, dragging: list.classList.contains("is-dragging") };
   })()`);
-  const mouse = (type: string, y: number, buttons: number) => cdp.send("Input.dispatchMouseEvent", { type, x: pts.x, y, button: "left", buttons, clickCount: 1 });
-  await mouse("mousePressed", pts.y, 1);
-  for (let i = 1; i <= 10; i++) await mouse("mouseMoved", pts.y + ((pts.endY - pts.y) * i) / 10, 1);
-  await mouse("mouseReleased", pts.endY, 0);
-  await cdp.until(`${ORDER}[3] === ${JSON.stringify(top)}`, "the drag moved the top row to the bottom");
-  await waitFor(() => {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cfgDir, "config.json"), "utf8")) as { order?: string[] };
-    return cfg.order?.[3] === top;
-  }, "the dragged order saved to config.json", 10_000);
+  assert.equal(scriptedResult.order[3], scripted, `scripted drag moved the top row to the bottom (${scriptedResult.order.join(", ")})`);
+  assert.equal(scriptedResult.dragging, false, "scripted drag ended on pointerup");
+  await savedAt(3, scripted, "the scripted drag's order saved to config.json");
+
+  // Escape during a drag puts the rows back.
+  const beforeEsc = await cdp.eval<string[]>(ORDER);
+  const escResult = await cdp.eval<{ mid: string[]; after: string[] }>(`(() => {
+    const rows = [...document.querySelectorAll(".tool-order .list-row")];
+    const handle = rows[0].querySelector(".drag-handle");
+    const h = handle.getBoundingClientRect();
+    const ev = (type, y) => new PointerEvent(type, { pointerId: 8, pointerType: "mouse", isPrimary: true, button: 0, buttons: 1, clientX: h.left + 4, clientY: y, bubbles: true, cancelable: true });
+    handle.dispatchEvent(ev("pointerdown", h.top + 2));
+    window.dispatchEvent(ev("pointermove", rows.at(-1).getBoundingClientRect().bottom - 2));
+    const mid = ${ORDER};
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    return { mid, after: ${ORDER} };
+  })()`);
+  assert.notDeepEqual(escResult.mid, beforeEsc, "the scripted move showed while dragging");
+  assert.deepEqual(escResult.after, beforeEsc, "Escape cancels the drag");
+
+  // ---- real mouse drag through Chrome's input pipeline: the top row's handle to the bottom ----
+  // Robust to another Chrome, fonts and timing (issue #25: on the machine the page was taller,
+  // so the handle's focus() had scrolled it and the press landed above the top row). Here: a
+  // pinned 1280x900 viewport at scale 1, the list scrolled into view and checked to fit, the
+  // press point checked to hit the handle, small steps, and each step waits until the page has
+  // seen that move. Retried once, with a note in the test output, if the browser loses it anyway.
+  const realDrag = async (): Promise<void> => {
+    await cdp.eval(`(() => {
+      document.querySelector(".tool-order").scrollIntoView({ block: "center" });
+      window.__seen = { down: 0, up: 0, y: null };
+      if (!window.__probe) {
+        window.__probe = true;
+        addEventListener("pointerdown", () => window.__seen.down++, true);
+        addEventListener("pointerup", () => window.__seen.up++, true);
+        addEventListener("pointermove", (e) => (window.__seen.y = e.clientY), true);
+      }
+    })()`);
+    await settle(cdp);
+    const top = (await cdp.eval<string[]>(ORDER))[0]!;
+    const p = await cdp.eval<{ x: number; y: number; endY: number; listTop: number; listBottom: number; vh: number; hit: boolean }>(`(() => {
+      const rows = [...document.querySelectorAll(".tool-order .list-row")];
+      const handle = rows[0].querySelector(".drag-handle");
+      const h = handle.getBoundingClientRect();
+      const list = document.querySelector(".tool-order").getBoundingClientRect();
+      const x = Math.round(h.left + h.width / 2), y = Math.round(h.top + h.height / 2);
+      const at = document.elementFromPoint(x, y);
+      return { x, y, endY: Math.round(rows.at(-1).getBoundingClientRect().bottom - 3), listTop: list.top, listBottom: list.bottom, vh: innerHeight, hit: !!at && handle.contains(at) };
+    })()`);
+    assert.ok(p.listTop >= 0 && p.listBottom <= p.vh, `the tool list fits the viewport for the drag (${p.listTop}..${p.listBottom} of ${p.vh} px)`);
+    assert.ok(p.hit, `the press point ${p.x},${p.y} hits the top row's handle`);
+    const mouse = (type: string, y: number, buttons: number) => cdp.send("Input.dispatchMouseEvent", { type, x: p.x, y, button: "left", buttons, clickCount: 1 });
+    await mouse("mouseMoved", p.y, 0);
+    await mouse("mousePressed", p.y, 1);
+    await cdp.until(`window.__seen.down === 1 && document.querySelector(".tool-order").classList.contains("is-dragging")`, "the press started a drag", 5000);
+    for (let y = p.y + 4; ; y = Math.min(y + 4, p.endY)) {
+      await mouse("mouseMoved", y, 1);
+      await cdp.until(`window.__seen.y !== null && Math.abs(window.__seen.y - ${y}) < 0.5`, `the page saw the move to y=${y}`, 5000);
+      if (y === p.endY) break;
+    }
+    await mouse("mouseReleased", p.endY, 0);
+    await cdp.until(`window.__seen.up === 1 && !document.querySelector(".tool-order").classList.contains("is-dragging")`, "the release ended the drag", 5000);
+    await cdp.until(`${ORDER}[3] === ${JSON.stringify(top)}`, "the drag moved the top row to the bottom", 5000);
+    await savedAt(3, top, "the dragged order saved to config.json");
+  };
+  try {
+    await realDrag();
+  } catch (e) {
+    // Let go of the button whatever state the first try left, then once more from the start.
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 1, y: 1, button: "left", buttons: 0, clickCount: 1 }).catch(() => {});
+    await cdp.until(`!document.querySelector(".tool-order").classList.contains("is-dragging")`, "the failed drag ended", 5000);
+    const note = `real mouse drag failed once, retrying: ${(e as Error).message}`;
+    t.diagnostic(note);
+    console.error(`settings-layout: ${note}`);
+    await realDrag();
+  }
 });
