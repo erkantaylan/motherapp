@@ -142,13 +142,29 @@ an action. When the user changes a control, the action is called with `{ ...args
 
 | Widget | Fields |
 |---|---|
-| `text` | `text?` (static), `bind?` (shown value), `style?: "heading" \| "body" \| "muted"` |
+| `text` | `text?` (static), `bind?` (shown value), `style?: "heading" \| "body" \| "muted"`, `reserve?` (with `bind`, default `true`: keep one line of space while the value is absent) |
 | `button` | `label`, `action?`, `args?`, `style?: "default" \| "primary" \| "danger"`, `confirm?`, `copy?` — sends `args`. `action` is required unless `copy` is set. See "Buttons: confirm and copy" below. |
 | `toggle` | `label?`, `bind`, `action`, `args?` — `value: boolean` |
 | `slider` | `label?`, `bind`, `action`, `min`, `max`, `step?`, `unit?`, `args?` — `value: number` |
 | `radio` | `label?`, `bind`, `action`, `args?`, and either `options: [{value,label}]` (a group) or `value` (one button, checked when `state[bind] == value`; buttons sharing a `bind` form one group — use this inside list rows for "default device") |
 | `meter` | `label?`, `stream?` or `bind?`, `min?` (0), `max?` (1), `manual?` (shows a Monitor button; the stream is only open while it is on). Without `manual` the stream is open while the meter is on screen. |
 | `list` | `label?`, `bind`, `item: { label?, sublabel?, widgets? }`, `sort?` (item field), `empty?` |
+
+**A control under the pointer must never move while it's being dragged.** Anything that
+appears, vanishes or changes height above a control while values change pushes it away from
+the pointer. So:
+
+- A bound `text` keeps one line of space while its value is absent (`reserve` defaults to
+  `true`). That's the default because a value that comes and goes is the usual case; opt out
+  with `reserve: false` only for text that changes when no control can be in use, such as a
+  warning set at startup or a status shown only while a list is empty.
+- One reserved line doesn't stop text that wraps onto two lines from growing. Keep text that
+  changes while controls are used short, or put it below the controls (the brightness page puts
+  its "shows the average" note last).
+- A list row's `sublabel` is always one line (cut with an ellipsis, full text on hover), so a
+  note added to it doesn't make the row taller. An empty `sublabel` still hides the line, so
+  keep a row's sublabel either always empty or never empty if it changes while in use.
+- Status dots keep their space when they fade out.
 
 **Lists** bind to an **object map** `{ [key]: item }`. Rows are keyed by the map key and
 updated in place: a volume change on one row touches only that slider; rows appearing or

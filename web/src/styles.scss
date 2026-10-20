@@ -135,6 +135,8 @@
   .w-text { margin: 0; }
   .w-text.heading { margin: var(--bs-spacer-5) 0 0; font-size: var(--bs-font-size-md); font-weight: 600; }
   .w-text.muted { color: var(--muted); }
+  // A bound text keeps one line while its value is absent (textWidget.ts, issue #12).
+  .w-text.reserve { min-height: 1lh; }
   .control { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4); align-items: center; }
   .control-label { min-width: 140px; margin: 0; }
   .list-row .control-label { min-width: 0; }
@@ -182,7 +184,9 @@
   .list-row.selected { background-color: color-mix(in oklch, var(--bs-primary-bg-subtle) 60%, var(--bs-bg-body)); }
   .row-labels { flex: 1 1 160px; min-width: 0; }
   .row-title { font-weight: 550; overflow-wrap: anywhere; }
-  .row-sub { font-size: var(--bs-font-size-sm); color: var(--muted); }
+  // One line, always: a note added to a subtitle must not make the row taller (issue #12).
+  // The full text is in the title attribute.
+  .row-sub { overflow: hidden; font-size: var(--bs-font-size-sm); color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
   .row-controls { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4); align-items: center; }
   .row-controls .control { gap: var(--bs-spacer-3); }
   .list-empty[hidden] { display: none; }

@@ -21,6 +21,7 @@ import type { ToolStore } from "./store.ts";
 import { buttonStyle, clickButton, copyToClipboard } from "./button.ts";
 import type { CopyEnv } from "./button.ts";
 import { interpolate, interpolateWidget } from "./template.ts";
+import { textView } from "./textWidget.ts";
 import type { TemplateContext } from "./template.ts";
 
 export interface RenderContext {
@@ -79,11 +80,6 @@ function markStale(el: HTMLElement, stale: boolean): void {
   else delete el.dataset.staleHint;
 }
 
-function display(v: JsonValue | undefined): string {
-  if (v === undefined || v === null) return "";
-  return typeof v === "object" ? JSON.stringify(v) : String(v);
-}
-
 /** A labelled control row. With `target`, the label is a `<label for>` that names that input. */
 function control(label: string | undefined, target: HTMLElement | null, ...parts: (Node | null)[]): HTMLElement {
   let lab: HTMLElement | null = null;
@@ -122,8 +118,9 @@ function text(w: TextWidget, ctx: RenderContext): Mounted {
   const tag = w.style === "heading" ? "h3" : "p";
   const el = h(tag, { class: `w-text ${w.style ?? "body"}` });
   const update = () => {
-    const v = w.bind ? ctx.store.get(w.bind) : undefined;
-    el.textContent = v !== undefined ? display(v) : (w.text ?? "");
+    const view = textView(w, w.bind ? ctx.store.get(w.bind) : undefined);
+    el.textContent = view.text;
+    el.classList.toggle("reserve", view.reserve);
     if (w.bind) markStale(el, ctx.store.isStale(w.bind));
   };
   update();
@@ -473,7 +470,10 @@ function list(w: ListWidget, ctx: RenderContext): Mounted {
       const t = w.item.label ? interpolate(w.item.label, tctx()) : key;
       if (title.textContent !== t) title.textContent = t;
       const s = w.item.sublabel ? interpolate(w.item.sublabel, tctx()) : "";
-      if (sub.textContent !== s) sub.textContent = s;
+      if (sub.textContent !== s) {
+        sub.textContent = s;
+        sub.title = s; // the line is cut with an ellipsis when it doesn't fit
+      }
       sub.hidden = s === "";
     };
     setLabels();
