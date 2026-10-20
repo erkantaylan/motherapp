@@ -15,6 +15,8 @@ import { ErrorCode, RpcError, RpcPeer } from "@motherapp/protocol";
 import type { JsonObject, UiNotifications, UiRequests } from "@motherapp/protocol";
 import type { LogService } from "./logService.ts";
 import type { Manager } from "./manager.ts";
+import { UpdateBusyError } from "./updater.ts";
+import type { Updater } from "./updater.ts";
 import type { VersionSource } from "./version.ts";
 
 export interface ServerOptions {
@@ -23,8 +25,10 @@ export interface ServerOptions {
   webDir: string;
   port: number;
   host?: string;
-  /** Build and checkout info for `version.get` and /api/status. */
+  /** Build, checkout and latest-release info for `version.get` and /api/status. */
   version?: VersionSource;
+  /** Settings -> "Update now" (`update.start`, `update.status`). */
+  updater?: Updater;
 }
 
 export interface RunningServer {
@@ -86,7 +90,7 @@ function send(res: http.ServerResponse, status: number, body: string | Buffer, t
 }
 
 export function startServer(opts: ServerOptions): Promise<RunningServer> {
-  const { manager, log, webDir, version } = opts;
+  const { manager, log, webDir, version, updater } = opts;
   const clients = new Set<Client>();
 
   const handleHttp = (req: http.IncomingMessage, res: http.ServerResponse): void => {
@@ -150,7 +154,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const client = new Client(ws, manager, log, version);
+      const client = new Client(ws, manager, log, version, updater);
       clients.add(client);
       ws.on("close", () => {
         client.dispose();
@@ -168,6 +172,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   manager.on("stream", (h, name, value) => {
     for (const c of clients) if (c.hasStream(h.id, name)) c.notify("stream", { tool: h.id, name, value });
   });
+  const offVersion = version?.onChange((v) => broadcast("version", v));
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -178,6 +183,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         port,
         close: () =>
           new Promise<void>((done) => {
+            offVersion?.();
             for (const c of clients) c.close();
             wss.close();
             server.close(() => done());
@@ -203,12 +209,14 @@ class Client {
   private watching: string | undefined;
   private unsubscribeLogs: (() => void) | undefined;
   private version: VersionSource | undefined;
+  private updater: Updater | undefined;
 
-  constructor(ws: WebSocket, manager: Manager, log: LogService, version?: VersionSource) {
+  constructor(ws: WebSocket, manager: Manager, log: LogService, version?: VersionSource, updater?: Updater) {
     this.ws = ws;
     this.manager = manager;
     this.log = log;
     this.version = version;
+    this.updater = updater;
     this.peer = new RpcPeer({
       send: (msg) => {
         if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -300,7 +308,22 @@ class Client {
         return null;
       case "version.get":
         if (!this.version) throw new RpcError(ErrorCode.MethodNotFound, "version info not available");
-        return this.version.get(p.refresh === true);
+        return this.version.get(p.refresh === true, p.checkRelease === true);
+      case "update.status":
+        if (!this.updater) throw new RpcError(ErrorCode.MethodNotFound, "updating from the browser isn't available");
+        return this.updater.status();
+      case "update.start": {
+        if (!this.updater) throw new RpcError(ErrorCode.MethodNotFound, "updating from the browser isn't available");
+        try {
+          const s = await this.updater.start();
+          this.log.core("info", "update started from Settings (motherapp install, unit motherapp-update)", { state: s.state });
+          return s;
+        } catch (e) {
+          if (e instanceof UpdateBusyError) throw new RpcError(ErrorCode.ActionFailed, e.message);
+          this.log.core("error", `couldn't start the update: ${(e as Error).message}`);
+          throw new RpcError(ErrorCode.ActionFailed, `couldn't start the update: ${(e as Error).message}`);
+        }
+      }
       default:
         throw new RpcError(ErrorCode.MethodNotFound, `method not found: ${method}`);
     }

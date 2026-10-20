@@ -16,6 +16,11 @@ export interface Config {
    * (manifest `order` hints, then alphabetical). See `toolOrder.ts` for the merge rules.
    */
   order?: string[];
+  /**
+   * false: never ask GitHub for the latest release ("v3 available"). Default true. Only read
+   * from the file, never written by the core.
+   */
+  updateCheck?: boolean;
 }
 
 export const DEFAULT_PORT = 7323;
@@ -46,6 +51,7 @@ function normalize(raw: unknown): Config {
   }
   const order = normalizeOrder(r.order);
   if (order) cfg.order = order;
+  if (r.updateCheck === false) cfg.updateCheck = false;
   return cfg;
 }
 

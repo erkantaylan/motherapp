@@ -8,6 +8,7 @@ import { LogsPage } from "./pages/logs.ts";
 import { mountSettings } from "./pages/settings.ts";
 import { mountToolPage } from "./pages/toolPage.ts";
 import { h } from "./renderer.ts";
+import { footerText } from "./versionText.ts";
 import { WatchTracker } from "./watch.ts";
 
 const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
@@ -31,13 +32,14 @@ const menuBtn = h("button", { class: "menu-btn btn-outline theme-secondary btn-s
 menuBtn.type = "button";
 menuBtn.setAttribute("aria-label", "Toggle sidebar");
 menuBtn.setAttribute("aria-expanded", "false");
-// Sidebar footer: the running version (v1-abc1234); "update available" when the checkout moved on.
+// Sidebar footer: the running version (v1-abc1234); "· v3 available" for a newer release, or
+// "· update available" when the checkout moved on (versionText.ts).
 const versionEl = h("div", { class: "sidebar-version muted fs-xs px-4 py-2" });
 const sidebar = h("aside", { class: "sidebar" }, h("div", { class: "brand", text: "motherapp" }), toolNav, h("div", { class: "spacer" }), builtinNav, versionEl);
 const showVersion = () => {
-  const v = app.version;
-  versionEl.textContent = v ? `${v.running.string}${v.status === "behind" ? " · update available" : ""}` : "";
-  versionEl.title = v ? (v.message ?? `built ${v.running.builtAt ?? "(unknown)"}`) : "";
+  const { text, title } = footerText(app.version);
+  versionEl.textContent = text;
+  versionEl.title = title;
 };
 app.onVersion(showVersion);
 const connBanner = h("div", { class: "conn-banner", text: "Disconnected from motherapp — reconnecting…" });

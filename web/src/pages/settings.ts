@@ -1,55 +1,156 @@
 // Built-in settings page: enable/disable tools, restart them, set their sidebar order (#20);
 // which version is running.
-import type { ToolInfo, VersionInfo } from "@motherapp/protocol";
+import type { ToolInfo, UpdateStatus, VersionInfo } from "@motherapp/protocol";
 import type { App } from "../app.ts";
 import { KeyedList } from "../keyedList.ts";
 import { confirmDialog, h, statusDot } from "../renderer.ts";
 import { ReorderModel, dropIndex, keyMove, moveMessage, moveItem, sameOrder } from "../reorder.ts";
+import { bannerText, releaseText, updateView, when } from "../versionText.ts";
 
-const when = (iso: string | null | undefined): string => (iso ? new Date(iso).toLocaleString() : "unknown");
-
-/** The "Version" section: running build, checkout, and the "run `motherapp install`" banner. */
+/**
+ * The "Version" section: running build, checkout, latest release, the banner, and "Update now"
+ * (`motherapp install` outside the service, followed through the service's restart).
+ */
 function versionSection(app: App): { el: HTMLElement; off: () => void } {
   const banner = h("div", { class: "banner" });
   banner.hidden = true;
   const runningSub = h("div", { class: "row-sub" });
   const checkoutSub = h("div", { class: "row-sub" });
+  const releaseSub = h("div", { class: "row-sub" });
+  const releaseLink = h("a", { class: "btn-outline theme-secondary btn-sm", text: "Release page" });
+  releaseLink.target = "_blank";
+  releaseLink.rel = "noopener noreferrer";
+  releaseLink.hidden = true;
   const dot = statusDot();
-  const again = h("button", { class: "btn-outline theme-secondary btn-sm", text: "Check again" });
+  const again = h("button", { class: "btn-outline theme-secondary btn-sm", text: "Check for updates" });
   again.type = "button";
   again.addEventListener("click", () => {
     dot.set("setting");
-    app.refreshVersion(true).then(
-      () => dot.set("set"),
+    app.refreshVersion(true, true).then(
+      (v) => (v.release?.error ? dot.set("failed", `couldn't check: ${v.release.error}`) : dot.set("set")),
       (e: Error) => dot.set("failed", e.message),
     );
   });
+  const updateSub = h("div", { class: "row-sub update-text" });
+  const updateDot = statusDot();
+  const updateBtn = h("button", { class: "btn-solid theme-primary btn-sm", text: "Update now" });
+  updateBtn.type = "button";
+  const logPre = h("pre", { class: "update-log-text" });
+  const logBox = h("details", { class: "update-log" }, h("summary", { text: "Update log" }), logPre);
+  logBox.hidden = true;
+
   const row = (title: string, sub: HTMLElement, ...controls: Node[]) =>
     h("div", { class: "list-group-item list-row" }, h("div", { class: "row-labels" }, h("div", { class: "row-title", text: title }), sub), h("div", { class: "row-controls" }, ...controls));
   const show = (v: VersionInfo | undefined) => {
     if (!v) {
       runningSub.textContent = "…";
       checkoutSub.textContent = "…";
+      releaseSub.textContent = "…";
       return;
     }
     const r = v.running;
     runningSub.textContent = r.error ? `${r.string} · ${r.error}` : `${r.string} · built ${when(r.builtAt)}`;
     const c = v.checkout;
     checkoutSub.textContent = c.string ? `${c.string} · checked ${when(c.checkedAt)}` : `unknown · ${c.error ?? "git gave no answer"}`;
-    banner.hidden = v.status !== "behind";
-    banner.textContent = v.message ?? "";
+    releaseSub.textContent = releaseText(v.release);
+    releaseSub.title = releaseSub.textContent;
+    releaseLink.hidden = !v.release?.latestUrl;
+    if (v.release?.latestUrl) releaseLink.href = v.release.latestUrl;
+    const text = bannerText(v);
+    banner.hidden = text === undefined;
+    banner.textContent = text ?? "";
   };
+
+  // ---- Update now ----
+  let upd: UpdateStatus | undefined;
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  const showUpdate = () => {
+    const view = updateView(upd, app.conn.connected);
+    let text = view.text;
+    // The page's own code is still the old build's until a reload.
+    if (upd?.state === "done" && app.loadedBuild && app.version && app.version.running.string !== app.loadedBuild) text += " · reload the page for the new UI";
+    updateSub.textContent = text || "Pulls main, rebuilds and restarts the service";
+    updateSub.title = updateSub.textContent;
+    updateSub.dataset.tone = view.tone;
+    updateBtn.disabled = view.busy || !app.conn.connected;
+    updateBtn.textContent = view.busy ? "Updating…" : "Update now";
+    logBox.hidden = !upd || upd.log === "";
+    logPre.textContent = upd?.log ?? "";
+    if (view.tone === "error") logBox.open = true;
+  };
+  const poll = () => {
+    clearTimeout(pollTimer);
+    if (!app.conn.connected) return showUpdate();
+    app.conn.request("update.status", {}).then(
+      (s) => {
+        const was = upd?.state;
+        upd = s;
+        if (s.state === "running") pollTimer = setTimeout(poll, 1000);
+        else if (was === "running") app.refreshVersion(true).catch(() => {});
+        showUpdate();
+      },
+      () => showUpdate(), // disconnected mid-request: onOpen polls again
+    );
+  };
+  updateBtn.addEventListener("click", () => {
+    void confirmDialog(
+      "Update motherapp now? This runs `motherapp install` outside the service: it pulls main, rebuilds and restarts the service, and this page reconnects by itself. It refuses when the checkout has local changes, isn't on main or has diverged, and it never removes packages. If something needs sudo, it stops and asks you to run `motherapp install` in a terminal.",
+      "Update now",
+      "primary",
+    ).then((ok) => {
+      if (!ok) return;
+      updateDot.set("setting");
+      app.conn.request("update.start", {}).then(
+        (s) => {
+          updateDot.set("set");
+          upd = s;
+          showUpdate();
+          poll();
+        },
+        (e: Error) => {
+          updateDot.set("failed", e.message);
+          poll();
+        },
+      );
+    });
+  });
+
   show(app.version);
-  const off = app.onVersion(() => show(app.version));
+  showUpdate();
+  const offs = [
+    app.onVersion(() => {
+      show(app.version);
+      showUpdate();
+    }),
+    app.conn.onState(() => showUpdate()),
+    // Also right now: what the last update did. After the service restarts, the reconnect runs it again.
+    app.conn.onOpen(poll),
+  ];
   const el = h(
     "section",
     {},
     h("h3", { class: "w-text heading", text: "Version" }),
     banner,
-    h("div", { class: "list-group list-rows" }, row("Running", runningSub), row("Checkout", checkoutSub, again, dot.el)),
-    h("p", { class: "w-text muted", text: "Update with `motherapp install` in a terminal: it pulls main, rebuilds and restarts the service." }),
+    h(
+      "div",
+      { class: "list-group list-rows" },
+      row("Running", runningSub),
+      row("Checkout", checkoutSub, again, dot.el),
+      row("Latest release", releaseSub, releaseLink),
+      row("Update", updateSub, updateBtn, updateDot.el),
+    ),
+    logBox,
+    h("p", { class: "w-text muted", text: "Update now = `motherapp install` (also works in a terminal). Releases are tags v<N> on main; the update pulls main, which is at or past the latest release." }),
   );
-  return { el, off };
+  return {
+    el,
+    off: () => {
+      for (const off of offs) off();
+      clearTimeout(pollTimer);
+      dot.dispose();
+      updateDot.dispose();
+    },
+  };
 }
 
 interface RowRefs {

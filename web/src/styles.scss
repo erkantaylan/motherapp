@@ -202,6 +202,27 @@
   .row-controls .control { gap: var(--bs-spacer-3); }
   .list-empty[hidden] { display: none; }
 
+  // Settings: "Update now". Its line wraps (a refusal must be readable in full), and the log
+  // scrolls inside its box instead of widening the page.
+  .row-sub.update-text { white-space: normal; overflow-wrap: anywhere; }
+  .update-text[data-tone="info"] { color: var(--bs-body-color); }
+  .update-text[data-tone="ok"] { color: var(--bs-success-fg-emphasis, var(--bs-body-color)); }
+  .update-text[data-tone="error"] { color: var(--bs-danger-fg-emphasis, var(--bs-danger)); }
+  .update-log { margin: var(--bs-spacer-3) 0 0; }
+  .update-log[hidden] { display: none; }
+  .update-log summary { cursor: pointer; font-size: var(--bs-font-size-sm); color: var(--muted); }
+  .update-log-text {
+    max-height: 24em;
+    margin: var(--bs-spacer-2) 0 0;
+    padding: var(--bs-spacer-3);
+    overflow: auto;
+    font-size: var(--bs-font-size-xs, 0.75rem);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--bs-secondary-bg, rgba(127, 127, 127, 0.1));
+    border-radius: var(--radius);
+  }
+
   // Settings: tool order (issue #20). The handle is a button: pointer drags (touch-action: none,
   // so a finger drags instead of scrolling), and the arrow keys while it has the focus.
   .order-bar { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-3) var(--bs-spacer-4); align-items: center; justify-content: space-between; margin: var(--bs-spacer-2) 0 var(--bs-spacer-3); }

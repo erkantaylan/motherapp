@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { BuildInfo, CheckoutInfo, VersionInfo } from "@motherapp/protocol";
+import type { ReleaseChecker } from "./releases.ts";
 
 export function formatVersion(version: string, hash: string, dirty: boolean): string {
   return `v${version}-${hash}${dirty ? "-dirty" : ""}`;
@@ -118,17 +119,34 @@ export function compareVersions(running: BuildInfo, checkout: CheckoutInfo): Ver
   return out;
 }
 
-/** What the server exposes: build info read once at start, checkout looked up on demand. */
+/**
+ * What the server exposes: build info read once at start, checkout looked up on demand, and the
+ * latest release (when a ReleaseChecker is given).
+ */
 export class VersionSource {
   readonly build: BuildInfo;
   private checkout: Checkout;
+  private release: ReleaseChecker | undefined;
 
-  constructor(build: BuildInfo, checkout: Checkout) {
+  constructor(build: BuildInfo, checkout: Checkout, release?: ReleaseChecker) {
     this.build = build;
     this.checkout = checkout;
+    this.release = release;
   }
 
-  async get(refresh = false): Promise<VersionInfo> {
-    return compareVersions(this.build, await this.checkout.get(refresh));
+  /** `refresh`: ask git again. `checkRelease`: ask GitHub again (waits for the answer). */
+  async get(refresh = false, checkRelease = false): Promise<VersionInfo> {
+    const [checkout] = await Promise.all([this.checkout.get(refresh), checkRelease ? this.release?.check() : undefined]);
+    const out = compareVersions(this.build, checkout);
+    if (this.release) out.release = this.release.info();
+    return out;
+  }
+
+  /** Runs `l` with fresh info whenever a release check finishes. */
+  onChange(l: (v: VersionInfo) => void): () => void {
+    if (!this.release) return () => {};
+    return this.release.onChange(() => {
+      void this.get().then(l, () => {});
+    });
   }
 }

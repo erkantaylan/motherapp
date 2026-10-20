@@ -20,6 +20,8 @@ export class App {
   private logListeners = new Set<(e: LogEntry) => void>();
   /** Running build vs checkout; asked for on every (re)connect, since a restart may bring a new build. */
   version: VersionInfo | undefined;
+  /** The build that was running when this page loaded (its code is that build's until a reload). */
+  loadedBuild: string | undefined;
   private versionListeners = new Set<() => void>();
 
   constructor(url: string) {
@@ -38,13 +40,21 @@ export class App {
     });
   }
 
-  /** Asks the core for its version info; `refresh` makes it look the checkout up again. */
-  refreshVersion(refresh = false): Promise<VersionInfo> {
-    return this.conn.request("version.get", { refresh }).then((v) => {
-      this.version = v;
-      for (const l of [...this.versionListeners]) l();
+  /**
+   * Asks the core for its version info; `refresh` makes it look the checkout up again,
+   * `checkRelease` asks GitHub for the latest release again.
+   */
+  refreshVersion(refresh = false, checkRelease = false): Promise<VersionInfo> {
+    return this.conn.request("version.get", checkRelease ? { refresh, checkRelease } : { refresh }).then((v) => {
+      this.setVersion(v);
       return v;
     });
+  }
+
+  private setVersion(v: VersionInfo): void {
+    this.loadedBuild ??= v.running.string;
+    this.version = v;
+    for (const l of [...this.versionListeners]) l();
   }
 
   onVersion(l: () => void): () => void {
@@ -122,6 +132,10 @@ export class App {
         for (const l of this.logListeners) l(p.entry);
         break;
       }
+      case "version":
+        // A periodic release check finished ("v3 available").
+        this.setVersion(params as UiNotifications["version"]);
+        break;
     }
   }
 

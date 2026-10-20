@@ -81,6 +81,47 @@ export interface VersionInfo {
   status: "current" | "behind" | "unknown";
   /** For "behind": "running v1-abc1234, checkout is at v1-def5678, run `motherapp install`". */
   message?: string;
+  /** The latest GitHub release, compared with the running build's number (absent: no checker). */
+  release?: ReleaseInfo;
+}
+
+/**
+ * The latest GitHub release (tags `v<N>` on main), from the core's periodic check of
+ * api.github.com (at start, every 6 h, and on demand). Cached; the last good answer is kept when
+ * a later check fails, with `error` set.
+ */
+export interface ReleaseInfo {
+  /** Its tag, e.g. "v3", or null when no check has succeeded yet. */
+  latest: string | null;
+  /** Its release page. */
+  latestUrl: string | null;
+  /** The latest release's number is higher than the running build's. */
+  newer: boolean;
+  /** When the last check finished (ISO 8601), or null before the first one. */
+  checkedAt: string | null;
+  /** Why the last check failed ("couldn't check: …" in the UI). */
+  error?: string;
+  /** `updateCheck: false` in config.json: no network check at all. */
+  disabled?: boolean;
+}
+
+/**
+ * Settings -> "Update now": `motherapp install`, run outside the service (a transient
+ * `motherapp-update` systemd user unit) so it survives the restart it causes. Read back from
+ * ~/.local/state/motherapp/update.log, so it is still there after that restart.
+ */
+export interface UpdateStatus {
+  /** idle: no update has run (no log). done/failed: the last one finished. */
+  state: "idle" | "running" | "done" | "failed";
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number;
+  /** The last lines of the log. */
+  log: string;
+  /** "v1-abc1234 → v2-def5678", or "already up to date (…)". */
+  summary?: string;
+  /** For "failed": the reason, e.g. motherapp's "refusing: the checkout has local changes". */
+  message?: string;
 }
 
 // ---- requests (browser -> core) ----
@@ -108,8 +149,14 @@ export interface UiRequests {
   "tools.setOrder": { params: { order: string[] }; result: null };
   /** Forgets the saved order (back to manifest `order` hints, then alphabetical). */
   "tools.resetOrder": { params: Record<string, never>; result: null };
-  /** Running build vs checkout. The checkout is cached; `refresh` asks git again. */
-  "version.get": { params: { refresh?: boolean }; result: VersionInfo };
+  /**
+   * Running build vs checkout, plus the latest release. Both are cached; `refresh` asks git
+   * again, `checkRelease` asks GitHub again (Settings -> "Check for updates").
+   */
+  "version.get": { params: { refresh?: boolean; checkRelease?: boolean }; result: VersionInfo };
+  /** Starts `motherapp install` outside the service. Fails when one is already running. */
+  "update.start": { params: Record<string, never>; result: UpdateStatus };
+  "update.status": { params: Record<string, never>; result: UpdateStatus };
 }
 
 // ---- notifications (core -> browser) ----
@@ -128,4 +175,6 @@ export interface UiNotifications {
   /** `id` is the id of the browser's own `action` request. */
   progress: { tool: string; id: RpcId; text: string; fraction?: number };
   log: { entry: LogEntry };
+  /** The version info changed (a periodic release check finished). */
+  version: VersionInfo;
 }

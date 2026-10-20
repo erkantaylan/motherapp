@@ -16,6 +16,8 @@ ENV_BIN="$(command -v env)"
 # ~/.local/bin wrappers start them, and hand everything else (the installer's `node -e` manifest
 # read) to the real Node running these tests.
 REAL_NODE="$(command -v node)" || { echo "Bail out! needs node on PATH"; exit 1; }
+# The VERSION number the fake repos get (they copy the real VERSION).
+V="$(<"$REPO/VERSION")"
 
 PASSED=0 FAILED=0 CASE="" C="" OUT="" CODE=0
 
@@ -105,7 +107,14 @@ new_case() {
   touch "$FAKE/group_i2c"
   touch "$FAKE/active/pipewire" "$FAKE/active/wireplumber" "$FAKE/active/pipewire-pulse"
 
-  stub sudo 'echo "sudo $*" >>"$FAKE/calls"; exec "$@"'
+  # $FAKE/sudo_password: sudo needs a password, so `sudo -n` fails like the real one.
+  stub sudo 'echo "sudo $*" >>"$FAKE/calls"
+if [[ ${1:-} == -n ]]; then
+  [[ -f $FAKE/sudo_password ]] && { echo "sudo: a password is required" >&2; exit 1; }
+  shift
+fi
+[[ $* == true ]] && exit 0
+exec "$@"'
   stub id 'case "$*" in
   -u) echo 1000 ;;
   -un) echo tester ;;
@@ -423,6 +432,35 @@ check "--yes: modules-load.d file" file_has "$ROOT/etc/modules-load.d/i2c-dev.co
 check "--yes: devices OK" out_has '^OK +i2c-devices +2: i2c-1 i2c-3'
 check "--yes: exit 0" exit_is 0
 
+# MOTHERAPP_UNATTENDED=1 is how Settings -> "Update now" runs it: no terminal for a password.
+new_case unattended-sudo-password
+rm -r "$ROOT/sys/module/i2c_dev" "$ROOT/etc/modules-load.d/i2c-dev.conf" "$ROOT"/dev/i2c-*
+touch "$FAKE/sudo_password"
+EXTRA_ENV=(MOTHERAPP_UNATTENDED=1)
+run_installer --yes
+check "sudo needs a password: exit 1" exit_is 1
+check "sudo needs a password: only sudo -n tried" calls_lacks '^sudo (modprobe|install|tee)'
+check "sudo needs a password: modprobe not run" calls_lacks '^modprobe'
+check "sudo needs a password: FAIL row says use a terminal" out_has '^FAIL +sudo +sudo needs your password, .*run `motherapp install` in a terminal'
+check "sudo needs a password: says what it skipped" out_has "can't be typed here \\(unattended\\): not running sudo modprobe i2c-dev"
+check "sudo needs a password: said once" test "$(grep -c "can't be typed here" "$OUT")" = 1
+check "sudo needs a password: RESULT: FAIL" out_has '^RESULT: FAIL'
+
+new_case unattended-sudo-nopasswd
+rm -r "$ROOT/sys/module/i2c_dev" "$ROOT/etc/modules-load.d/i2c-dev.conf" "$ROOT"/dev/i2c-*
+EXTRA_ENV=(MOTHERAPP_UNATTENDED=1)
+run_installer --yes
+check "passwordless sudo: runs it with -n" calls_has "sudo -n modprobe i2c-dev"
+check "passwordless sudo: exit 0" exit_is 0
+check "passwordless sudo: no sudo FAIL row" out_lacks '^FAIL +sudo '
+
+new_case unattended-nothing-missing
+touch "$FAKE/sudo_password"
+EXTRA_ENV=(MOTHERAPP_UNATTENDED=1)
+run_installer --yes
+check "nothing missing: no sudo at all" calls_lacks '^sudo'
+check "nothing missing: exit 0" exit_is 0
+
 new_case i2c-not-persistent
 rm "$ROOT/etc/modules-load.d/i2c-dev.conf"
 run_installer <<<"n"
@@ -554,7 +592,7 @@ check "motherapp wrapper execs scripts/motherapp.sh by absolute path" \
   file_has "$(WRAP motherapp)" " $(printf %q "$R/scripts/motherapp.sh") \"\$@\""
 check "motherapp wrapper runs bash by absolute path" bash -c 'grep -qE "^exec /[^ ]*/bash " "$1"' _ "$(WRAP motherapp)"
 WOUT="$(cd / && "$ENV_BIN" -i "$(WRAP motherapp)" --version 2>&1)"
-check "motherapp wrapper runs from / with an empty environment" test "$WOUT" = "motherapp v1-unknown"
+check "motherapp wrapper runs from / with an empty environment" test "$WOUT" = "motherapp v${V}-unknown"
 check "\$HOME/.local/bin not on PATH: WARN" out_has '^WARN +bin-path +.*/\.local/bin is not on PATH'
 check "PATH WARN explains the re-login" out_has "fix: log out and back in: Ubuntu's ~/\\.profile adds ~/\\.local/bin"
 check "PATH WARN suggests the absolute path for shortcuts" out_has "absolute path, e\\.g\\. $HOME_/\\.local/bin/audioctl"
@@ -816,38 +854,38 @@ check "VERSION is a plain number" bash -c '[[ "$(<"$1")" =~ ^[0-9]+$ ]]' _ "$REP
 
 new_case version-no-git
 run_installer --yes
-check "not a git checkout: OK v1-unknown" out_has '^OK +version +v1-unknown \(not a git checkout'
+check "not a git checkout: OK v${V}-unknown" out_has "^OK +version +v${V}-unknown \\(not a git checkout"
 check "not a git checkout: hash unknown in build-info.json" test "$(json_field "$R/build-info.json" hash)" = '"unknown"'
 
 new_case version
 echo "notes" >"$R/README.md"
 git init -q -b main "$R" && git_commit_all "$R" "first"
 H="$(git -C "$R" rev-parse --short=7 HEAD)"
-check "build-info.sh prints the version string" test "$(bash "$R/scripts/build-info.sh")" = "v1-$H"
+check "build-info.sh prints the version string" test "$(bash "$R/scripts/build-info.sh")" = "v${V}-$H"
 run_installer --yes
-check "clean: OK version v1-<hash>" out_has "^OK +version +v1-$H\$"
+check "clean: OK version v${V}-<hash>" out_has "^OK +version +v${V}-$H\$"
 check "clean: the version row comes right after the build" \
   bash -c 'grep -A1 -E "^OK +build " "$1" | grep -qE "^OK +version "' _ "$OUT"
-check "build-info.json: version" test "$(json_field "$R/build-info.json" version)" = '"1"'
+check "build-info.json: version" test "$(json_field "$R/build-info.json" version)" = "\"$V\""
 check "build-info.json: hash" test "$(json_field "$R/build-info.json" hash)" = "\"$H\""
 check "build-info.json: dirty false" test "$(json_field "$R/build-info.json" dirty)" = false
 check "build-info.json: builtAt is ISO 8601 UTC" is_iso_utc "$(json_field "$R/build-info.json" builtAt)"
 check "build-info.json: nothing else" test "$("$REAL_NODE" -e 'console.log(Object.keys(JSON.parse(require("fs").readFileSync(process.argv[1]))).join())' "$R/build-info.json")" = "version,hash,dirty,builtAt"
 check "the build leaves the tree clean (build output is gitignored)" test -z "$(git -C "$R" status --porcelain)"
 run_installer --check
-check "--check: built = checkout" out_has "^OK +version +built v1-$H, checkout at v1-$H\$"
+check "--check: built = checkout" out_has "^OK +version +built v${V}-$H, checkout at v${V}-$H\$"
 echo "local edit" >>"$R/README.md"
-check "build-info.sh: a local edit gives -dirty" test "$(bash "$R/scripts/build-info.sh")" = "v1-$H-dirty"
+check "build-info.sh: a local edit gives -dirty" test "$(bash "$R/scripts/build-info.sh")" = "v${V}-$H-dirty"
 run_installer --yes
-check "dirty: OK version v1-<hash>-dirty" out_has "^OK +version +v1-$H-dirty\$"
+check "dirty: OK version v${V}-<hash>-dirty" out_has "^OK +version +v${V}-$H-dirty\$"
 check "dirty: build-info.json dirty true" test "$(json_field "$R/build-info.json" dirty)" = true
 git_commit_all "$R" "second"
 H2="$(git -C "$R" rev-parse --short=7 HEAD)"
 run_installer --check
-check "--check: checkout moved on: WARN" out_has "^WARN +version +built v1-$H-dirty, checkout is at v1-$H2\$"
+check "--check: checkout moved on: WARN" out_has "^WARN +version +built v${V}-$H-dirty, checkout is at v${V}-$H2\$"
 check "--check: points at motherapp install" out_has 'fix: motherapp install'
-echo 2 >"$R/VERSION"
-check "build-info.sh: the number comes from VERSION" test "$(bash "$R/scripts/build-info.sh")" = "v2-$H2-dirty"
+echo 7 >"$R/VERSION"
+check "build-info.sh: the number comes from VERSION" test "$(bash "$R/scripts/build-info.sh")" = "v7-$H2-dirty"
 echo "x.y" >"$R/VERSION"
 check "build-info.sh: a bad VERSION gives v?" test "$(bash "$R/scripts/build-info.sh")" = "v?-$H2-dirty"
 
@@ -890,7 +928,7 @@ head_of() { git -C "$1" rev-parse HEAD; }
 
 upd_case upd-current
 run_motherapp install
-check "up to date: says so" out_has "^already up to date \\(v1-$H1, origin/main has nothing new\\)"
+check "up to date: says so" out_has "^already up to date \\(v${V}-$H1, origin/main has nothing new\\)"
 check "up to date: fetched" out_has '\+ git fetch origin'
 check "up to date: install.sh not run" calls_lacks '^install\.sh'
 check "up to date: exit 0" exit_is 0
@@ -914,7 +952,7 @@ seed_commit "add feature A"
 seed_commit "fix bug B"
 H3="$(git -C "$SEED" rev-parse --short=7 HEAD)"
 run_motherapp status
-check "status before the pull: the built line" out_has "^built +v1-$H1\$"
+check "status before the pull: the built line" out_has "^built +v${V}-$H1\$"
 check "status: service line" out_has '^service +active \(enabled\)'
 check "status: not behind before the pull (HEAD hasn't moved)" out_lacks 'run `motherapp install`'
 run_motherapp install
@@ -923,13 +961,13 @@ check "pull: fast-forwarded" test "$(head_of "$R")" = "$(head_of "$SEED")"
 check "pull: ran git pull --ff-only" out_has '\+ git pull --ff-only origin main'
 check "pull: ran ./install.sh --yes, never --allow-removals" calls_has "install.sh --yes"
 check "pull: no --allow-removals" calls_lacks "allow-removals"
-check "pull: old -> new" out_has "^    v1-$H1 → v1-$H3\$"
+check "pull: old -> new" out_has "^    v${V}-$H1 → v${V}-$H3\$"
 check "pull: commit list, newest first" \
   bash -c 'grep -A2 "^    commits:" "$1" | sed -n "2,3p" | sed -E "s/^      [0-9a-f]{7,} //" | tr "\n" "," | grep -qx "fix bug B,add feature A,"' _ "$OUT"
 check "pull: the first commit isn't listed" out_lacks '^      [0-9a-f]+ first commit'
 check "pull: HTTP check result" out_has '^    OK http http://127\.0\.0\.1:7323/ responds$'
 run_motherapp install
-check "pull, again: already up to date" out_has "^already up to date \\(v1-$H3,"
+check "pull, again: already up to date" out_has "^already up to date \\(v${V}-$H3,"
 seed_commit "broken release"
 touch "$FAKE/http_broken"
 run_motherapp install
@@ -988,17 +1026,17 @@ seed_commit "new thing"
 git -C "$R" pull -q --ff-only origin main 2>/dev/null   # pulled by hand, not installed
 H2="$(git -C "$R" rev-parse --short=7 HEAD)"
 run_motherapp status
-check "status, core down: built vs checkout" out_has "^built v1-$H1, checkout is at v1-$H2, run \`motherapp install\`\$"
+check "status, core down: built vs checkout" out_has "^built v${V}-$H1, checkout is at v${V}-$H2, run \`motherapp install\`\$"
 cat >"$FAKE/api_status" <<EOF
-{"version":{"running":{"version":"1","hash":"$H1","dirty":false,"builtAt":"2026-10-20T10:00:00Z","string":"v1-$H1"},"checkout":{},"status":"behind"},
+{"version":{"running":{"version":"${V}","hash":"$H1","dirty":false,"builtAt":"2026-10-20T10:00:00Z","string":"v${V}-$H1"},"checkout":{},"status":"behind"},
  "tools":[{"id":"audio","title":"Audio","enabled":true,"status":"running"},
           {"id":"brightness","title":"Brightness","enabled":true,"status":"failed","statusText":"5 crashes in 2 min"},
           {"id":"demo","title":"Demo","enabled":false,"status":"stopped"}]}
 EOF
 run_motherapp status
-check "status, core up: running version" out_has "^running +v1-$H1\$"
-check "status, core up: the behind message" out_has "^running v1-$H1, checkout is at v1-$H2, run \`motherapp install\`\$"
-check "status: the checkout line" out_has "^checkout +v1-$H2 "
+check "status, core up: running version" out_has "^running +v${V}-$H1\$"
+check "status, core up: the behind message" out_has "^running v${V}-$H1, checkout is at v${V}-$H2, run \`motherapp install\`\$"
+check "status: the checkout line" out_has "^checkout +v${V}-$H2 "
 check "status: a running tool" out_has '^  audio +running$'
 check "status: a crashed tool, with why" out_has '^  brightness +failed \(5 crashes in 2 min\)$'
 check "status: a disabled tool" out_has '^  demo +disabled$'
@@ -1015,9 +1053,9 @@ check "status, stopped: exit 1" exit_is 1
 
 upd_case upd-misc
 run_motherapp version
-check "version: the built version" test "$(cat "$OUT")" = "motherapp v1-$H1"
+check "version: the built version" test "$(cat "$OUT")" = "motherapp v${V}-$H1"
 run_motherapp --version
-check "--version" test "$(cat "$OUT")" = "motherapp v1-$H1"
+check "--version" test "$(cat "$OUT")" = "motherapp v${V}-$H1"
 rm "$R/build-info.json"
 run_motherapp version
 check "version without a build: v?-unknown" out_has '^motherapp v\?-unknown \(no build-info\.json'

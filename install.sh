@@ -98,6 +98,8 @@ Usage: ./install.sh [--check | --uninstall [--purge]] [--yes [--allow-removals]]
   --help, -h    This text.
 
 Environment: MOTHERAPP_PORT (listen port; written into the unit when set at install time).
+  MOTHERAPP_UNATTENDED=1 (Settings -> Update now): sudo only without a password (sudo -n);
+  a step that needs one fails with "run `motherapp install` in a terminal".
 Exit code: 0 = everything required is OK, 1 = something required is missing or failed.
 EOF
 }
@@ -174,7 +176,24 @@ ask() {
 run() { cmdline "$*"; "$@"; }
 run_sudo() { cmdline "sudo $*"; sudo "$@"; }
 
-have() { command -v "$1" >/dev/null 2>&1; }
+# MOTHERAPP_UNATTENDED=1 (Settings -> "Update now" runs `motherapp install` that way, with no
+# terminal): nobody can type a sudo password, so sudo only runs when it needs none (sudo -n).
+# Otherwise the step fails at once, and the summary says to run `motherapp install` in a
+# terminal, instead of waiting on a prompt nobody sees. Every sudo in this script goes through here.
+SUDO_BLOCKED=0
+sudo() {
+  if [[ -z ${MOTHERAPP_UNATTENDED:-} ]]; then command sudo "$@"; return; fi
+  if command sudo -n true 2>/dev/null; then command sudo -n "$@"; return; fi
+  if (( ! SUDO_BLOCKED )); then
+    SUDO_BLOCKED=1
+    info "sudo needs a password, which can't be typed here (unattended): not running sudo $*"
+  fi
+  return 1
+}
+SUDO_HINT="sudo needs your password, which the browser can't ask for: run \`motherapp install\` in a terminal"
+
+# Binaries only (type -P): `sudo` below is also a function, which `command -v` would report.
+have() { type -P "$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------- package helpers
 
@@ -1262,6 +1281,7 @@ uninstall_shortcuts() {
 # ---------------------------------------------------------------- summary
 
 summary() {
+  (( SUDO_BLOCKED )) && record FAIL sudo "$SUDO_HINT"
   section "Summary"
   local i failed=0 warned=0 skipped=0
   for i in "${!R_STATUS[@]}"; do

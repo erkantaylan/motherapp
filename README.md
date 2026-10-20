@@ -60,7 +60,21 @@ Dart Sass, koffi.
 
 ## Install
 
-On the target machine (Ubuntu 24.04, GNOME, Wayland), from a clone of this repo:
+One line, on the target machine (Ubuntu 24.04, GNOME, Wayland), as your own user (not root):
+
+```sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/erkantaylan/motherapp/main/scripts/get.sh)"
+```
+
+It needs `git` and `curl` (`sudo apt-get install git curl`). It clones the repo into
+`~/.local/share/motherapp`, or into `MOTHERAPP_DIR` if you set it
+(`MOTHERAPP_DIR=~/src/motherapp bash -c "$(curl …)"`), and runs `./install.sh` there with its
+normal y/N prompts. This form keeps your terminal as stdin, so the prompts work; `curl … | bash`
+would answer every one with "no". If that folder is already a motherapp clone, it runs
+`motherapp install` there (an update) instead. If it holds anything else, it refuses. If
+motherapp is already installed from another checkout, it asks before moving the service over.
+
+Or from a clone of this repo:
 
 ```sh
 ./install.sh               # or: make install
@@ -74,9 +88,28 @@ prints the old → new version, the new commits and the HTTP check. It refuses w
 has local changes, isn't on `main` or has diverged (it never stashes, resets or merges), and
 says "already up to date" when there is nothing new. `motherapp status` shows the service, the
 running vs checkout version and each tool's state; `motherapp help` lists the rest (`version`,
-`check`, `logs`, `open`, `uninstall`). Versions look like `v1-abc1234`: the number in `VERSION`
+`check`, `logs`, `open`, `uninstall`). Versions look like `v2-abc1234`: the number in `VERSION`
 (bumped by hand), the short git hash, and `-dirty` for a build with uncommitted changes. The
 sidebar footer and Settings show the running version.
+
+You can also update from the browser: **Settings → Update now** (after a confirm). It runs the
+same `motherapp install`, but outside the service (as the systemd user unit `motherapp-update`),
+so it survives the restart it causes. The page shows "Updating…" and the log, reconnects by
+itself when the service is back, then shows the new version and the old → new summary. It
+follows the same rules: it refuses on local changes, another branch or diverged history, and
+shows that message. It never removes packages. A step that needs `sudo` with a password fails
+with "run `motherapp install` in a terminal", because the browser can't ask for one. The log
+is `~/.local/state/motherapp/update.log`.
+
+**Releases** are tags `v<N>` on `main` (the `VERSION` number), each with a GitHub Release
+([.github/workflows/release.yml](.github/workflows/release.yml), notes from
+`docs/releases/v<N>.md`). The core asks GitHub for the latest release at start, every 6 h, and
+on Settings → "Check for updates". The request is unauthenticated, and the answer and its ETag
+are cached in `~/.local/state/motherapp/release-check.json`. When a newer release exists, the
+sidebar says "· v3 available", and Settings shows it with a link to its release page. A failed
+check shows "couldn't check: <reason>" and changes nothing else. `"updateCheck": false` in
+`~/.config/motherapp/config.json` turns the check off. Updating always pulls `main`, which is at
+or past the latest release, because releases are tagged on `main`.
 
 `make help` lists the other targets (`make purge` = `--uninstall --purge`, which also deletes
 `~/.config/motherapp` and `~/.local/state/motherapp`).
