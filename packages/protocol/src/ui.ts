@@ -124,6 +124,51 @@ export interface UpdateStatus {
   message?: string;
 }
 
+// ---- network (DESIGN.md § 3 "Network", "Host names") ----
+
+/** A network the user marked trusted on Settings (config.json `lan.trusted`). */
+export interface TrustedNetwork {
+  /** NetworkManager connection UUID. */
+  uuid: string;
+  /** Its NAME when it was trusted (shown only; the UUID and MAC decide). */
+  name: string;
+  /** MAC address of the default gateway when it was trusted, lowercase `aa:bb:cc:dd:ee:ff`. */
+  gatewayMac: string;
+}
+
+/** The network holding the default route, as NetworkManager and `ip` see it. */
+export interface ActiveNetwork {
+  name?: string;
+  uuid?: string;
+  /** NetworkManager's TYPE, e.g. "802-3-ethernet", "802-11-wireless". */
+  type?: string;
+  device?: string;
+  gatewayIp?: string;
+  gatewayMac?: string;
+  /** Why it can't be identified (then it never counts as trusted). */
+  error?: string;
+}
+
+export interface NetworkInfo {
+  /** The "Local network" switch (config.json `lan.enabled`). */
+  lanEnabled: boolean;
+  /** The core listens beyond loopback right now (switch on and a trusted network). */
+  open: boolean;
+  /** One line: "Open on Home", "Closed: not on a trusted network (Wired connection 1)", … */
+  reason: string;
+  /** The active network; null before the first look. */
+  current: ActiveNetwork | null;
+  /** The current network's UUID and gateway MAC match a trusted entry. */
+  currentTrusted: boolean;
+  trusted: TrustedNetwork[];
+  /** URLs a LAN device can open while `open`, e.g. http://192.168.1.20:7323/. */
+  addresses: string[];
+  /** Accept `*.localhost` host names (portgate subdomains); config.json `localhostSubdomains`. */
+  localhostSubdomains: boolean;
+  /** This connection may change these settings (a loopback connection with a localhost name). */
+  canChange: boolean;
+}
+
 // ---- requests (browser -> core) ----
 
 export interface UiRequests {
@@ -157,6 +202,14 @@ export interface UiRequests {
   /** Starts `motherapp install` outside the service. Fails when one is already running. */
   "update.start": { params: Record<string, never>; result: UpdateStatus };
   "update.status": { params: Record<string, never>; result: UpdateStatus };
+  /** Network settings and state; `refresh` looks the active network up again. */
+  "network.get": { params: { refresh?: boolean }; result: NetworkInfo };
+  /** The changes below are refused unless `canChange` (loopback only, DESIGN.md § 4.3). */
+  "network.setLan": { params: { enabled: boolean }; result: NetworkInfo };
+  /** Trusts the current network (its UUID and gateway MAC); fails when it can't be identified. */
+  "network.trust": { params: Record<string, never>; result: NetworkInfo };
+  "network.untrust": { params: { uuid: string }; result: NetworkInfo };
+  "network.setLocalhostSubdomains": { params: { enabled: boolean }; result: NetworkInfo };
 }
 
 // ---- notifications (core -> browser) ----
@@ -177,4 +230,6 @@ export interface UiNotifications {
   log: { entry: LogEntry };
   /** The version info changed (a periodic release check finished). */
   version: VersionInfo;
+  /** A network setting or the LAN listener's state changed (`canChange` is per connection). */
+  network: NetworkInfo;
 }

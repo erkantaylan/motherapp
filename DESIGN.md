@@ -47,7 +47,8 @@ GNOME 48 unless its author updates it.
 | Language | **TypeScript for backend and frontend** where possible, with shared types for API messages. |
 | Architecture | Core = generic manager (web server, sidebar shell, WebSocket channel, extension loader, enable/disable). **No domain logic in the core.** |
 | Features | Each feature is a **standalone CLI tool**, usable without the manager. The manager is just a UI over them. Consequence: tools are separate executables, so they *can* be in any language. |
-| Network | **Localhost only by default.** A switch in the UI opens it to the LAN; off by default. Phone control is not a goal right now, but the switch keeps the door open. |
+| Network | Localhost by default; a 'Local network' checkbox in Settings opens it to private-range source addresses on all interfaces, with no login (user's call, 2026-10-21); changeable only from localhost; open only on networks the user marked trusted (NetworkManager connection UUID + gateway MAC). |
+| Host names | `localhost`, `*.localhost` (portgate subdomains), loopback IPs; more only via the LAN switch. `*.localhost` has its own Settings toggle, on by default (`localhostSubdomains`). |
 | Per-app audio scope | **Playback streams only** (apps playing sound), not recording apps. |
 | Cockpit | **Not** used as the host, but borrow ideas: **logs, storage, networking** pages. |
 | First features | Audio (device switching + test tools + per-app volume), then monitor brightness. |
@@ -55,7 +56,7 @@ GNOME 48 unless its author updates it.
 | Next after audio + brightness | **Logs**. Storage and networking come later. |
 | Cockpit-style pages | **Write actions from the start**, not read-only first. |
 | Network switch scope | **All or none.** When it is on, everything is reachable from the LAN. No per-action local-only flag for now. |
-| Network pairing | QR + one-time-token pairing is **nice to have**, not required for the first version. **No auto-off**: no timeout, nothing on screen lock. |
+| Network pairing | QR + one-time-token pairing: **not planned for now** (2026-10-21). **No auto-off**: no timeout, nothing on screen lock. |
 | Control feedback | The UI shows the last known value immediately (the brightness tool holds its last set value). Each control has a **small status dot**: setting / set / failed. Set is shown for ~2 s, then fades; failed stays until the next success. |
 | Retiring predecessors | Retire audio-switch and the Per App Volume extension once the audio tool ships. **The user decides when.** |
 | UI model | **Hybrid** (§ 4.1, § 4.5): declarative pages by default, TS custom pages as the escape hatch. |
@@ -123,10 +124,12 @@ by Claude Code for free — optional, but cheap if we're designing a protocol an
 
 ### 4.3 Network switch details
 
-- Flipping it rebinds the listener `127.0.0.1` → LAN address; the switch itself is only
+- The `127.0.0.1` listener always stays. While the switch is on and the network is trusted,
+  the core also listens on each non-loopback interface address (a `0.0.0.0` bind on the same
+  port fails with EADDRINUSE next to `127.0.0.1`); `core/src/lan.ts`. The switch itself is only
   operable from localhost (a remote client must not be able to keep it on).
-- Pairing (nice to have, see § 3): desktop shows a QR code with a one-time token, phone scans
-  it, that device is trusted. Unpaired clients get nothing.
+- Pairing (desktop shows a QR code with a one-time token, phone scans it): **not planned for
+  now** (2026-10-21).
 - Dropped: a per-action `remote: false` flag. § 3 decided all-or-none instead.
 
 ### 4.4 Build order

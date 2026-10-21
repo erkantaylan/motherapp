@@ -61,12 +61,12 @@ test("config: created with defaults when missing, normalized when partial, kept 
   const file = path.join(dir, "sub", "config.json");
   const first = loadConfig(file);
   assert.equal(first.created, true);
-  assert.deepEqual(first.config, { port: 7323, tools: {} });
+  assert.deepEqual(first.config, { port: 7323, tools: {}, lan: { enabled: false, trusted: [] }, localhostSubdomains: true });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { port: 7323, tools: {} });
 
   saveConfig(file, { port: 9000, tools: { demo: { enabled: true } } });
   fs.writeFileSync(file, JSON.stringify({ port: 9000, tools: { demo: { enabled: true }, bad: { enabled: "yes" } }, junk: 1 }));
-  assert.deepEqual(loadConfig(file).config, { port: 9000, tools: { demo: { enabled: true } } });
+  assert.deepEqual(loadConfig(file).config, { port: 9000, tools: { demo: { enabled: true } }, lan: { enabled: false, trusted: [] }, localhostSubdomains: true });
 
   fs.writeFileSync(file, "{broken");
   const broken = loadConfig(file);

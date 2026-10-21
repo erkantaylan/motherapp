@@ -1,6 +1,7 @@
 // ~/.config/motherapp/config.json
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { TrustedNetwork } from "@motherapp/protocol";
 
 export interface ToolConfig {
   enabled: boolean;
@@ -21,12 +22,37 @@ export interface Config {
    * from the file, never written by the core.
    */
   updateCheck?: boolean;
+  /**
+   * The "Local network" switch and the networks it opens on (DESIGN.md § 3 "Network"). Off by
+   * default: the core listens on 127.0.0.1 only.
+   */
+  lan: { enabled: boolean; trusted: TrustedNetwork[] };
+  /** Accept `*.localhost` Host/Origin names (portgate subdomains). Default true. */
+  localhostSubdomains: boolean;
 }
 
 export const DEFAULT_PORT = 7323;
 
 export function defaultConfig(): Config {
-  return { port: DEFAULT_PORT, tools: {} };
+  return { port: DEFAULT_PORT, tools: {}, lan: { enabled: false, trusted: [] }, localhostSubdomains: true };
+}
+
+const MAC_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/;
+
+/** A saved `lan.trusted`: well-formed entries only, first per UUID wins. */
+export function normalizeTrusted(raw: unknown): TrustedNetwork[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TrustedNetwork[] = [];
+  for (const v of raw) {
+    if (typeof v !== "object" || v === null) continue;
+    const r = v as Record<string, unknown>;
+    if (typeof r.uuid !== "string" || r.uuid === "" || typeof r.gatewayMac !== "string") continue;
+    const uuid = r.uuid.toLowerCase();
+    const gatewayMac = r.gatewayMac.toLowerCase();
+    if (!MAC_RE.test(gatewayMac) || out.some((t) => t.uuid === uuid)) continue;
+    out.push({ uuid, name: typeof r.name === "string" ? r.name : "", gatewayMac });
+  }
+  return out;
 }
 
 /** A saved `order`: strings only, first occurrence wins. Anything that isn't an array is ignored. */
@@ -52,6 +78,11 @@ function normalize(raw: unknown): Config {
   const order = normalizeOrder(r.order);
   if (order) cfg.order = order;
   if (r.updateCheck === false) cfg.updateCheck = false;
+  if (typeof r.lan === "object" && r.lan !== null) {
+    const lan = r.lan as Record<string, unknown>;
+    cfg.lan = { enabled: lan.enabled === true, trusted: normalizeTrusted(lan.trusted) };
+  }
+  if (r.localhostSubdomains === false) cfg.localhostSubdomains = false;
   return cfg;
 }
 
@@ -65,7 +96,7 @@ export function loadConfig(file: string): { config: Config; created: boolean; er
       return { config: defaultConfig(), created: false, error: (e as Error).message };
     }
     const config = defaultConfig();
-    saveConfig(file, config);
+    saveConfig(file, { port: config.port, tools: config.tools });
     return { config, created: true };
   }
   try {
@@ -89,7 +120,7 @@ function writeAtomic(file: string, data: unknown): void {
 }
 
 /** Writes `config` as the whole file (temp file + rename). Used to create the default file. */
-export function saveConfig(file: string, config: Config): void {
+export function saveConfig(file: string, config: Partial<Config>): void {
   writeAtomic(file, config);
 }
 

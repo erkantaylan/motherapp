@@ -168,7 +168,7 @@ test("compareVersions: behind-checkout detection", () => {
 /** A Manager stand-in with just what the server touches. */
 function fakeManager(tools: ToolInfo[]): Manager {
   const m = new EventEmitter() as unknown as Manager & { list: () => ToolInfo[] };
-  Object.assign(m, { hosts: new Map(), list: () => tools });
+  Object.assign(m, { hosts: new Map(), list: () => tools, networkConfig: () => ({ lan: { enabled: false, trusted: [] }, localhostSubdomains: true }) });
   return m;
 }
 

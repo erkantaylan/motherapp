@@ -1,4 +1,8 @@
-// HTTP + WebSocket server on 127.0.0.1 (DESIGN.md § 3: localhost only by default).
+// HTTP + WebSocket server on 127.0.0.1 (DESIGN.md § 3: localhost only by default). With the
+// "Local network" switch on and a trusted network, lan.ts adds listeners on the other interface
+// addresses with these same handlers. Every request and upgrade passes the Host/Origin rules and
+// every connection the source-address rule in access.ts. (This is the core's UI/API only; the
+// inbox tool's tunnel listener is its own server in tools/inbox/ with token auth.)
 //   /ws               JSON-RPC channel to the browser (see @motherapp/protocol ui.ts)
 //   /tools/<id>/...   files of a tool (custom page modules; .ts is served type-stripped)
 //   /api/status       JSON for `motherapp status`: version info and each tool's state
@@ -8,12 +12,18 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import * as path from "node:path";
+import type * as net from "node:net";
+import type * as os from "node:os";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { ErrorCode, RpcError, RpcPeer } from "@motherapp/protocol";
-import type { JsonObject, UiNotifications, UiRequests } from "@motherapp/protocol";
+import type { JsonObject, NetworkInfo, UiNotifications, UiRequests } from "@motherapp/protocol";
+import { canChangeSettings, isAllowedSource, logSafe, refusal, RejectLog } from "./access.ts";
+import { LanController } from "./lan.ts";
 import type { LogService } from "./logService.ts";
+import { realMonitor, realRunner } from "./netIdentity.ts";
+import type { MonitorFn, Runner } from "./netIdentity.ts";
 import type { Manager } from "./manager.ts";
 import { UpdateBusyError } from "./updater.ts";
 import type { Updater } from "./updater.ts";
@@ -29,10 +39,24 @@ export interface ServerOptions {
   version?: VersionSource;
   /** Settings -> "Update now" (`update.start`, `update.status`). */
   updater?: Updater;
+  /** Test hooks for the LAN switch (lan.ts); real nmcli/ip and os.networkInterfaces otherwise. */
+  network?: {
+    run?: Runner;
+    monitor?: MonitorFn | null;
+    interfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+    hostname?: () => string;
+    pollMs?: number;
+    debounceMs?: number;
+    /** Replaces access.ts `isAllowedSource` (tests only). */
+    allowSource?: (addr: string | undefined) => boolean;
+  };
+  /** Clock for the once-an-hour refusal log. */
+  now?: () => number;
 }
 
 export interface RunningServer {
   port: number;
+  lan: LanController;
   close(): Promise<void>;
 }
 
@@ -51,32 +75,6 @@ const MIME: Record<string, string> = {
 };
 
 const TOOL_FILE_EXT = new Set([".ts", ".js", ".mjs", ".css", ".svg", ".png"]);
-const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
-
-function hostnameOf(hostHeader: string | undefined): string | undefined {
-  if (!hostHeader) return undefined;
-  try {
-    return new URL(`http://${hostHeader}`).hostname;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Guards against DNS rebinding (Host must be a loopback name) and cross-site WebSocket use
- * (a browser Origin, when present, must be a loopback origin).
- */
-export function isAllowedRequest(headers: http.IncomingHttpHeaders): boolean {
-  const host = hostnameOf(headers.host);
-  if (!host || !LOCAL_HOSTNAMES.has(host)) return false;
-  const origin = headers.origin;
-  if (origin === undefined) return true;
-  try {
-    return LOCAL_HOSTNAMES.has(new URL(origin).hostname);
-  } catch {
-    return false;
-  }
-}
 
 /** Resolves `rel` inside `root`; undefined if it escapes. */
 function safeJoin(root: string, rel: string): string | undefined {
@@ -92,9 +90,24 @@ function send(res: http.ServerResponse, status: number, body: string | Buffer, t
 export function startServer(opts: ServerOptions): Promise<RunningServer> {
   const { manager, log, webDir, version, updater } = opts;
   const clients = new Set<Client>();
+  const rejects = new RejectLog(opts.now ? { now: opts.now } : {});
+  const allowSource = opts.network?.allowSource ?? isAllowedSource;
+
+  /** Logs a refusal at most once per name per hour, without bodies. */
+  const logRefusal = (key: string, msg: string, fields: JsonObject) => {
+    if (rejects.shouldLog(key)) log.core("warn", `${msg} (logged once an hour per name)`, fields);
+  };
+  /** True when the Host/Origin rules refuse this request (and logs it). */
+  const refused = (req: http.IncomingMessage, ws: boolean): boolean => {
+    const r = refusal(req.headers, lan.hostContext());
+    if (!r) return false;
+    const value = logSafe(r.value);
+    logRefusal(`${r.what}:${value}`, `refused a request: ${r.what} "${value}" isn't a name motherapp answers to`, { what: r.what, value, ws, from: req.socket.remoteAddress ?? "" });
+    return true;
+  };
 
   const handleHttp = (req: http.IncomingMessage, res: http.ServerResponse): void => {
-    if (!isAllowedRequest(req.headers)) return send(res, 403, "forbidden");
+    if (refused(req, false)) return send(res, 403, "forbidden: motherapp doesn't answer to this host name\n");
     if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "method not allowed");
     let pathname: string;
     let url: URL;
@@ -143,24 +156,69 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     send(res, 200, fs.readFileSync(file), MIME[path.extname(file)] ?? "application/octet-stream");
   };
 
-  const server = http.createServer(handleHttp);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 
-  server.on("upgrade", (req, socket, head) => {
-    const pathname = new URL(req.url ?? "/", "http://x").pathname;
-    if (pathname !== "/ws" || !isAllowedRequest(req.headers)) {
+  const onUpgrade = (req: http.IncomingMessage, socket: net.Socket, head: Buffer) => {
+    let pathname = "";
+    try {
+      pathname = new URL(req.url ?? "/", "http://x").pathname;
+    } catch {
+      // refused below
+    }
+    if (pathname !== "/ws" || refused(req, true)) {
       socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const client = new Client(ws, manager, log, version, updater);
+      const client = new Client(ws, manager, log, lan, { remoteAddress: req.socket.remoteAddress, host: req.headers.host, origin: req.headers.origin }, version, updater);
       clients.add(client);
       ws.on("close", () => {
         client.dispose();
         clients.delete(client);
       });
     });
+  };
+
+  /** One listener: the loopback one here, and each LAN address in lan.ts. */
+  const createListener = (): http.Server => {
+    const s = http.createServer(handleHttp);
+    s.on("upgrade", onUpgrade);
+    // Only loopback and private/link-local sources, on every listener (DESIGN.md § 3 "Network").
+    s.on("connection", (sock: net.Socket) => {
+      if (allowSource(sock.remoteAddress)) return;
+      const from = logSafe(sock.remoteAddress ?? "?");
+      logRefusal(`source:${from}`, `refused a connection from ${from}: not a private or link-local address`, { what: "source", value: from });
+      sock.destroy();
+    });
+    return s;
+  };
+  const server = createListener();
+
+  const lan = new LanController({
+    store: {
+      get: () => manager.networkConfig(),
+      setLanEnabled: (e) => manager.setLanEnabled(e),
+      setTrusted: (t) => manager.setTrusted(t),
+      setLocalhostSubdomains: (e) => manager.setLocalhostSubdomains(e),
+    },
+    log,
+    createListener,
+    run: opts.network?.run ?? realRunner,
+    ...(opts.network?.monitor === null ? {} : { monitor: opts.network?.monitor ?? realMonitor }),
+    ...(opts.network?.interfaces ? { interfaces: opts.network.interfaces } : {}),
+    ...(opts.network?.hostname ? { hostname: opts.network.hostname } : {}),
+    ...(opts.network?.pollMs !== undefined ? { pollMs: opts.network.pollMs } : {}),
+    ...(opts.network?.debounceMs !== undefined ? { debounceMs: opts.network.debounceMs } : {}),
+  });
+  // Every tab gets the new state (with its own `canChange`); a tab whose name is no longer
+  // accepted (LAN closed, *.localhost turned off) is disconnected, and its reconnect gets the 403.
+  lan.on("change", () => {
+    const ctx = lan.hostContext();
+    for (const c of clients) {
+      if (refusal(c.conn, ctx)) c.close();
+      else c.notify("network", c.networkInfo());
+    }
   });
 
   const broadcast = <K extends keyof UiNotifications>(method: K, params: UiNotifications[K]) => {
@@ -179,10 +237,13 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     server.listen(opts.port, opts.host ?? "127.0.0.1", () => {
       server.off("error", reject);
       const port = (server.address() as AddressInfo).port;
+      void lan.start(port).catch((e: Error) => log.core("error", `network: ${e.message}`));
       resolve({
         port,
+        lan,
         close: () =>
           new Promise<void>((done) => {
+            lan.stop();
             offVersion?.();
             for (const c of clients) c.close();
             wss.close();
@@ -210,11 +271,16 @@ class Client {
   private unsubscribeLogs: (() => void) | undefined;
   private version: VersionSource | undefined;
   private updater: Updater | undefined;
+  private lan: LanController;
+  /** Where this connection came from and the names it used (for `canChange` and re-checks). */
+  readonly conn: { remoteAddress: string | undefined; host: string | undefined; origin: string | undefined };
 
-  constructor(ws: WebSocket, manager: Manager, log: LogService, version?: VersionSource, updater?: Updater) {
+  constructor(ws: WebSocket, manager: Manager, log: LogService, lan: LanController, conn: Client["conn"], version?: VersionSource, updater?: Updater) {
     this.ws = ws;
     this.manager = manager;
     this.log = log;
+    this.lan = lan;
+    this.conn = conn;
     this.version = version;
     this.updater = updater;
     this.peer = new RpcPeer({
@@ -237,6 +303,31 @@ class Client {
 
   hasStream(tool: string, name: string): boolean {
     return this.streams.has(`${tool}\0${name}`);
+  }
+
+  /** Only a loopback connection under a localhost name may change network settings. */
+  canChange(): boolean {
+    return canChangeSettings(this.conn.remoteAddress, this.conn, this.lan.hostContext().subdomains);
+  }
+
+  networkInfo(): NetworkInfo {
+    return this.lan.info(this.canChange());
+  }
+
+  private mustChange(): void {
+    if (!this.canChange()) throw new RpcError(ErrorCode.ActionFailed, "Only from this computer: open motherapp at http://localhost to change network settings");
+  }
+
+  /** Runs a network change; a store/identify failure becomes a message for the page. */
+  private async networkChange(fn: () => Promise<void> | void): Promise<NetworkInfo> {
+    this.mustChange();
+    try {
+      await fn();
+    } catch (e) {
+      if (e instanceof RpcError) throw e;
+      throw new RpcError(ErrorCode.ActionFailed, (e as Error).message);
+    }
+    return this.networkInfo();
   }
 
   private async handle(method: string, p: Record<string, unknown>, id: number | string): Promise<unknown> {
@@ -323,6 +414,25 @@ class Client {
           this.log.core("error", `couldn't start the update: ${(e as Error).message}`);
           throw new RpcError(ErrorCode.ActionFailed, `couldn't start the update: ${(e as Error).message}`);
         }
+      }
+      case "network.get":
+        await this.lan.get(p.refresh === true);
+        return this.networkInfo();
+      case "network.setLan": {
+        if (typeof p.enabled !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "enabled must be a boolean");
+        const enabled = p.enabled;
+        return this.networkChange(() => this.lan.setLan(enabled));
+      }
+      case "network.trust":
+        return this.networkChange(() => this.lan.trust());
+      case "network.untrust": {
+        const uuid = str("uuid");
+        return this.networkChange(() => this.lan.untrust(uuid));
+      }
+      case "network.setLocalhostSubdomains": {
+        if (typeof p.enabled !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "enabled must be a boolean");
+        const enabled = p.enabled;
+        return this.networkChange(() => this.lan.setLocalhostSubdomains(enabled));
       }
       default:
         throw new RpcError(ErrorCode.MethodNotFound, `method not found: ${method}`);

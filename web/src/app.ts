@@ -1,5 +1,5 @@
 // App-wide client state: tool infos, one ToolStore per tool, streams, progress, logs.
-import type { JsonObject, JsonValue, LogEntry, RpcId, ToolInfo, UiNotifications, VersionInfo } from "@motherapp/protocol";
+import type { JsonObject, JsonValue, LogEntry, NetworkInfo, RpcId, ToolInfo, UiNotifications, VersionInfo } from "@motherapp/protocol";
 import { Connection } from "./connection.ts";
 import { ToolStore } from "./store.ts";
 
@@ -23,6 +23,9 @@ export class App {
   /** The build that was running when this page loaded (its code is that build's until a reload). */
   loadedBuild: string | undefined;
   private versionListeners = new Set<() => void>();
+  /** Network settings and state (Settings → Network); asked for by the Settings page. */
+  network: NetworkInfo | undefined;
+  private networkListeners = new Set<() => void>();
 
   constructor(url: string) {
     this.conn = new Connection(url, (method, params) => this.onNotify(method, params));
@@ -55,6 +58,24 @@ export class App {
     this.loadedBuild ??= v.running.string;
     this.version = v;
     for (const l of [...this.versionListeners]) l();
+  }
+
+  /** Asks the core for the network state; `refresh` looks the active network up again. */
+  refreshNetwork(refresh = false): Promise<NetworkInfo> {
+    return this.conn.request("network.get", { refresh }).then((n) => {
+      this.setNetwork(n);
+      return n;
+    });
+  }
+
+  setNetwork(n: NetworkInfo): void {
+    this.network = n;
+    for (const l of [...this.networkListeners]) l();
+  }
+
+  onNetwork(l: () => void): () => void {
+    this.networkListeners.add(l);
+    return () => this.networkListeners.delete(l);
   }
 
   onVersion(l: () => void): () => void {
@@ -135,6 +156,9 @@ export class App {
       case "version":
         // A periodic release check finished ("v3 available").
         this.setVersion(params as UiNotifications["version"]);
+        break;
+      case "network":
+        this.setNetwork(params as UiNotifications["network"]);
         break;
     }
   }

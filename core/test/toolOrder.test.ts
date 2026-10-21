@@ -56,9 +56,9 @@ test("config: order is read leniently; a corrupt order is ignored and the rest s
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ma-order-cfg-"));
   const file = path.join(dir, "config.json");
   fs.writeFileSync(file, JSON.stringify({ port: 9000, tools: { demo: { enabled: false } }, order: ["b", 3, "a", "b", ""] }));
-  assert.deepEqual(loadConfig(file).config, { port: 9000, tools: { demo: { enabled: false } }, order: ["b", "a"] });
+  assert.deepEqual(loadConfig(file).config, { port: 9000, tools: { demo: { enabled: false } }, order: ["b", "a"], lan: { enabled: false, trusted: [] }, localhostSubdomains: true });
   fs.writeFileSync(file, JSON.stringify({ port: 9000, tools: { demo: { enabled: false } }, order: "audio" }));
-  assert.deepEqual(loadConfig(file).config, { port: 9000, tools: { demo: { enabled: false } } });
+  assert.deepEqual(loadConfig(file).config, { port: 9000, tools: { demo: { enabled: false } }, lan: { enabled: false, trusted: [] }, localhostSubdomains: true });
   fs.rmSync(dir, { recursive: true });
 });
 

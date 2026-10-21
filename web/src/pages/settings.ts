@@ -1,9 +1,10 @@
 // Built-in settings page: enable/disable tools, restart them, set their sidebar order (#20);
-// which version is running.
-import type { ToolInfo, UpdateStatus, VersionInfo } from "@motherapp/protocol";
+// the network switches; which version is running.
+import type { NetworkInfo, ToolInfo, UpdateStatus, VersionInfo } from "@motherapp/protocol";
 import type { App } from "../app.ts";
 import { KeyedList } from "../keyedList.ts";
 import { confirmDialog, h, statusDot } from "../renderer.ts";
+import { LAN_NOTE, networkView } from "../networkView.ts";
 import { ReorderModel, dropIndex, keyMove, moveMessage, moveItem, sameOrder } from "../reorder.ts";
 import { bannerText, releaseText, updateView, when } from "../versionText.ts";
 
@@ -153,6 +154,153 @@ function versionSection(app: App): { el: HTMLElement; off: () => void } {
   };
 }
 
+/** A switch inside the shared `.control` markup (see the tool rows). */
+function switchControl(label: string, aria: string): { el: HTMLElement; input: HTMLInputElement } {
+  const input = h("input");
+  input.type = "checkbox";
+  input.setAttribute("role", "switch");
+  input.setAttribute("switch", "");
+  input.setAttribute("aria-label", aria);
+  const el = h("label", { class: "control" }, h("span", { class: "control-label", text: label }), h("div", { class: "switch" }, input));
+  return { el, input };
+}
+
+/**
+ * The "Network" section: the Local network switch (opens only on trusted networks), the current
+ * network with "Trust this network", the trusted list, and the *.localhost toggle. Changes are
+ * refused by the core unless this tab is on this computer under a localhost name.
+ */
+function networkSection(app: App): { el: HTMLElement; off: () => void } {
+  const row = (title: string, sub: HTMLElement, ...controls: Node[]) =>
+    h("div", { class: "list-group-item list-row" }, h("div", { class: "row-labels" }, h("div", { class: "row-title", text: title }), sub), h("div", { class: "row-controls" }, ...controls));
+  const lockedNote = h("p", { class: "w-text muted" });
+
+  const lan = switchControl("On", "Local network");
+  const lanDot = statusDot();
+  const lanSub = h("div", { class: "row-sub update-text" });
+  const addresses = h("div", { class: "row-sub" });
+
+  const currentSub = h("div", { class: "row-sub" });
+  const trust = switchControl("Trusted", "Trust this network");
+  const trustDot = statusDot();
+  const again = h("button", { class: "btn-outline theme-secondary btn-sm", text: "Check again" });
+  again.type = "button";
+
+  const trustedRows = h("div", { class: "list-group list-rows" });
+  const noneTrusted = h("p", { class: "w-text muted", text: "No trusted networks yet." });
+
+  const sub = switchControl("On", "Accept *.localhost names");
+  const subDot = statusDot();
+
+  const change = (dot: ReturnType<typeof statusDot>, method: "network.setLan" | "network.trust" | "network.untrust" | "network.setLocalhostSubdomains", params: Record<string, unknown>) => {
+    dot.set("setting");
+    (app.conn.request(method, params as never) as Promise<NetworkInfo>).then(
+      (n) => {
+        dot.set("set");
+        app.setNetwork(n);
+      },
+      (e: Error) => {
+        dot.set("failed", e.message);
+        show(); // put the switch back
+      },
+    );
+  };
+  lan.input.addEventListener("change", () => change(lanDot, "network.setLan", { enabled: lan.input.checked }));
+  trust.input.addEventListener("change", () => {
+    const uuid = app.network?.current?.uuid;
+    if (trust.input.checked) change(trustDot, "network.trust", {});
+    else if (uuid) change(trustDot, "network.untrust", { uuid });
+  });
+  sub.input.addEventListener("change", () => change(subDot, "network.setLocalhostSubdomains", { enabled: sub.input.checked }));
+  again.addEventListener("click", () => {
+    trustDot.set("setting");
+    app.refreshNetwork(true).then(
+      () => trustDot.set("set"),
+      (e: Error) => trustDot.set("failed", e.message),
+    );
+  });
+
+  const removeDots: ReturnType<typeof statusDot>[] = [];
+  const show = () => {
+    const v = networkView(app.network, app.conn.connected);
+    lan.input.checked = v.lanChecked;
+    lan.input.disabled = v.locked;
+    lanSub.textContent = v.reason;
+    lanSub.title = v.reason;
+    lanSub.dataset.tone = v.tone;
+    addresses.hidden = v.addresses.length === 0;
+    addresses.replaceChildren(
+      document.createTextNode("Reachable at "),
+      ...v.addresses.flatMap((url, i) => {
+        const a = h("a", { text: url.replace(/\/$/, "") });
+        a.href = url;
+        return i === 0 ? [a] : [document.createTextNode(", "), a];
+      }),
+    );
+    currentSub.textContent = v.trustHint ? `${v.current} · ${v.trustHint}` : v.current;
+    currentSub.title = currentSub.textContent;
+    trust.input.checked = v.trustChecked;
+    trust.input.disabled = v.trustDisabled;
+    again.disabled = !app.conn.connected;
+    sub.input.checked = v.subdomainsChecked;
+    sub.input.disabled = v.locked;
+    lockedNote.textContent = v.lockedHint;
+    lockedNote.hidden = v.lockedHint === "";
+
+    for (const d of removeDots.splice(0)) d.dispose();
+    const trusted = app.network?.trusted ?? [];
+    noneTrusted.hidden = trusted.length > 0 || !app.network;
+    trustedRows.hidden = trusted.length === 0;
+    trustedRows.replaceChildren(
+      ...trusted.map((t) => {
+        const dot = statusDot();
+        removeDots.push(dot);
+        const remove = h("button", { class: "btn-outline theme-danger btn-sm", text: "Remove" });
+        remove.type = "button";
+        remove.disabled = v.locked;
+        remove.setAttribute("aria-label", `Remove ${t.name || t.uuid}`);
+        remove.addEventListener("click", () => {
+          void confirmDialog(`Stop trusting "${t.name || t.uuid}"? motherapp won't open to the local network there any more.`, "Remove", "danger").then((ok) => {
+            if (ok) change(dot, "network.untrust", { uuid: t.uuid });
+          });
+        });
+        const s = h("div", { class: "row-sub", text: `${t.uuid} · gateway ${t.gatewayMac}` });
+        s.title = s.textContent ?? "";
+        return row(t.name || "(no name)", s, remove, dot.el);
+      }),
+    );
+  };
+
+  const offs = [app.onNetwork(show), app.conn.onState(show), app.conn.onOpen(() => app.refreshNetwork().catch(() => {}))];
+  if (app.conn.connected) app.refreshNetwork().catch(() => {});
+  show();
+
+  const el = h(
+    "section",
+    {},
+    h("h3", { class: "w-text heading", text: "Network" }),
+    h("div", { class: "list-group list-rows" }, row("Local network", h("div", {}, lanSub, addresses), lan.el, lanDot.el), row("This network", currentSub, again, trust.el, trustDot.el)),
+    h("p", { class: "w-text muted", text: LAN_NOTE }),
+    h("h4", { class: "w-text heading", text: "Trusted networks" }),
+    trustedRows,
+    noneTrusted,
+    h("h4", { class: "w-text heading", text: "Local names" }),
+    h(
+      "div",
+      { class: "list-group list-rows" },
+      row("*.localhost names", h("div", { class: "row-sub", text: "Accept names like ana.localhost (portgate). Off: only localhost, 127.x.x.x and [::1]." }), sub.el, subDot.el),
+    ),
+    lockedNote,
+  );
+  return {
+    el,
+    off: () => {
+      for (const off of offs) off();
+      for (const d of [lanDot, trustDot, subDot, ...removeDots]) d.dispose();
+    },
+  };
+}
+
 interface RowRefs {
   node: HTMLElement;
   handle: HTMLButtonElement;
@@ -162,6 +310,7 @@ interface RowRefs {
 export function mountSettings(app: App, root: HTMLElement): () => void {
   const rowsEl = h("div", { class: "list-group list-rows tool-order" });
   const version = versionSection(app);
+  const network = networkSection(app);
   // Moves are announced here ("Brightness moved to position 1 of 6").
   const live = h("div", { class: "visually-hidden" });
   // Every drag handle points here (aria-describedby).
@@ -192,6 +341,7 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     live,
     keyHint,
     h("p", { class: "w-text muted", text: "Changes are saved to ~/.config/motherapp/config.json." }),
+    network.el,
     version.el,
   );
   // The core caches the checkout for a minute, so opening the page doesn't run git each time;
@@ -436,6 +586,7 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     clearTimeout(liveTimer);
     orderDot.dispose();
     version.off();
+    network.off();
     root.replaceChildren();
   };
 }

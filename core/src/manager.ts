@@ -1,8 +1,8 @@
 // The manager: discovery, enabled set, one ToolHost per tool, events for the UI server.
 // Holds no domain logic.
 import { EventEmitter } from "node:events";
-import type { JsonObject, JsonValue, ProgressParams, StateChange, ToolInfo } from "@motherapp/protocol";
-import { loadConfig, updateConfigFile } from "./config.ts";
+import type { JsonObject, JsonValue, ProgressParams, StateChange, ToolInfo, TrustedNetwork } from "@motherapp/protocol";
+import { defaultConfig, loadConfig, updateConfigFile } from "./config.ts";
 import type { Config } from "./config.ts";
 import type { LogService } from "./logService.ts";
 import { discoverTools } from "./manifest.ts";
@@ -36,7 +36,7 @@ const ICON_FILE_RE = /\.(svg|png)$/i;
 
 export class Manager extends EventEmitter<ManagerEvents> {
   readonly hosts = new Map<string, ToolHost>();
-  config: Config = { port: 0, tools: {} };
+  config: Config = defaultConfig();
   private opts: ManagerOptions;
 
   constructor(opts: ManagerOptions) {
@@ -138,7 +138,7 @@ export class Manager extends EventEmitter<ManagerEvents> {
     } catch (e) {
       throw new RpcError(ErrorCode.InvalidParams, (e as Error).message);
     }
-    this.writeConfig((raw) => {
+    this.patchConfig((raw) => {
       raw.order = order;
     });
     this.config.order = order;
@@ -148,7 +148,7 @@ export class Manager extends EventEmitter<ManagerEvents> {
 
   /** Forgets the saved order: back to the manifest hints, then alphabetical. */
   resetOrder(): void {
-    this.writeConfig((raw) => {
+    this.patchConfig((raw) => {
       delete raw.order;
     });
     delete this.config.order;
@@ -156,8 +156,13 @@ export class Manager extends EventEmitter<ManagerEvents> {
     this.emit("tools");
   }
 
+  /** The network part of the config, for lan.ts. */
+  networkConfig(): { lan: { enabled: boolean; trusted: TrustedNetwork[] }; localhostSubdomains: boolean } {
+    return { lan: this.config.lan, localhostSubdomains: this.config.localhostSubdomains };
+  }
+
   /** Edits config.json in place (other keys kept); a failure becomes an error for the caller. */
-  private writeConfig(patch: (raw: Record<string, unknown>) => void): void {
+  patchConfig(patch: (raw: Record<string, unknown>) => void): void {
     try {
       updateConfigFile(this.opts.configFile, patch);
     } catch (e) {
@@ -166,9 +171,40 @@ export class Manager extends EventEmitter<ManagerEvents> {
     }
   }
 
+  // ---- network settings (lan.ts is the NetworkStore user; other keys are kept) ----
+
+  private patchLan(patch: (lan: Record<string, unknown>) => void): void {
+    this.patchConfig((raw) => {
+      const lan = typeof raw.lan === "object" && raw.lan !== null && !Array.isArray(raw.lan) ? (raw.lan as Record<string, unknown>) : {};
+      patch(lan);
+      raw.lan = lan;
+    });
+  }
+
+  setLanEnabled(enabled: boolean): void {
+    this.patchLan((lan) => {
+      lan.enabled = enabled;
+    });
+    this.config.lan = { ...this.config.lan, enabled };
+  }
+
+  setTrusted(trusted: TrustedNetwork[]): void {
+    this.patchLan((lan) => {
+      lan.trusted = trusted.map((t) => ({ uuid: t.uuid, name: t.name, gatewayMac: t.gatewayMac }));
+    });
+    this.config.lan = { ...this.config.lan, trusted: [...trusted] };
+  }
+
+  setLocalhostSubdomains(enabled: boolean): void {
+    this.patchConfig((raw) => {
+      raw.localhostSubdomains = enabled;
+    });
+    this.config.localhostSubdomains = enabled;
+  }
+
   async setEnabled(id: string, enabled: boolean): Promise<void> {
     const host = this.host(id);
-    this.writeConfig((raw) => {
+    this.patchConfig((raw) => {
       const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
       const tools = isObj(raw.tools) ? raw.tools : {};
       const prev = tools[id];

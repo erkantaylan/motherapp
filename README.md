@@ -37,6 +37,14 @@ Config lives in `~/.config/motherapp/config.json` (created on first start: `port
 tools), state and `log.jsonl` in `~/.local/state/motherapp/`. Enable the demo tool on the
 Settings page to try the widgets.
 
+**Network** (Settings → Network). The core answers on `127.0.0.1` to `localhost`, `127.x.x.x`,
+`[::1]` and, unless turned off, `*.localhost` names (portgate). Every other Host/Origin name gets
+403. The **Local network** switch (`lan.enabled`, off by default) also opens it to
+private/link-local source addresses on the machine's interfaces, with **no login**, but only
+while the active NetworkManager connection is one you trusted (its UUID plus the gateway's MAC,
+`lan.trusted`). These settings change only from this computer. They apply to the core's UI and
+API only; the inbox tool's tunnel listener is separate and has its own token auth.
+
 ## Dependencies
 
 Target: **Ubuntu 24.04, GNOME, Wayland**. `./install.sh` checks the Node, audio and brightness
