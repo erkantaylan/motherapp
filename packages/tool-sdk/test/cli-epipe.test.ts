@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { fakeDdcutil, MACHINE_MONITORS } from "../../../tools/brightness/test/fakes.ts";
 import { MACHINE_19, machineStore } from "../../../tools/shortcuts/test/fakes.ts";
 import { session } from "../../../tools/tmux/test/fakes.ts";
+import { ryzen3900x, writeTree } from "../../../tools/cpu/test/fixtures.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "..", "..", "..");
@@ -65,7 +66,7 @@ function assertQuiet(r: Run, what: string): void {
   assert.doesNotMatch(r.err, /EPIPE|Unhandled 'error' event|at .*\.ts:\d+/, `${what}: stack trace on stderr`);
 }
 
-/** One temp "machine" with every fake the five CLIs need. */
+/** One temp "machine" with every fake the CLIs need. */
 async function fakeMachine(tmp: string) {
   const bin = path.join(tmp, "bin");
   const home = path.join(tmp, "home");
@@ -97,6 +98,9 @@ async function fakeMachine(tmp: string) {
   const now = Math.floor(Date.now() / 1000);
   fs.writeFileSync(path.join(tmuxDir, "server.json"), JSON.stringify([0, 1, 2].map((i) => session(i, `s${i}`, { created: now, activity: now }))));
   shim("tmux", path.join(repo, "tools/tmux/test/fake-tmux.ts"));
+  // cpu: a fixture sysfs tree instead of the real /sys
+  const cpuRoot = path.join(tmp, "cpu-root");
+  writeTree(cpuRoot, ryzen3900x());
   // inbox: a temp state dir (an empty delivery log still prints a line)
   const state = path.join(tmp, "state");
   fs.mkdirSync(path.join(state, "motherapp", "inbox"), { recursive: true, mode: 0o700 });
@@ -113,6 +117,7 @@ async function fakeMachine(tmp: string) {
     XDG_STATE_HOME: state,
     XDG_RUNTIME_DIR: path.join(tmp, "run"),
     MOTHERAPP_PORT: String(await deadPort()),
+    MOTHERAPP_CPU_ROOT: cpuRoot,
     BRIGHTCTL_LIBDDCUTIL: "libddcutil-missing.so.4",
     ERR_FILE: path.join(tmp, "stderr.txt"),
   };
@@ -126,6 +131,7 @@ const CLIS: [string, string[]][] = [
   ["shortcutsctl list", ["tools/shortcuts/shortcutsctl.ts", "list"]],
   ["tmuxctl list", ["tools/tmux/tmuxctl.ts", "list"]],
   ["inboxctl log", ["tools/inbox/inboxctl.ts", "log"]],
+  ["cpuctl status", ["tools/cpu/cpuctl.ts", "status"]],
 ];
 
 test("the harness really produces EPIPE: a plain write without the helper dies with a stack trace", async () => {

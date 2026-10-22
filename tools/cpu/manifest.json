@@ -1,0 +1,8 @@
+{
+  "id": "cpu",
+  "title": "CPU",
+  "icon": "🌡️",
+  "serve": ["node", "cpuctl.ts", "serve"],
+  "bin": { "cpuctl": "cpuctl.ts" },
+  "defaultEnabled": true
+}
