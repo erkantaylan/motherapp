@@ -25,7 +25,7 @@ tools/<id>/
 | Field | Meaning |
 |---|---|
 | `id` | `[a-z0-9][a-z0-9_-]*`, unique, `core` is reserved. Also the state file name and the log tag. |
-| `title`, `icon` | Sidebar entry. `icon` is text (an emoji) or a file in the tool dir ending in `.svg`/`.png`. |
+| `title`, `icon` | Sidebar entry. Once the tool has started, the `title` its `describe` returns replaces the manifest's (the CPU tool names the detected vendor: "CPU - AMD"); keep the manifest's a neutral fallback. `icon` is text (an emoji) or a file in the tool dir ending in `.svg`/`.png`. |
 | `serve` | Command line, relative to the tool dir. `"node"` means the Node that runs the core (so systemd's PATH doesn't matter). A command with a `/` is resolved against the tool dir. Any language works. |
 | `page` | Optional custom page module (see § 6). |
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |

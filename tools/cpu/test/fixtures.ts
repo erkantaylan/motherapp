@@ -22,7 +22,19 @@ export interface MachineSpec {
   /** kHz per cpu; undefined = no cpufreq dir for it. */
   freqKHz?: (cpu: number) => number | undefined;
   maxKHz: number;
+  /** Per-cpu cpuinfo_max_freq, when cores differ (Intel P-/E-cores). */
+  maxKHzOf?: (cpu: number) => number;
   scalingMaxKHz?: number;
+  /** amd_pstate_lowest_nonlinear_freq; absent = not written. */
+  lowestNonlinearKHz?: number;
+  /** cpuinfo_min_freq; absent = not written. */
+  minKHz?: number;
+  /** topology/core_id per cpu; absent = not written. */
+  coreId?: (cpu: number) => number;
+  /** intel_pstate/no_turbo ("1" = boost off); absent = not written. */
+  noTurbo?: "0" | "1";
+  /** Intel hybrid: cpu lists for /sys/devices/cpu_core/cpus and cpu_atom/cpus. */
+  pmu?: { core: number[]; atom: number[] };
   driver: string;
   governor: string;
   epp: string;
@@ -52,6 +64,10 @@ export function ryzen3900x(over: Partial<MachineSpec> = {}): MachineSpec {
     freqKHz: (c) => (4100 + 50 * Math.floor((c % 12) / 3)) * 1000 - (c >= 12 ? 10_000 : 0),
     maxKHz: 4_780_046,
     scalingMaxKHz: 4_780_046,
+    lowestNonlinearKHz: 1_727_728,
+    minKHz: 575_910,
+    // read on the machine: 0, 1, 2 | 4, 5, 6 | 8, 9, 10 | 12, 13, 14 (one disabled slot per CCX)
+    coreId: (c) => Math.floor((c % 12) / 3) * 4 + ((c % 12) % 3),
     driver: "amd-pstate-epp",
     governor: "performance",
     epp: "performance",
@@ -99,23 +115,109 @@ function put(file: string, content: string): void {
   fs.writeFileSync(file, content + "\n");
 }
 
+/** A Ryzen 5 3600: one CCD with two 3-core CCXs (not the drawn 2 CCD × 2 CCX shape). */
+export function ryzen3600(over: Partial<MachineSpec> = {}): MachineSpec {
+  return ryzen3900x({
+    model: "AMD Ryzen 5 3600 6-Core Processor",
+    ccx: [
+      [0, 1, 2, 6, 7, 8],
+      [3, 4, 5, 9, 10, 11],
+    ],
+    siblings: (c) => [c % 6, (c % 6) + 6],
+    freqKHz: (c) => (3600 + 100 * Math.floor((c % 6) / 3)) * 1000,
+    maxKHz: 4_208_000,
+    scalingMaxKHz: 4_208_000,
+    rank: undefined,
+    coreId: (c) => Math.floor((c % 6) / 3) * 4 + ((c % 6) % 3),
+    hwmon: [{ name: "k10temp", files: { temp1_input: "48000", temp1_label: "Tctl", temp3_input: "45500", temp3_label: "Tccd1" } }],
+    ...over,
+  });
+}
+
+/**
+ * An Intel hybrid like an i9-12900K: 8 P-cores with HT (cpus 0-15, siblings 2n and 2n+1) and
+ * 8 E-cores (cpus 16-23), one shared L3, intel_pstate, coretemp, no prefcore ranking.
+ */
+export function intelHybrid(over: Partial<MachineSpec> = {}): MachineSpec {
+  const all = Array.from({ length: 24 }, (_, i) => i);
+  const files: Record<string, string> = { temp1_input: "41000", temp1_label: "Package id 0" };
+  // coretemp labels its per-core sensors by core_id: P-cores 0, 4, …, 28, E-cores 32-39
+  const ids = [...Array.from({ length: 8 }, (_, i) => i * 4), ...Array.from({ length: 8 }, (_, i) => 32 + i)];
+  ids.forEach((id, i) => {
+    files[`temp${i + 2}_input`] = String(35000 + i * 500);
+    files[`temp${i + 2}_label`] = `Core ${id}`;
+  });
+  return {
+    model: "12th Gen Intel(R) Core(TM) i9-12900K",
+    vendor: "GenuineIntel",
+    family: 6,
+    ccx: [all],
+    siblings: (c) => (c < 16 ? [c - (c % 2), c - (c % 2) + 1] : [c]),
+    freqKHz: (c) => (c < 16 ? 4900_000 - (c % 2) * 400_000 : 3700_000),
+    maxKHz: 5_200_000,
+    maxKHzOf: (c) => (c < 16 ? 5_200_000 : 3_900_000),
+    minKHz: 800_000,
+    driver: "intel_pstate",
+    governor: "powersave",
+    epp: "balance_performance",
+    boost: null,
+    noTurbo: "0",
+    coreId: (c) => (c < 16 ? Math.floor(c / 2) * 4 : 32 + (c - 16)),
+    pmu: { core: all.slice(0, 16), atom: all.slice(16) },
+    hwmon: [{ name: "acpitz", files: { temp1_input: "27800" } }, { name: "coretemp", files }],
+    ...over,
+  };
+}
+
+/** A plain 6-core Intel without SMT or hybrid (an i5-9600K): one L3, coretemp, cpufreq without boost file. */
+export function intelPlain(over: Partial<MachineSpec> = {}): MachineSpec {
+  const all = [0, 1, 2, 3, 4, 5];
+  const files: Record<string, string> = { temp1_input: "38000", temp1_label: "Package id 0" };
+  all.forEach((c) => {
+    files[`temp${c + 2}_input`] = String(36000 + c * 1000);
+    files[`temp${c + 2}_label`] = `Core ${c}`;
+  });
+  return intelHybrid({
+    model: "Intel(R) Core(TM) i5-9600K CPU @ 3.70GHz",
+    ccx: [all],
+    siblings: (c) => [c],
+    freqKHz: () => 4_300_000,
+    maxKHz: 4_600_000,
+    maxKHzOf: undefined,
+    noTurbo: "1",
+    coreId: (c) => c,
+    pmu: undefined,
+    hwmon: [{ name: "coretemp", files }],
+    ...over,
+  });
+}
+
 /** Writes the tree under `root` (sys/…, proc/cpuinfo). */
 export function writeTree(root: string, m: MachineSpec): void {
   const all = m.ccx.flat().sort((a, b) => a - b);
   const cpuDir = path.join(root, "sys/devices/system/cpu");
   put(path.join(cpuDir, "online"), list(all));
   if (m.boost !== null) put(path.join(cpuDir, "cpufreq/boost"), m.boost);
+  if (m.noTurbo !== undefined) put(path.join(cpuDir, "intel_pstate/no_turbo"), m.noTurbo);
+  if (m.pmu) {
+    put(path.join(root, "sys/devices/cpu_core/cpus"), list(m.pmu.core));
+    put(path.join(root, "sys/devices/cpu_atom/cpus"), list(m.pmu.atom));
+  }
   for (const group of m.ccx) {
     for (const c of group) {
       const d = path.join(cpuDir, `cpu${c}`);
       put(path.join(d, "cache/index3/shared_cpu_list"), list(group));
       put(path.join(d, "topology/thread_siblings_list"), list(m.siblings(c)));
+      if (m.coreId) put(path.join(d, "topology/core_id"), String(m.coreId(c)));
       const f = m.freqKHz?.(c);
       if (f === undefined) continue;
       const fd = path.join(d, "cpufreq");
       put(path.join(fd, "scaling_cur_freq"), String(f));
-      put(path.join(fd, "cpuinfo_max_freq"), String(m.maxKHz));
-      put(path.join(fd, "scaling_max_freq"), String(m.scalingMaxKHz ?? m.maxKHz));
+      const max = m.maxKHzOf?.(c) ?? m.maxKHz;
+      put(path.join(fd, "cpuinfo_max_freq"), String(max));
+      put(path.join(fd, "scaling_max_freq"), String(m.scalingMaxKHz ?? max));
+      if (m.lowestNonlinearKHz !== undefined) put(path.join(fd, "amd_pstate_lowest_nonlinear_freq"), String(m.lowestNonlinearKHz));
+      if (m.minKHz !== undefined) put(path.join(fd, "cpuinfo_min_freq"), String(m.minKHz));
       put(path.join(fd, "scaling_driver"), m.driver);
       put(path.join(fd, "scaling_governor"), m.governor);
       put(path.join(fd, "energy_performance_preference"), m.epp);

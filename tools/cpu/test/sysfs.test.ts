@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ccxPerCcd, formatCpuList, parseCpuList, readSnapshot } from "../src/sysfs.ts";
-import { ryzen3900x, tempTree } from "./fixtures.ts";
+import { intelHybrid, intelPlain, ryzen3900x, tempTree } from "./fixtures.ts";
 
 test("cpu lists: parse the kernel's format, print with spaces", () => {
   assert.deepEqual(parseCpuList("0-2,12-14\n"), [0, 1, 2, 12, 13, 14]);
@@ -43,7 +43,7 @@ test("3900X: four CCX from the L3 groups, CCD0 = CCX1+2, CCD1 = CCX3+4, threads 
   );
   assert.equal(s.threads.length, 24);
   const t13 = s.threads.find((x) => x.cpu === 13)!;
-  assert.deepEqual(t13, { cpu: 13, core: 1, ccx: 0, curKHz: 4_090_000, maxKHz: 4_780_046, scalingMaxKHz: 4_780_046, governor: "performance", epp: "performance", rank: 216 });
+  assert.deepEqual(t13, { cpu: 13, core: 1, ccx: 0, coreId: 1, curKHz: 4_090_000, minKHz: 1_727_728, maxKHz: 4_780_046, scalingMaxKHz: 4_780_046, governor: "performance", epp: "performance", rank: 216 });
   assert.deepEqual(s.problems, []);
 });
 
@@ -118,4 +118,31 @@ test("the real /sys (read-only): right shape on any machine, CCX rows cover ever
   const covered = s.ccx.flatMap((c) => c.cpus).sort((a, b) => a - b);
   assert.deepEqual(covered, s.threads.map((x) => x.cpu).sort((a, b) => a - b));
   for (const x of s.sensors) assert.ok(Number.isFinite(x.value) && !x.key.includes("."));
+});
+
+test("Intel hybrid: P-/E-cores from cpu_core/cpu_atom, coretemp sensors, boost from intel_pstate/no_turbo", () => {
+  const { root, cleanup } = tempTree(intelHybrid());
+  try {
+    const s = readSnapshot(root);
+    assert.equal(s.vendor, "GenuineIntel");
+    assert.equal(s.boost, true);
+    assert.deepEqual([s.threads[0]!.kind, s.threads[15]!.kind, s.threads[16]!.kind], ["P", "P", "E"]);
+    assert.deepEqual(s.threads[3]!.core, 2, "siblings 2 and 3");
+    const pkg = s.sensors.find((x) => x.label === "Package id 0")!;
+    assert.equal(pkg.chip, "coretemp");
+    assert.equal(pkg.coreId, undefined);
+    assert.equal(s.sensors.find((x) => x.label === "Core 33")!.coreId, 33);
+    assert.equal(s.ccx.length, 1);
+    assert.equal(s.ccx[0]!.ccd, undefined);
+  } finally {
+    cleanup();
+  }
+  const plain = tempTree(intelPlain());
+  try {
+    const s = readSnapshot(plain.root);
+    assert.equal(s.boost, false, "no_turbo 1");
+    assert.ok(s.threads.every((t) => t.kind === undefined), "no PMU dirs: not hybrid");
+  } finally {
+    plain.cleanup();
+  }
 });

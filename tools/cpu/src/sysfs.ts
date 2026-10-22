@@ -1,5 +1,6 @@
-// Reads the CPU's live numbers from sysfs and /proc: topology (CCX from the L3 cache groups),
-// per-thread frequencies and amd-pstate settings, and the k10temp / asusec hwmon sensors.
+// Reads the CPU's live numbers from sysfs and /proc: topology (CCX from the L3 cache groups,
+// Intel hybrid P-/E-cores from /sys/devices/cpu_core and cpu_atom), per-thread frequencies and
+// cpufreq settings (amd-pstate or intel_pstate), and the k10temp / coretemp / asusec sensors.
 // Read-only: nothing here ever writes. Everything is read under `root` ("/" on the machine, a
 // fixture tree in tests), so no test depends on the hardware it runs on.
 import * as fs from "node:fs";
@@ -8,7 +9,7 @@ import * as path from "node:path";
 export const DEFAULT_ROOT = "/";
 
 /** hwmon chips shown on the page, matched by their `name` file (hwmonN numbers change across boots). */
-export const SENSOR_CHIPS = ["k10temp", "zenpower", "asusec"] as const;
+export const SENSOR_CHIPS = ["k10temp", "zenpower", "coretemp", "asusec"] as const;
 
 /** A temperature at or below this is a header with nothing plugged in (asusec's T_Sensor reads -40 °C). */
 export const DISCONNECTED_C = -40;
@@ -19,13 +20,19 @@ export interface Thread {
   core: number;
   /** Index into `Snapshot.ccx`. */
   ccx: number;
+  /** topology/core_id. On Zen 2 it skips the disabled core slot of each CCX (0, 1, 2, 4, …). */
+  coreId?: number;
   curKHz?: number;
+  /** The lowest clock the driver uses in normal running: amd_pstate_lowest_nonlinear_freq, else cpuinfo_min_freq. */
+  minKHz?: number;
   maxKHz?: number;
   scalingMaxKHz?: number;
   governor?: string;
   epp?: string;
   /** amd_pstate_prefcore_ranking: higher means a better core. */
   rank?: number;
+  /** Intel hybrid: a performance (cpu_core) or efficiency (cpu_atom) core. */
+  kind?: "P" | "E";
 }
 
 export interface Ccx {
@@ -46,6 +53,8 @@ export interface Sensor {
   value: number;
   /** For k10temp's TccdN: the CCD it measures (N - 1). */
   ccd?: number;
+  /** For coretemp's "Core N": the topology/core_id it measures. */
+  coreId?: number;
 }
 
 export interface Snapshot {
@@ -76,18 +85,8 @@ export function parseCpuList(s: string): number[] {
   return [...new Set(out)].sort((x, y) => x - y);
 }
 
-/** [0, 1, 2, 12, 13, 14] -> "0-2, 12-14". */
-export function formatCpuList(cpus: number[]): string {
-  const s = [...cpus].sort((a, b) => a - b);
-  const parts: string[] = [];
-  for (let i = 0; i < s.length; ) {
-    let j = i;
-    while (j + 1 < s.length && s[j + 1] === s[j]! + 1) j++;
-    parts.push(j === i ? String(s[i]) : j === i + 1 ? `${s[i]}, ${s[j]}` : `${s[i]}-${s[j]}`);
-    i = j + 1;
-  }
-  return parts.join(", ");
-}
+// Shared with the page (src/view.ts imports nothing, so the browser can load it).
+export { formatCpuList } from "./view.ts";
 
 /**
  * How many CCXs share one CCD. Zen, Zen+ and Zen 2 (family 0x17) have two 4-core CCXs per CCD;
@@ -132,7 +131,7 @@ export class SysReader {
 const CPU_DIR = "sys/devices/system/cpu";
 const HWMON_DIR = "sys/class/hwmon";
 
-function readCpuinfo(r: SysReader): { model: string; vendor?: string; family?: number } {
+export function readCpuinfo(r: SysReader): { model: string; vendor?: string; family?: number } {
   const info = r.text("proc/cpuinfo") ?? "";
   const field = (name: string) => new RegExp(`^${name}\\s*:\\s*(.*)$`, "m").exec(info)?.[1]?.trim();
   const fam = field("cpu family");
@@ -190,6 +189,8 @@ function readSensors(r: SysReader, hidden: string[]): Sensor[] {
       const s: Sensor = { key: `${chipKey}-${prefix}`, chip: name, label, kind, value };
       const ccd = /^Tccd(\d+)$/.exec(label);
       if (kind === "temp" && ccd && (name === "k10temp" || name === "zenpower")) s.ccd = Number(ccd[1]) - 1;
+      const core = /^Core (\d+)$/.exec(label);
+      if (kind === "temp" && core && name === "coretemp") s.coreId = Number(core[1]);
       out.push(s);
     }
   }
@@ -221,6 +222,11 @@ export function readSnapshot(root = DEFAULT_ROOT): Snapshot {
   const ccxOf = new Map<number, number>();
   for (const g of ccx) for (const c of g.cpus) ccxOf.set(c, g.index);
 
+  // Intel hybrid CPUs list their P- and E-cores under the two core PMUs.
+  const pCores = new Set(parseCpuList(r.text("sys/devices/cpu_core/cpus") ?? ""));
+  const eCores = new Set(parseCpuList(r.text("sys/devices/cpu_atom/cpus") ?? ""));
+  const hybrid = pCores.size > 0 && eCores.size > 0;
+
   const threads: Thread[] = [];
   let driver: string | undefined;
   for (const cpu of cpus) {
@@ -231,12 +237,16 @@ export function readSnapshot(root = DEFAULT_ROOT): Snapshot {
     const set = <K extends keyof Thread>(k: K, v: Thread[K] | undefined) => {
       if (v !== undefined) t[k] = v;
     };
+    set("coreId", r.int(`${base}/topology/core_id`));
     set("curKHz", r.int(`${base}/cpufreq/scaling_cur_freq`));
+    set("minKHz", r.int(`${base}/cpufreq/amd_pstate_lowest_nonlinear_freq`) ?? r.int(`${base}/cpufreq/cpuinfo_min_freq`));
     set("maxKHz", r.int(`${base}/cpufreq/cpuinfo_max_freq`));
     set("scalingMaxKHz", r.int(`${base}/cpufreq/scaling_max_freq`));
     set("governor", r.text(`${base}/cpufreq/scaling_governor`));
     set("epp", r.text(`${base}/cpufreq/energy_performance_preference`));
     set("rank", r.int(`${base}/cpufreq/amd_pstate_prefcore_ranking`));
+    if (hybrid && pCores.has(cpu)) t.kind = "P";
+    else if (hybrid && eCores.has(cpu)) t.kind = "E";
     driver ??= r.text(`${base}/cpufreq/scaling_driver`);
     threads.push(t);
   }
@@ -244,8 +254,13 @@ export function readSnapshot(root = DEFAULT_ROOT): Snapshot {
     problems.push(`No CPU frequencies under ${path.join(root, CPU_DIR)}/cpu*/cpufreq (is a cpufreq driver loaded?).`);
   }
 
-  // Global boost switch (acpi-cpufreq, amd-pstate passive); amd-pstate-epp also has one per policy.
-  const boostText = r.text(`${CPU_DIR}/cpufreq/boost`) ?? (cpus.length ? r.text(`${CPU_DIR}/cpu${cpus[0]}/cpufreq/boost`) : undefined);
+  // Global boost switch (acpi-cpufreq, amd-pstate passive); amd-pstate-epp also has one per
+  // policy; intel_pstate has its own no_turbo (1 = boost off).
+  let boostText = r.text(`${CPU_DIR}/cpufreq/boost`) ?? (cpus.length ? r.text(`${CPU_DIR}/cpu${cpus[0]}/cpufreq/boost`) : undefined);
+  if (boostText === undefined) {
+    const noTurbo = r.text(`${CPU_DIR}/intel_pstate/no_turbo`);
+    if (noTurbo === "0" || noTurbo === "1") boostText = noTurbo === "1" ? "0" : "1";
+  }
   const snap: Snapshot = { model, threads, ccx, sensors: readSensors(r, hidden), hidden, problems };
   if (vendor) snap.vendor = vendor;
   if (family !== undefined) snap.family = family;

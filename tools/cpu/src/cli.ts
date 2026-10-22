@@ -1,7 +1,7 @@
 // Plain subcommands for terminals and scripts. They read sysfs and cpu.json themselves, every
 // time, and never go through the core (whose cached state is stale while nobody watches).
 import type { Writable } from "node:stream";
-import { buildReport, formatProfiles, formatStatus } from "./model.ts";
+import { AMD_ONLY, buildReport, formatProfiles, formatStatus, tuningSupported } from "./model.ts";
 import { loadSettings, toFile } from "./settings.ts";
 import { readSnapshot } from "./sysfs.ts";
 
@@ -11,7 +11,7 @@ export const USAGE = `usage: cpuctl <command> [options]
                        frequencies, temperatures (k10temp, asusec), read fresh from sysfs
   profiles [--json]    the underclock and overclock profiles and the active one, from
                        ~/.config/motherapp/cpu.json (created with the defaults if missing);
-                       applying them isn't available yet
+                       applying them isn't available yet. AMD Ryzen (family 0x17) only
   serve                JSON-RPC serve mode (started by the motherapp core)
 
 Read-only: nothing here writes to the hardware or to sysfs.
@@ -47,8 +47,14 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       }
       case "profiles": {
         const json = jsonFlag(args);
+        const snap = readSnapshot(io.root);
+        if (!tuningSupported(snap.vendor, snap.family)) {
+          // No cpu.json on other CPUs: it is neither read nor created.
+          line(io.stdout, json ? JSON.stringify({ supported: false, reason: AMD_ONLY }, null, 2) : AMD_ONLY);
+          return 0;
+        }
         const loaded = loadSettings(io.settingsFile, { create: true });
-        const ccxCount = readSnapshot(io.root).ccx.length || undefined;
+        const ccxCount = snap.ccx.length || undefined;
         if (json) {
           // The file's shape (profiles keyed by id), plus where it is and what was wrong with it.
           const out = { file: io.settingsFile, ...(toFile(loaded.settings) as object), problems: loaded.problems, applyAvailable: false };

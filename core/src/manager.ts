@@ -96,7 +96,10 @@ export class Manager extends EventEmitter<ManagerEvents> {
 
   info(host: ToolHost): ToolInfo {
     const m = host.manifest;
-    const info: ToolInfo = { id: host.id, title: m.title, enabled: this.isEnabled(host.id), status: host.status };
+    // The tool's own describe title wins once it has started (the CPU tool says "CPU - AMD" or
+    // "CPU - Intel" after detecting the vendor); before that, and if it never starts, the manifest's.
+    const title = host.describe?.title || m.title;
+    const info: ToolInfo = { id: host.id, title, enabled: this.isEnabled(host.id), status: host.status };
     if (m.icon !== undefined) {
       if (ICON_FILE_RE.test(m.icon)) info.iconUrl = `/tools/${host.id}/${m.icon}`;
       else info.icon = m.icon;

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import { runCli } from "../src/cli.ts";
-import { setFreq, tempTree } from "./fixtures.ts";
+import { intelHybrid, setFreq, tempTree } from "./fixtures.ts";
 
 async function cli(root: string, ...argv: string[]) {
   const stdout = new PassThrough();
@@ -40,7 +40,7 @@ test("status --json: the full report", async (t) => {
   assert.equal(j.driver, "amd-pstate-epp");
   assert.equal(j.boost, true);
   assert.equal(j.ccx.length, 4);
-  assert.deepEqual(j.ccx[3], { name: "CCX4", index: 3, ccd: 1, cpus: [9, 10, 11, 21, 22, 23], avgMHz: 4245, maxMHz: 4250, temp: { label: "Tccd2", value: 44.75 } });
+  assert.deepEqual(j.ccx[3], { name: "CCX4", index: 3, ccd: 1, cpus: [9, 10, 11, 21, 22, 23], cores: [9, 10, 11], slots: 4, avgMHz: 4245, maxMHz: 4250, fastCore: 9, temp: { label: "Tccd2", value: 44.75 } });
   assert.equal(j.coreList.length, 12);
   assert.deepEqual(j.notAvailable, ["Vcore", "package power (PPT)", "SMU overclocking mode"]);
 });
@@ -80,4 +80,19 @@ test("help and unknown commands", async (t) => {
   const u = await cli(root, "apply", "overclock");
   assert.equal(u.code, 2);
   assert.match(u.err, /unknown command "apply"/);
+});
+
+test("Intel: status works, profiles says AMD only and never creates cpu.json", async (t) => {
+  const { root, cleanup } = tempTree(intelHybrid());
+  t.after(cleanup);
+  const s = await cli(root, "status");
+  assert.equal(s.code, 0);
+  assert.match(s.out, /^12th Gen Intel\(R\) Core\(TM\) i9-12900K\n16 cores \/ 24 threads · intel_pstate · governor powersave · EPP balance_performance · boost on, up to 5200 MHz\n/);
+  assert.match(s.out, /\nL3 group 1 {4}avg/);
+  const p = await cli(root, "profiles");
+  assert.equal(p.code, 0);
+  assert.equal(p.out, "Profiles and per-CCX tuning are for AMD Ryzen (Zen 2) only.\n");
+  const j = await cli(root, "profiles", "--json");
+  assert.deepEqual(JSON.parse(j.out), { supported: false, reason: "Profiles and per-CCX tuning are for AMD Ryzen (Zen 2) only." });
+  assert.equal(fs.existsSync(p.settingsFile), false);
 });

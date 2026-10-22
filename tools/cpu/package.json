@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "CPU tool (read-only): per-CCX and per-core frequencies, cpufreq settings, temperatures, and the saved ClockTuner for Ryzen profiles.",
+  "description": "CPU tool (read-only): custom page with a die map and tuning console for Ryzen (per-CCX clocks, temperatures, the saved ClockTuner for Ryzen profiles), a plain core grid for other CPUs including Intel hybrids.",
   "bin": {
     "cpuctl": "./cpuctl.ts"
   },

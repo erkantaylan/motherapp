@@ -3,6 +3,7 @@
   "title": "CPU",
   "icon": "🌡️",
   "serve": ["node", "cpuctl.ts", "serve"],
+  "page": "page.ts",
   "bin": { "cpuctl": "cpuctl.ts" },
   "defaultEnabled": true
 }

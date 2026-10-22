@@ -2,23 +2,25 @@
 // cpuctl: the motherapp CPU tool (read-only for now). Shows the CPU's per-CCX and per-core
 // frequencies, cpufreq settings and temperatures from sysfs, and the saved ClockTuner for
 // Ryzen profiles from ~/.config/motherapp/cpu.json. `cpuctl serve` is the mode the core starts
-// (reads every second while its page is watched); every other subcommand works on its own
+// (reads every second while its custom page, page.ts, is watched); every other subcommand works on its own
 // from a terminal (`cpuctl help`). Nothing here writes to the hardware or to sysfs.
 import { createTool, exitOnBrokenPipe } from "@motherapp/tool-sdk";
 import { runCli } from "./src/cli.ts";
-import { layout } from "./src/layout.ts";
+import { toolTitle } from "./src/model.ts";
 import { CpuService, INITIAL_STATE } from "./src/service.ts";
 import { settingsFile } from "./src/settings.ts";
-import { DEFAULT_ROOT, readSnapshot } from "./src/sysfs.ts";
+import { DEFAULT_ROOT, SysReader, readCpuinfo, readSnapshot } from "./src/sysfs.ts";
 
 const root = process.env.MOTHERAPP_CPU_ROOT || DEFAULT_ROOT;
 
 if (process.argv[2] === "serve") {
   // Nothing worth persisting: every value is re-read from sysfs in about a millisecond.
-  const tool = createTool({ id: "cpu", title: "CPU", icon: "🌡️", layout, initialState: INITIAL_STATE, persist: false });
+  // "CPU - AMD" / "CPU - Intel": describe's title replaces the manifest's neutral "CPU" in the sidebar.
+  const title = toolTitle(readCpuinfo(new SysReader(root)).vendor);
+  const tool = createTool({ id: "cpu", title, icon: "🌡️", page: "custom", initialState: INITIAL_STATE, persist: false });
   const service = new CpuService({ tool, read: () => readSnapshot(root), settingsFile: settingsFile() });
   const serving = tool.serve();
-  tool.log.info("cpu tool serving", { root, settings: settingsFile() });
+  tool.log.info("cpu tool serving", { root, title, settings: settingsFile() });
   service.start();
   await serving;
   service.stop();
