@@ -4,3 +4,6 @@ dist/
 .vite/
 .claude/worktrees/
 build-info.json
+
+# headless browser (Playwright MCP) screenshots and logs
+.playwright-mcp/
