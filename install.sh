@@ -511,7 +511,7 @@ check_systemd_user() {
 # root may write. motherapp-cpu-access.service (a system unit, so sudo) gives the user's
 # primary group write access to exactly those files at every boot and resume
 # (packaging/motherapp-cpu-access.sh). Only offered on Intel: AMD needs the SMU, a later step.
-NEED_CPU_ACCESS=0
+NEED_CPU_ACCESS=0 NEED_THERMALD_OFF=0
 
 cpu_is_intel() {
   grep -q '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' "$ROOT/proc/cpuinfo" 2>/dev/null &&
@@ -552,6 +552,24 @@ check_cpu_access() {
     record WARN cpu-limits "the CPU tool can't change clock caps, turbo, EPP or power limits (PL1/PL2) without it" \
       "./install.sh (asks before using sudo; installs $CPU_UNIT_NAME)" 0
     NEED_CPU_ACCESS=1
+  fi
+  # thermald's adaptive mode rewrites PL1 every few seconds (measured 2026-10-23 on the
+  # 13900K: 125 W -> 99.5 W -> 253 W within 25 s), so a PL1 from the CPU tool doesn't stick.
+  if have systemctl && systemctl is-active --quiet thermald 2>/dev/null; then
+    record WARN thermald "running: it rewrites PL1 every few seconds, so the CPU tool's PL1 doesn't stick" \
+      "sudo systemctl disable --now thermald   (./install.sh offers it)" 0
+    NEED_THERMALD_OFF=1
+  fi
+}
+
+offer_thermald_off() {
+  section "thermald"
+  info "thermald (adaptive mode) keeps setting PL1 itself, overriding the CPU tool's profiles."
+  info "On a desktop it adds little: the CPU throttles itself at its maximum temperature."
+  if ask "Stop and disable thermald (sudo systemctl disable --now thermald; undo with: sudo systemctl enable --now thermald)"; then
+    if run_sudo systemctl disable --now thermald; then APPLIED_FIX=1; else info "couldn't stop thermald (see above)"; fi
+  else
+    info "skipped; PL1 from the CPU tool won't stick while thermald runs"
   fi
 }
 
@@ -609,7 +627,7 @@ check_misc_tools() {
 }
 
 run_checks() {
-  NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0 NEED_CPU_ACCESS=0
+  NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0 NEED_CPU_ACCESS=0 NEED_THERMALD_OFF=0
   section "Runtime"
   check_node
   check_misc_tools
@@ -840,6 +858,7 @@ offer_fixes() {
   if (( NEED_CPU_ACCESS )); then
     if (( can_apt )); then offer_cpu_access; else info "sudo not available; the CPU tool stays read-only"; fi
   fi
+  if (( NEED_THERMALD_OFF && can_apt )); then offer_thermald_off; fi
 
   if (( NEED_USERMOD )); then
     section "i2c group"

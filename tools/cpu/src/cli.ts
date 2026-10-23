@@ -14,6 +14,8 @@ import {
   loadStock,
   presentKeys,
   readLimits,
+  THERMALD,
+  thermaldRunning,
   updateIntelSettings,
 } from "./intel.ts";
 import type { IntelSettings } from "./intel.ts";
@@ -105,6 +107,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         line(io.stdout, "");
         line(io.stdout, stock ? `Stock = the values before motherapp first changed them this boot (${new Date(stock.takenAt).toLocaleString()}).` : "motherapp hasn't changed anything this boot: stock = now.");
         if (access(hw) !== "full") line(io.stdout, NO_WRITE);
+        if (thermaldRunning(io.root)) line(io.stdout, THERMALD.replaceAll("`", ""));
         return 0;
       }
       case "use": {

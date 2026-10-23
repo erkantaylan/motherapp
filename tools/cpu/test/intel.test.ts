@@ -20,6 +20,7 @@ import {
   parseLimits,
   readLimits,
   targetOf,
+  thermaldRunning,
   updateIntelSettings,
 } from "../src/intel.ts";
 import { intelHybrid, intelPlain, readFile, ryzen3900x, tempTree } from "./fixtures.ts";
@@ -209,4 +210,15 @@ test("page state: limits rows (now, stock, range, writable) and the profiles", (
   assert.deepEqual(ps.list.overclock.values, {});
   assert.equal(ps.kind, "limits");
   assert.equal(ps.active, undefined);
+});
+
+test("thermald: found by /proc/<pid>/comm; the page state says PL1 won't stick", (t) => {
+  const root = tree(t);
+  assert.equal(thermaldRunning(root), false);
+  fs.mkdirSync(path.join(root, "proc", "4242"), { recursive: true });
+  fs.writeFileSync(path.join(root, "proc", "4242", "comm"), "thermald\n");
+  assert.equal(thermaldRunning(root), true);
+  const st = limitsState(readLimits(root), undefined, undefined, true) as any;
+  assert.match(st.thermaldText, /^thermald is running: .* rewrites PL1/);
+  assert.equal((limitsState(readLimits(root), undefined, undefined, false) as any).thermaldText, undefined);
 });

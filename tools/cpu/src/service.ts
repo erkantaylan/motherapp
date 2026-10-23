@@ -22,6 +22,7 @@ import {
   parseLimits,
   readLimits,
   targetOf,
+  thermaldRunning,
   updateIntelSettings,
 } from "./intel.ts";
 import type { IntelSettings, Limits } from "./intel.ts";
@@ -366,7 +367,7 @@ export class CpuService {
     // Nothing to compare against until motherapp has applied something this boot (the snapshot) or a profile is active.
     if (s?.active) target = targetOf(stock?.values ?? hw.current, s.profiles.find((p) => p.id === s.active), hw);
     else if (stock) target = targetOf(stock.values, undefined, hw);
-    this.publish(LIMITS, limitsState(hw, stock, target) as JsonValue);
+    this.publish(LIMITS, limitsState(hw, stock, target, thermaldRunning(l.root)) as JsonValue);
   }
 
   /** Applies a profile (null = stock), records it, publishes the new values. Throws when nothing could be changed. */

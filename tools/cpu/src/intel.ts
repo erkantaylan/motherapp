@@ -45,6 +45,18 @@ export const MHZ_RANGE: [number, number] = [400, 7000];
 /** RAPL takes up to 4095 W; boards call that "unlimited". */
 export const PL_RANGE: [number, number] = [10, 4095];
 
+export const THERMALD =
+  "thermald is running: in its adaptive mode it rewrites PL1 every few seconds, so a PL1 set here doesn't stick. Run `motherapp install` and allow it to turn thermald off (`sudo systemctl disable --now thermald`).";
+
+/** thermald is running (found by its /proc/<pid>/comm). It manages PL1 itself. */
+export function thermaldRunning(root = DEFAULT_ROOT): boolean {
+  const r = new SysReader(root);
+  return r
+    .list("proc")
+    .filter((d) => /^\d+$/.test(d))
+    .some((pid) => r.text(`proc/${pid}/comm`) === "thermald");
+}
+
 export const NO_ACCESS =
   "motherapp can't change the CPU limits yet: run `motherapp install` in a terminal and allow the \"CPU limits\" step (it asks for sudo once).";
 
@@ -543,7 +555,7 @@ type Row = { order: number; label: string; now?: number | boolean | string; stoc
  * access, the choices for governor/EPP, and how the hardware differs from the active profile.
  * State can't hold null: unknown values are absent fields.
  */
-export function limitsState(hw: LimitsHw, stock: Stock | undefined, target: Limits | undefined): Record<string, unknown> {
+export function limitsState(hw: LimitsHw, stock: Stock | undefined, target: Limits | undefined, thermald = false): Record<string, unknown> {
   const rows: Record<string, Row> = {};
   const stockValues = stock?.values ?? hw.current;
   presentKeys(hw).forEach((k, i) => {
@@ -557,6 +569,7 @@ export function limitsState(hw: LimitsHw, stock: Stock | undefined, target: Limi
   const a = access(hw);
   const out: Record<string, unknown> = { supported: true, hybrid: hw.hybrid, access: a, rows, governors: hw.governors, epps: hw.epps };
   if (a !== "full") out.accessText = NO_ACCESS;
+  if (thermald && hw.files.pl1W.length) out.thermaldText = THERMALD;
   out.stockFrom = stock ? "snapshot" : "now";
   if (stock) out.stockAt = stock.takenAt;
   const d = target ? drift(target, hw) : [];

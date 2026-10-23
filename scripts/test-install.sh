@@ -163,12 +163,13 @@ done'
   # System units (no --user) live in $FAKE/sys_enabled.
   stub systemctl 'echo "systemctl $*" >>"$FAKE/calls"
 if [[ $1 != --user ]]; then
-  cmd=$1; shift; q=0; [[ ${1:-} == --quiet ]] && { q=1; shift; }
-  mkdir -p "$FAKE/sys_enabled"
+  cmd=$1; shift; q=0; now=0; [[ ${1:-} == --quiet ]] && { q=1; shift; }; [[ ${1:-} == --now ]] && { now=1; shift; }
+  mkdir -p "$FAKE/sys_enabled" "$FAKE/sys_active"
   case $cmd in
     is-enabled) [[ -f $FAKE/sys_enabled/$1 ]] || exit 1 ;;
-    enable) touch "$FAKE/sys_enabled/$1" ;;
-    disable) rm -f "$FAKE/sys_enabled/$1" ;;
+    is-active) [[ -f $FAKE/sys_active/$1 ]] || exit 3 ;;
+    enable) touch "$FAKE/sys_enabled/$1"; ((now)) && touch "$FAKE/sys_active/$1" ;;
+    disable) rm -f "$FAKE/sys_enabled/$1"; ((now)) && rm -f "$FAKE/sys_active/$1" ;;
   esac
   exit 0
 fi
@@ -448,6 +449,21 @@ check "intel uninstall: disabled" calls_has "sudo systemctl disable motherapp-cp
 check "intel uninstall: unit removed" test ! -e "$ROOT/etc/systemd/system/motherapp-cpu-access.service"
 check "intel uninstall: helper removed" test ! -e "$ROOT/usr/local/lib/motherapp/cpu-access"
 check "intel uninstall: OK" out_has '^OK +cpu-limits +removed motherapp-cpu-access\.service'
+
+new_case cpu-limits-thermald
+mkdir -p "$ROOT/proc" "$ROOT/sys/devices/system/cpu/intel_pstate" "$FAKE/sys_active"
+printf 'processor\t: 0\nvendor_id\t: GenuineIntel\n' >"$ROOT/proc/cpuinfo"
+touch "$FAKE/sys_active/thermald"
+run_installer --check
+check "thermald --check: WARN" out_has '^WARN +thermald +running: it rewrites PL1'
+run_installer <<<$'y\nn'
+check "thermald answer no: asked" out_has 'Stop and disable thermald \(sudo systemctl disable --now thermald'
+check "thermald answer no: still running" test -f "$FAKE/sys_active/thermald"
+run_installer --yes
+check "thermald --yes: disabled" calls_has "sudo systemctl disable --now thermald"
+check "thermald --yes: stopped" test ! -f "$FAKE/sys_active/thermald"
+run_installer --check
+check "thermald off: no WARN" out_lacks '^WARN +thermald'
 
 new_case cpu-limits-not-intel
 run_installer --check

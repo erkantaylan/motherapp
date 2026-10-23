@@ -114,6 +114,8 @@ interface LimitsS {
   hybrid?: boolean;
   access?: "full" | "partial" | "none";
   accessText?: string;
+  /** thermald is running and will undo PL1. */
+  thermaldText?: string;
   rows?: Partial<Record<LimitKey, LimitRowS>>;
   governors?: string[];
   epps?: string[];
@@ -478,6 +480,7 @@ export default class CpuPage extends HTMLElement {
   private busy = false;
   private limitsCard = el("section", "mcpu-card");
   private limAccess = el("div", "mcpu-access");
+  private limThermald = el("div", "mcpu-access");
   private limDrift = el("div", "mcpu-drift");
   private limDriftText = el("span");
   private limTable = el("div", "mcpu-lt");
@@ -621,6 +624,7 @@ export default class CpuPage extends HTMLElement {
     this.limitsCard.append(
       el("div", "mcpu-sec-h", undefined, el("h3", "", "Limits"), el("span", "small muted", "now · stock · the two profiles")),
       this.limAccess,
+      this.limThermald,
       this.limDrift,
       el("div", "mcpu-lt-wrap mcpu-live", undefined, this.limTable),
       el("div", "mcpu-lt-foot", undefined, this.limNote, this.limMsg),
@@ -993,6 +997,8 @@ export default class CpuPage extends HTMLElement {
     }
     this.limAccess.hidden = !l.accessText;
     if (l.accessText) setCodeText(this.limAccess, l.accessText);
+    this.limThermald.hidden = !l.thermaldText;
+    if (l.thermaldText) setCodeText(this.limThermald, l.thermaldText);
     const drift = l.drift ?? [];
     this.limDrift.hidden = drift.length === 0;
     put(this.limDriftText, drift.length ? `Changed outside this profile: ${drift.join(", ")}.` : "");
