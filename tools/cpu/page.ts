@@ -194,6 +194,7 @@ const STYLE = `
 .mcpu-toolbar .mcpu-psum { flex: 1 1 100%; font-size: 0.875rem; }
 .mcpu-login { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; font-size: 0.875rem; }
 .mcpu-login .switch { margin: 0; }
+.mcpu-tbstat { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.875rem; color: var(--muted); }
 .mcpu-badge-sm { font-size: 0.75rem; }
 .mcpu-live { transition: opacity .2s; }
 .mcpu [hidden] { display: none !important; }
@@ -267,6 +268,7 @@ const STYLE = `
 .mcpu-lt-row { display: grid; grid-template-columns: minmax(150px, 1.4fr) repeat(2, minmax(80px, 0.8fr)) repeat(2, minmax(130px, 1fr)); gap: 8px;
   padding: 8px 16px; align-items: center; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
 .mcpu-lt-head { font-size: 0.75rem; color: var(--muted); border-top: 0; }
+.mcpu-lt-ph { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .mcpu-lt-row [data-hl="true"] { color: var(--accent); font-weight: 600; }
 .mcpu-lt-row [data-active="true"] { font-weight: 600; }
 .mcpu-in { width: 100%; min-height: 36px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg);
@@ -477,6 +479,8 @@ export default class CpuPage extends HTMLElement {
   private profProblems = el("p", "mcpu-status");
   private toolbarNote = el("div");
   private actMsg = el("p", "mcpu-msg");
+  /** One-line result beside the selector; never wraps, so nothing below it moves. */
+  private tbStat = el("span", "mcpu-tbstat");
   private busy = false;
   private limitsCard = el("section", "mcpu-card");
   private limAccess = el("div", "mcpu-access");
@@ -587,7 +591,7 @@ export default class CpuPage extends HTMLElement {
       b.type = "button";
       b.disabled = true;
       b.title = "Switching profiles comes in a later step.";
-      b.addEventListener("click", () => void this.run("useProfile", { id: k }, this.actMsg));
+      b.addEventListener("click", () => void this.run("useProfile", { id: k }, this.actMsg, this.tbStat));
       seg.append(b);
       this.profBtns.set(k, b);
     }
@@ -598,13 +602,14 @@ export default class CpuPage extends HTMLElement {
     this.login.setAttribute("role", "switch");
     this.login.setAttribute("switch", "");
     this.login.disabled = true;
-    this.login.addEventListener("change", () => void this.run("setApplyOnStart", { value: this.login.checked }, this.actMsg));
+    this.login.addEventListener("change", () => void this.run("setApplyOnStart", { value: this.login.checked }, this.actMsg, this.tbStat));
     const loginLabel = el("label", "", "Apply at login");
     loginLabel.htmlFor = this.login.id;
     const toolbar = this.toolbar;
     toolbar.append(
       el("div", "mcpu-ctl", undefined, plbl, seg),
       el("div", "mcpu-login", undefined, el("div", "switch", undefined, this.login), loginLabel),
+      this.tbStat,
       this.profSummary,
       this.toolbarNote,
       this.actMsg,
@@ -925,21 +930,37 @@ export default class CpuPage extends HTMLElement {
 
   // ---- Intel limits ----
 
-  /** Runs an action, showing its result (or error) in `out`; one at a time. */
-  private async run(name: string, args: Record<string, JsonValue>, out: HTMLElement): Promise<boolean> {
+  /**
+   * Runs an action, one at a time. Its result goes to `out`; with `inline`, a success shows there
+   * as one short line instead (the full text is in the event log) and `out` only gets problems
+   * and errors, so a successful switch doesn't add a line that pushes the page down.
+   */
+  private async run(name: string, args: Record<string, JsonValue>, out: HTMLElement, inline?: HTMLElement): Promise<boolean> {
     const ctx = this.ctx;
     if (!ctx || this.busy) return false;
     this.busy = true;
+    const status = inline ?? out;
+    if (inline) put(out, "");
     out.dataset.kind = "";
-    put(out, "Working…");
+    put(status, "Working…");
     this.schedule();
     try {
       const r = obj<{ text?: string; problems?: string[] }>(await ctx.action(name, args));
       const problems = Array.isArray(r.problems) ? r.problems : [];
-      out.dataset.kind = problems.length ? "warn" : "";
-      put(out, [r.text ?? "Done.", ...problems].join(" "));
+      const text = r.text ?? "Done.";
+      if (inline) {
+        // "Underclock applied now: PL1 … → …" -> "✓ Underclock applied now"
+        put(inline, `✓ ${text.split(":")[0]!.replace(/\.$/, "")}`);
+        inline.title = text;
+        out.dataset.kind = "warn";
+        put(out, problems.join(" "));
+      } else {
+        out.dataset.kind = problems.length ? "warn" : "";
+        put(out, [text, ...problems].join(" "));
+      }
       return true;
     } catch (e) {
+      if (inline) put(inline, "");
       out.dataset.kind = "err";
       put(out, (e as Error).message || String(e));
       return false;
@@ -1031,9 +1052,12 @@ export default class CpuPage extends HTMLElement {
     this.limActs.clear();
     const head = el("div", "mcpu-lt-row mcpu-lt-head", undefined, el("span", "", "Setting"), el("span", "", "Now"), el("span", "", "Stock"));
     for (const id of PIDS) {
-      const h = el("span", "", list[id]?.name ?? id);
+      // The badge is always there, only invisible when inactive: switching profiles must not change the header's height.
+      const badge = el("span", "badge badge-subtle theme-primary mcpu-badge-sm", "Active");
+      badge.style.visibility = v.activeKey === id ? "visible" : "hidden";
+      if (v.activeKey !== id) badge.setAttribute("aria-hidden", "true");
+      const h = el("span", "mcpu-lt-ph", undefined, el("span", "", list[id]?.name ?? id), badge);
       h.dataset.active = String(v.activeKey === id);
-      if (v.activeKey === id) h.append(" ", el("span", "badge badge-subtle theme-primary mcpu-badge-sm", "Active"));
       head.append(h);
     }
     const out: HTMLElement[] = [head];

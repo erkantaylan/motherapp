@@ -27,3 +27,16 @@ page (tiles + power/temp/clock charts), and package power from RAPL `energy_uj`
 - The user's machine needs `motherapp install` again (the helper changed; the installer offers
   the update) before package power shows; until then the Live column says why it's missing.
 - Not checked in Firefox (container queries are supported there since 110).
+
+## Addendum: layout shift when switching profiles (same day)
+
+- [both] The Limits header added the "Active" badge only to the active column, so its height
+  went 34 → 38 px on every switch, and the first switch also added a result line to the
+  toolbar (+31 px). Measure, don't eyeball: click through Stock/Underclock in the browser and
+  record the header height and the first input's page Y (`getBoundingClientRect().top +
+  scrollY`) after each click. Fixes: the badge is always rendered and toggled with
+  `visibility`; a success is a one-line, non-wrapping status beside the switch (`flex: 1 1 0;
+  min-width: 0`), and only problems get their own line.
+- [local] The headless browser kept the old `page.ts` module after a code change although the
+  core serves it `no-cache`: a module already imported in that document stays. Navigate to a
+  new URL (`/?r=2#/tool/cpu`) to load the new one.
