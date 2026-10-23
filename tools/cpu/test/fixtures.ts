@@ -44,6 +44,13 @@ export interface MachineSpec {
   hwmon: HwmonSpec[];
   /** Extra hwmon dirs before the interesting ones, so their numbers don't match the machine's. */
   hwmonOffset?: number;
+  /** RAPL package zone intel-rapl:0 (plus a core subzone, and intel-rapl-mmio:0 with `mmio`). */
+  rapl?: { pl1W: number; pl2W: number; mmio?: boolean };
+  /** scaling_available_governors / energy_performance_available_preferences; absent = not written. */
+  governors?: string;
+  epps?: string;
+  /** /proc/sys/kernel/random/boot_id; absent = not written. */
+  bootId?: string;
 }
 
 export const RANKS = [211, 216, 216, 206, 201, 196, 181, 191, 186, 171, 176, 166];
@@ -165,6 +172,10 @@ export function intelHybrid(over: Partial<MachineSpec> = {}): MachineSpec {
     coreId: (c) => (c < 16 ? Math.floor(c / 2) * 4 : 32 + (c - 16)),
     pmu: { core: all.slice(0, 16), atom: all.slice(16) },
     hwmon: [{ name: "acpitz", files: { temp1_input: "27800" } }, { name: "coretemp", files }],
+    rapl: { pl1W: 241, pl2W: 241 },
+    governors: "performance powersave",
+    epps: "default performance balance_performance balance_power power",
+    bootId: "boot-1",
     ...over,
   };
 }
@@ -222,6 +233,8 @@ export function writeTree(root: string, m: MachineSpec): void {
       put(path.join(fd, "scaling_governor"), m.governor);
       put(path.join(fd, "energy_performance_preference"), m.epp);
       if (m.rank) put(path.join(fd, "amd_pstate_prefcore_ranking"), String(m.rank(c)));
+      if (m.governors !== undefined) put(path.join(fd, "scaling_available_governors"), m.governors);
+      if (m.epps !== undefined) put(path.join(fd, "energy_performance_available_preferences"), m.epps);
     }
   }
   const cpuinfo = all
@@ -229,6 +242,23 @@ export function writeTree(root: string, m: MachineSpec): void {
     .map((c) => `processor\t: ${c}\nvendor_id\t: ${m.vendor}\ncpu family\t: ${m.family}\nmodel\t\t: 113\nmodel name\t: ${m.model}\n`)
     .join("\n");
   put(path.join(root, "proc/cpuinfo"), cpuinfo);
+  if (m.rapl) {
+    // Constraint numbers as the kernel has them on the 13900K: 0 long_term, 1 short_term, 2 peak_power.
+    const zone = (dir: string, name: string, pl1: number, pl2: number) => {
+      put(path.join(dir, "name"), name);
+      put(path.join(dir, "constraint_0_name"), "long_term");
+      put(path.join(dir, "constraint_0_power_limit_uw"), String(pl1 * 1_000_000));
+      put(path.join(dir, "constraint_1_name"), "short_term");
+      put(path.join(dir, "constraint_1_power_limit_uw"), String(pl2 * 1_000_000));
+      put(path.join(dir, "constraint_2_name"), "peak_power");
+      put(path.join(dir, "constraint_2_power_limit_uw"), "380000000");
+    };
+    const pc = path.join(root, "sys/class/powercap");
+    zone(path.join(pc, "intel-rapl:0"), "package-0", m.rapl.pl1W, m.rapl.pl2W);
+    zone(path.join(pc, "intel-rapl:0:0"), "core", 0, 0);
+    if (m.rapl.mmio) zone(path.join(pc, "intel-rapl-mmio:0"), "package-0", m.rapl.pl1W, m.rapl.pl2W);
+  }
+  if (m.bootId !== undefined) put(path.join(root, "proc/sys/kernel/random/boot_id"), m.bootId);
   const off = m.hwmonOffset ?? 0;
   m.hwmon.forEach((h, i) => {
     const d = path.join(root, `sys/class/hwmon/hwmon${i + off}`);
@@ -251,4 +281,9 @@ export function setFreq(root: string, cpu: number, khz: number): void {
 
 export function setHwmon(root: string, index: number, file: string, value: string): void {
   fs.writeFileSync(path.join(root, `sys/class/hwmon/hwmon${index}`, file), `${value}\n`);
+}
+
+/** Reads one file of a tree, trimmed. */
+export function readFile(root: string, rel: string): string {
+  return fs.readFileSync(path.join(root, rel), "utf8").trim();
 }

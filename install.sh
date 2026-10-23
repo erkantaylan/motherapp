@@ -41,6 +41,11 @@ UNIT_DIR="$CONFIG_HOME/systemd/user"
 UNIT_FILE="$UNIT_DIR/$UNIT_NAME"
 APP_CONFIG_DIR="$CONFIG_HOME/motherapp"
 APP_STATE_DIR="$STATE_HOME/motherapp"
+CPU_UNIT_NAME="motherapp-cpu-access.service"
+CPU_UNIT_TEMPLATE="$REPO_DIR/packaging/$CPU_UNIT_NAME"
+CPU_HELPER_SRC="$REPO_DIR/packaging/motherapp-cpu-access.sh"
+CPU_UNIT_FILE="$ROOT/etc/systemd/system/$CPU_UNIT_NAME"
+CPU_HELPER="$ROOT/usr/local/lib/motherapp/cpu-access"
 SOUND_DIR="$ROOT/usr/share/sounds/freedesktop/stereo"
 TEST_SOUNDS=("$SOUND_DIR/audio-channel-front-left.oga" "$SOUND_DIR/audio-channel-front-right.oga")
 NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
@@ -500,6 +505,101 @@ check_systemd_user() {
   fi
 }
 
+# ---------------------------------------------------------------- CPU limits (Intel)
+
+# The CPU tool sets clock caps, turbo, governor/EPP and PL1/PL2 through sysfs files that only
+# root may write. motherapp-cpu-access.service (a system unit, so sudo) gives the user's
+# primary group write access to exactly those files at every boot and resume
+# (packaging/motherapp-cpu-access.sh). Only offered on Intel: AMD needs the SMU, a later step.
+NEED_CPU_ACCESS=0
+
+cpu_is_intel() {
+  grep -q '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' "$ROOT/proc/cpuinfo" 2>/dev/null &&
+    [[ -e $ROOT/sys/devices/system/cpu/intel_pstate || -e $ROOT/sys/class/powercap/intel-rapl:0 ]]
+}
+
+cpu_group() { id -gn 2>/dev/null; }
+
+render_cpu_unit() {
+  local g
+  g="$(cpu_group)" || return 1
+  sed -e '/^#@/d' -e "s|@GROUP@|$g|g" "$CPU_UNIT_TEMPLATE"
+}
+
+cpu_access_current() {
+  [[ -f $CPU_UNIT_FILE && -f $CPU_HELPER ]] &&
+    cmp -s "$CPU_HELPER_SRC" "$CPU_HELPER" &&
+    [[ "$(<"$CPU_UNIT_FILE")" == "$(render_cpu_unit)" ]]
+}
+
+check_cpu_access() {
+  if ! cpu_is_intel; then
+    record OK cpu-limits "not an Intel CPU with intel_pstate/RAPL: nothing to set up"
+    return
+  fi
+  local g
+  g="$(cpu_group)"
+  if [[ ! $g =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    record WARN cpu-limits "can't tell your primary group (id -gn said \"$g\"); the CPU tool stays read-only" "" 0
+    return
+  fi
+  if cpu_access_current && systemctl is-enabled --quiet "$CPU_UNIT_NAME" 2>/dev/null; then
+    record OK cpu-limits "$CPU_UNIT_NAME installed and enabled (group $g may set clock caps, turbo, EPP, PL1/PL2)"
+  elif [[ -f $CPU_UNIT_FILE ]]; then
+    record WARN cpu-limits "$CPU_UNIT_NAME is installed but out of date or not enabled" "./install.sh (asks before using sudo)" 0
+    NEED_CPU_ACCESS=1
+  else
+    record WARN cpu-limits "the CPU tool can't change clock caps, turbo, EPP or power limits (PL1/PL2) without it" \
+      "./install.sh (asks before using sudo; installs $CPU_UNIT_NAME)" 0
+    NEED_CPU_ACCESS=1
+  fi
+}
+
+offer_cpu_access() {
+  local g
+  g="$(cpu_group)"
+  section "CPU limits access"
+  info "For the CPU page's Underclock / Overclock profiles: lets group $g write the CPU clock caps,"
+  info "governor, EPP, turbo and PL1/PL2 files in /sys (nothing else: no voltages, no MSRs)."
+  info "Re-done at every boot and resume by a small system service; ./install.sh --uninstall removes it."
+  if ! ask "Install $CPU_UNIT_NAME and /usr/local/lib/motherapp/cpu-access, enable and run it now (sudo)"; then
+    info "skipped; the CPU tool shows the limits but can't change them"
+    return
+  fi
+  local ok=1 unit
+  unit="$(render_cpu_unit)" || ok=0
+  run_sudo install -D -m 0755 "$CPU_HELPER_SRC" "$CPU_HELPER" || ok=0
+  if (( ok )); then
+    cmdline "sudo tee $CPU_UNIT_FILE"
+    { sudo install -d -m 0755 "${CPU_UNIT_FILE%/*}" && printf '%s\n' "$unit" | sudo tee "$CPU_UNIT_FILE" >/dev/null; } || ok=0
+  fi
+  (( ok )) && { run_sudo systemctl daemon-reload || ok=0; }
+  (( ok )) && { run_sudo systemctl enable "$CPU_UNIT_NAME" || ok=0; }
+  # restart, not start: an up-to-date oneshot that already ran must run again for new files
+  (( ok )) && { run_sudo systemctl restart "$CPU_UNIT_NAME" || ok=0; }
+  if (( ok )); then APPLIED_FIX=1; else info "setting up CPU limits access failed (see above)"; fi
+}
+
+uninstall_cpu_access() {
+  if [[ ! -f $CPU_UNIT_FILE && ! -f $CPU_HELPER ]]; then
+    record OK cpu-limits "$CPU_UNIT_NAME not installed"
+    return
+  fi
+  if ! ask "Remove $CPU_UNIT_NAME and /usr/local/lib/motherapp/cpu-access (sudo)? The CPU limits stay writable for your group until the next reboot"; then
+    record WARN cpu-limits "kept $CPU_UNIT_NAME (you said no)" "sudo systemctl disable $CPU_UNIT_NAME && sudo rm $CPU_UNIT_FILE $CPU_HELPER" 0
+    return
+  fi
+  local ok=1
+  run_sudo systemctl disable "$CPU_UNIT_NAME" || ok=0
+  run_sudo rm -f "$CPU_UNIT_FILE" "$CPU_HELPER" || ok=0
+  run_sudo systemctl daemon-reload || ok=0
+  if (( ok )); then
+    record OK cpu-limits "removed $CPU_UNIT_NAME (the limits stay writable until the next reboot)"
+  else
+    record FAIL cpu-limits "couldn't remove $CPU_UNIT_NAME" "sudo systemctl disable $CPU_UNIT_NAME && sudo rm $CPU_UNIT_FILE $CPU_HELPER"
+  fi
+}
+
 check_misc_tools() {
   if have curl; then
     record OK curl "$(command -v curl)"
@@ -509,7 +609,7 @@ check_misc_tools() {
 }
 
 run_checks() {
-  NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0
+  NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0 NEED_CPU_ACCESS=0
   section "Runtime"
   check_node
   check_misc_tools
@@ -521,6 +621,8 @@ run_checks() {
   check_ddcutil
   check_libddcutil
   check_i2c
+  section "CPU limits"
+  check_cpu_access
   section "Service manager"
   check_systemd_user
 }
@@ -733,6 +835,10 @@ offer_fixes() {
     else
       info "skipped"
     fi
+  fi
+
+  if (( NEED_CPU_ACCESS )); then
+    if (( can_apt )); then offer_cpu_access; else info "sudo not available; the CPU tool stays read-only"; fi
   fi
 
   if (( NEED_USERMOD )); then
@@ -1341,6 +1447,7 @@ uninstall() {
   fi
   uninstall_shortcuts
   uninstall_bins
+  uninstall_cpu_access
   local d
   for d in "$APP_CONFIG_DIR" "$APP_STATE_DIR"; do
     if [[ ! -e $d ]]; then

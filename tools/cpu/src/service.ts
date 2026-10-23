@@ -2,15 +2,35 @@
 // every second and publishes only what changed; unwatched it reads nothing and marks the
 // polled values stale. It also keeps a short, capped `events` list of real things that
 // happened (the tool started, cpu.json changed, boost / governor / EPP changed) for the page's
-// event log. Read-only: the only file this tool writes is a missing cpu.json. On CPUs the
-// profiles don't apply to (anything but AMD family 0x17, see tuningSupported) cpu.json is
-// neither read nor created and `profiles` stays empty.
+// event log. On AMD family 0x17 (tuningSupported) it is read-only: the only file it writes is
+// a missing cpu.json. On Intel (src/intel.ts) it also publishes `limits` (clock caps, turbo,
+// governor, EPP, PL1/PL2: now, stock, writable) and has the actions useProfile, saveProfile,
+// setApplyOnStart and reapply, which write sysfs and cpu.json; the active profile is applied
+// when the tool starts if applyOnStart is on. On other CPUs cpu.json is neither read nor
+// created and `profiles` stays empty.
+import { RpcError } from "@motherapp/tool-sdk";
 import type { JsonObject, JsonValue, Tool } from "@motherapp/tool-sdk";
+import {
+  applyProfile,
+  bootId,
+  describeLimits,
+  hasValues,
+  intelProfilesState,
+  limitsState,
+  loadIntelSettings,
+  loadStock,
+  parseLimits,
+  readLimits,
+  targetOf,
+  updateIntelSettings,
+} from "./intel.ts";
+import type { IntelSettings, Limits } from "./intel.ts";
 import { diffState } from "./diff.ts";
 import { buildReport, polledState, profilesState } from "./model.ts";
 import type { Report } from "./model.ts";
 import { loadSettings } from "./settings.ts";
-import type { Profile, Settings } from "./settings.ts";
+import { PROFILE_IDS } from "./settings.ts";
+import type { Profile, ProfileId, Settings } from "./settings.ts";
 import type { Snapshot } from "./sysfs.ts";
 import { EVENTS_CAP, pushEvent } from "./view.ts";
 import type { CpuEvent } from "./view.ts";
@@ -28,7 +48,10 @@ export const realTimers: Timers = {
 export const POLL_MS = 1000;
 /** Top-level keys refreshed by the poll; stale while nobody watches. */
 export const POLLED = ["cpu", "ccx", "cores", "sensors"] as const;
-export const INITIAL_STATE: JsonObject = { cpu: {}, ccx: {}, cores: {}, sensors: {}, profiles: {}, events: [] };
+/** Also polled, on Intel only. */
+export const LIMITS = "limits";
+const STALE_KEYS = [...POLLED, LIMITS];
+export const INITIAL_STATE: JsonObject = { cpu: {}, ccx: {}, cores: {}, sensors: {}, limits: {}, profiles: {}, events: [] };
 
 export interface ServiceOptions {
   tool: Tool;
@@ -39,6 +62,8 @@ export interface ServiceOptions {
   intervalMs?: number;
   /** Clock for event timestamps (ms since the epoch). */
   now?: () => number;
+  /** Intel limits: the sysfs root to write under and the stock snapshot file. Without it, Intel is read-only too. */
+  limits?: { root: string; stockFile: string };
 }
 
 /** What the event log compares between reads. */
@@ -112,6 +137,11 @@ export class CpuService {
   private events: CpuEvent[] = [];
   /** Profiles apply to this CPU (set by the first read). */
   tuning = false;
+  /** Intel limits apply (set by the first read). */
+  intel = false;
+  private limits: { root: string; stockFile: string } | undefined;
+  private intelSettings: IntelSettings | undefined;
+  private hybrid = false;
 
   constructor(opts: ServiceOptions) {
     this.tool = opts.tool;
@@ -120,6 +150,8 @@ export class CpuService {
     this.timers = opts.timers ?? realTimers;
     this.intervalMs = opts.intervalMs ?? POLL_MS;
     this.now = opts.now ?? Date.now;
+    this.limits = opts.limits;
+    this.registerActions();
   }
 
   /**
@@ -129,12 +161,10 @@ export class CpuService {
   start(): void {
     this.running = true;
     this.poll();
-    if (!this.tuning) {
-      this.addEvent("start", "CPU tool started.");
-    } else {
-      this.startProfiles();
-    }
-    for (const k of POLLED) if (!this.tool.isStale(k)) this.tool.markStale(k);
+    if (this.intel) this.startIntel();
+    else if (!this.tuning) this.addEvent("start", "CPU tool started.");
+    else this.startProfiles();
+    for (const k of STALE_KEYS) if (!this.tool.isStale(k)) this.tool.markStale(k);
     this.offWatch = this.tool.onWatch((w) => this.onWatch(w));
     if (this.tool.watching) this.onWatch(true);
   }
@@ -165,7 +195,7 @@ export class CpuService {
     this.clearTimer();
     this.watched = watching;
     if (!watching) {
-      for (const k of POLLED) if (!this.tool.isStale(k)) this.tool.markStale(k);
+      for (const k of STALE_KEYS) if (!this.tool.isStale(k)) this.tool.markStale(k);
       return;
     }
     this.tick();
@@ -175,6 +205,7 @@ export class CpuService {
   private tick(): void {
     this.poll();
     if (this.tuning) this.loadProfiles(false);
+    if (this.intel) this.loadIntel(false);
     if (this.running && this.watched) this.timer = this.timers.setTimeout(() => this.tick(), this.intervalMs);
   }
 
@@ -195,11 +226,13 @@ export class CpuService {
     }
     const report = buildReport(snap);
     this.tuning = report.tuning;
+    this.intel = report.vendor === "Intel" && this.limits !== undefined;
     this.ccxCount = report.ccx.length || undefined;
     const next = polledState(report);
     for (const k of POLLED) this.publish(k, next[k]!);
     this.problem(report.problems.join(" "));
     this.noteCpufreq(report);
+    if (this.intel) this.pollLimits();
   }
 
   private noteCpufreq(r: Report): void {
@@ -267,4 +300,171 @@ export class CpuService {
     this.publish("profiles", profilesState(loaded.settings, this.settingsFile, loaded.problems, this.ccxCount));
     return loaded.created === true;
   }
+
+  // ---- Intel limits ----
+
+  private startIntel(): void {
+    const created = this.loadIntel(true);
+    const s = this.intelSettings!;
+    const active = s.active === null ? "no profile active (stock)" : `${intelName(s, s.active)} active`;
+    this.addEvent("start", `CPU tool started: ${active}, apply at login ${s.applyOnStart ? "on" : "off"}.`);
+    if (created) this.addEvent("config", "Created cpu.json with the default profiles.");
+    if (s.active !== null && s.applyOnStart) {
+      try {
+        this.apply(s.active, "at start");
+      } catch (e) {
+        this.tool.log.warn(`applying ${s.active} at start failed: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  /** Reads cpu.json (Intel shape); publishes and records events only when it changed. */
+  loadIntel(create: boolean): boolean {
+    const loaded = loadIntelSettings(this.settingsFile, { create });
+    const key = JSON.stringify([loaded.settings, loaded.problems, this.hybrid]);
+    if (key === this.settingsKey) return false;
+    this.settingsKey = key;
+    if (loaded.created) this.tool.log.info(`created ${this.settingsFile} with the default profiles`);
+    const problems = loaded.problems.join(" ");
+    if (problems !== this.settingsProblems) {
+      for (const p of loaded.problems) this.tool.log.warn(p);
+      if (this.intelSettings) {
+        if (problems) this.addEvent("problem", `cpu.json can't be fully used: ${problems.replaceAll(`${this.settingsFile}: `, "")}`);
+        else this.addEvent("problem", "cpu.json is fine again.");
+      }
+      this.settingsProblems = problems;
+    }
+    // A broken file reads as "both unset, stock": don't log that as the user's change.
+    if (this.intelSettings && !loaded.broken) for (const text of intelSettingsEvents(this.intelSettings, loaded.settings)) this.addEvent("config", text);
+    if (!loaded.broken || !this.intelSettings) this.intelSettings = loaded.settings;
+    this.publish("profiles", intelProfilesState(loaded.settings, this.settingsFile, loaded.problems, this.hybrid) as JsonValue);
+    this.pollLimits();
+    return loaded.created === true;
+  }
+
+  /** One read of the limits, published with what the active profile (or stock) wants. */
+  private pollLimits(): void {
+    const l = this.limits;
+    if (!l) return;
+    const hw = readLimits(l.root);
+    this.hybrid = hw.hybrid;
+    const stock = loadStock(l.stockFile, bootId(l.root));
+    const s = this.intelSettings;
+    let target: Limits | undefined;
+    // Nothing to compare against until motherapp has applied something this boot (the snapshot) or a profile is active.
+    if (s?.active) target = targetOf(stock?.values ?? hw.current, s.profiles.find((p) => p.id === s.active), hw);
+    else if (stock) target = targetOf(stock.values, undefined, hw);
+    this.publish(LIMITS, limitsState(hw, stock, target) as JsonValue);
+  }
+
+  /** Applies a profile (null = stock), records it, publishes the new values. Throws when nothing could be changed. */
+  private apply(id: ProfileId | null, why: string): { text: string; problems: string[] } {
+    const l = this.limits!;
+    const s = this.intelSettings!;
+    const r = applyProfile(l.root, l.stockFile, s, id, this.now());
+    const what = r.changed.length ? r.changed.join(", ") : "nothing needed changing";
+    const text = `${r.name} applied ${why}: ${what}.`;
+    if (r.problems.length && !r.changed.length) {
+      const msg = `${r.name} not applied ${why}: ${r.problems.join(" ")}`;
+      this.addEvent("problem", msg);
+      this.tool.log.warn(msg);
+      this.pollLimits();
+      throw new RpcError(-32000, r.problems.join(" "));
+    }
+    this.addEvent("apply", text);
+    for (const p of r.problems) this.addEvent("problem", p);
+    this.tool.log.info(text, { problems: r.problems });
+    this.pollLimits();
+    return { text, problems: r.problems };
+  }
+
+  private needIntel(): void {
+    if (!this.intel || !this.intelSettings) throw new RpcError(-32000, "Changing CPU limits is only available on Intel CPUs so far.");
+    const loaded = loadIntelSettings(this.settingsFile);
+    if (loaded.broken) throw new RpcError(-32000, loaded.problems.join(" "));
+    this.intelSettings = loaded.settings;
+  }
+
+  private save(edit: (s: IntelSettings) => void): void {
+    try {
+      this.intelSettings = updateIntelSettings(this.settingsFile, edit);
+    } catch (e) {
+      throw new RpcError(-32000, `Couldn't save cpu.json: ${(e as Error).message}`);
+    }
+    this.loadIntel(false);
+  }
+
+  private registerActions(): void {
+    const t = this.tool;
+    const profileArg = (v: unknown, withStock: boolean): ProfileId | null => {
+      if (withStock && v === "stock") return null;
+      if (typeof v === "string" && (PROFILE_IDS as readonly string[]).includes(v)) return v as ProfileId;
+      throw new RpcError(-32602, `id must be ${(withStock ? PROFILE_CHOICES : PROFILE_IDS).map((x) => `"${x}"`).join(", ")}`);
+    };
+
+    // Applies a profile (or stock) and makes it the active one in cpu.json.
+    t.action("useProfile", (args) => {
+      this.needIntel();
+      const id = profileArg(args.id, true);
+      const p = id === null ? undefined : this.intelSettings!.profiles.find((x) => x.id === id);
+      if (p && !hasValues(p)) throw new RpcError(-32000, `${p.name} has nothing set yet: give it at least one value first.`);
+      const r = this.apply(id, "now");
+      if (this.intelSettings!.active !== id) this.save((s) => (s.active = id));
+      return r as unknown as JsonValue;
+    });
+
+    // Puts the hardware back to the active profile (after something else changed it).
+    t.action("reapply", () => {
+      this.needIntel();
+      return this.apply(this.intelSettings!.active, "again") as unknown as JsonValue;
+    });
+
+    // Replaces a profile's values (absent / null = stock); re-applies it when it is the active one.
+    t.action("saveProfile", (args) => {
+      this.needIntel();
+      const id = profileArg(args.id, false) as ProfileId;
+      const values = args.values;
+      if (typeof values !== "object" || values === null || Array.isArray(values)) throw new RpcError(-32602, "values must be an object");
+      const problems: string[] = [];
+      const limits = parseLimits(values as Record<string, unknown>, problems);
+      if (problems.length) throw new RpcError(-32602, problems.join("; "));
+      const name = typeof args.name === "string" && args.name.trim() ? args.name.trim() : undefined;
+      this.save((s) => {
+        const i = s.profiles.findIndex((p) => p.id === id);
+        s.profiles[i] = { id, name: name ?? s.profiles[i]!.name, ...limits };
+      });
+      const p = this.intelSettings!.profiles.find((x) => x.id === id)!;
+      if (this.intelSettings!.active !== id) return { text: `${p.name} saved.`, problems: [] };
+      const r = this.apply(id, "after saving");
+      return r as unknown as JsonValue;
+    });
+
+    t.action("setApplyOnStart", (args) => {
+      this.needIntel();
+      if (typeof args.value !== "boolean") throw new RpcError(-32602, "value must be true or false");
+      const v = args.value;
+      this.save((s) => (s.applyOnStart = v));
+      return { text: `Apply at login turned ${v ? "on" : "off"}.` };
+    });
+  }
+}
+
+// ---- Intel limits ----
+
+const PROFILE_CHOICES = ["stock", ...PROFILE_IDS];
+
+function intelName(s: IntelSettings, id: ProfileId | null): string {
+  return id === null ? STOCK : (s.profiles.find((p) => p.id === id)?.name ?? id);
+}
+
+/** Log lines for what changed in cpu.json (Intel shape) between two good reads. */
+export function intelSettingsEvents(prev: IntelSettings, next: IntelSettings): string[] {
+  const out: string[] = [];
+  if (prev.active !== next.active) out.push(`cpu.json: active profile now ${intelName(next, next.active)} (was ${intelName(prev, prev.active)}).`);
+  if (prev.applyOnStart !== next.applyOnStart) out.push(`cpu.json: apply at login turned ${next.applyOnStart ? "on" : "off"}.`);
+  for (const p of next.profiles) {
+    const old = prev.profiles.find((x) => x.id === p.id);
+    if (old && JSON.stringify(old) !== JSON.stringify(p)) out.push(`cpu.json: ${p.name} changed (${describeLimits(p, false) || "all stock"}).`);
+  }
+  return out;
 }

@@ -139,15 +139,20 @@ test("core + cpu tool on a fixture tree: stale until watched, live deltas while 
   c.ws.close();
 });
 
-test("core + cpu tool on an Intel hybrid: title CPU - Intel, no cpu.json, P-/E-cores", async (t) => {
-  const { cfgDir, c, info } = await startCore(t, intelHybrid());
+test("core + cpu tool on an Intel hybrid: title CPU - Intel, P-/E-cores, limits, useProfile writes the fixture", async (t) => {
+  const { cfgDir, c, info, tree } = await startCore(t, intelHybrid());
   assert.equal(info.title, "CPU - Intel");
   await waitFor(() => c.notes("snapshot").some((s) => s.tool === "cpu" && s.state.cpu?.model), "snapshot", 5000);
   const snap = c.notes("snapshot").filter((s) => s.tool === "cpu").at(-1);
   assert.equal(snap.state.cpu.tuning, false);
-  assert.deepEqual(snap.state.profiles, {});
+  assert.equal(snap.state.profiles.kind, "limits");
+  assert.equal(snap.state.limits.rows.pl1W.now, 241);
   assert.equal(snap.state.cores["0"].kind, "P");
   assert.equal(snap.state.cores["16"].kind, "E");
-  assert.equal(fs.existsSync(path.join(cfgDir, "cpu.json")), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(cfgDir, "cpu.json"), "utf8")).profiles.underclock.pl2W, 188);
+  const r = await c.call("action", { tool: "cpu", name: "useProfile", args: { id: "underclock" } });
+  assert.equal(r.error, undefined, JSON.stringify(r.error));
+  assert.match(r.result.text, /^Underclock applied now:/);
+  assert.equal(fs.readFileSync(path.join(tree.root, "sys/class/powercap/intel-rapl:0/constraint_1_power_limit_uw"), "utf8").trim(), "188000000");
   c.ws.close();
 });

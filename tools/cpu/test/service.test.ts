@@ -10,7 +10,7 @@ import { LineDecoder } from "@motherapp/protocol";
 import { CpuService, INITIAL_STATE, POLL_MS } from "../src/service.ts";
 import type { Timers } from "../src/service.ts";
 import { readSnapshot } from "../src/sysfs.ts";
-import { intelHybrid, ryzen3900x, setFreq, setHwmon, tempTree } from "./fixtures.ts";
+import { intelHybrid, readFile, ryzen3900x, setFreq, setHwmon, tempTree } from "./fixtures.ts";
 import type { MachineSpec } from "./fixtures.ts";
 
 type Msg = { id?: number; method?: string; params?: any };
@@ -40,9 +40,11 @@ class FakeTimers implements Timers {
 
 const tick = () => new Promise((r) => setImmediate(r));
 
-function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: MachineSpec = ryzen3900x()) {
+function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: MachineSpec = ryzen3900x(), opts: { limits?: boolean; before?: (root: string, settingsFile: string) => void } = {}) {
   const tree = tempTree(machine);
   const settingsFile = path.join(tree.root, "config", "motherapp", "cpu.json");
+  const stockFile = path.join(tree.root, "state", "motherapp", "cpu-stock.json");
+  opts.before?.(tree.root, settingsFile);
   const input = new PassThrough();
   const output = new PassThrough();
   const tool = createTool({ id: "cpu", title: "CPU", page: "custom", initialState: INITIAL_STATE, persist: false, captureConsole: false, input, output });
@@ -57,6 +59,7 @@ function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: 
     settingsFile,
     timers,
     now: () => 1_000_000 + timers.t,
+    ...(opts.limits ? { limits: { root: tree.root, stockFile } } : {}),
   });
   const received: Msg[] = [];
   const dec = new LineDecoder();
@@ -84,8 +87,16 @@ function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: 
     await done;
     tree.cleanup();
   });
+  let rid = 100;
+  /** Calls an action like the core does; resolves to the reply's result or error. */
+  const act = async (name: string, args: Record<string, unknown> = {}): Promise<{ result?: any; error?: any }> => {
+    const id = ++rid;
+    input.write(JSON.stringify({ jsonrpc: "2.0", id, method: "action", params: { name, args } }) + "\n");
+    for (let i = 0; i < 50 && !received.some((m) => m.id === id); i++) await tick();
+    return received.find((m) => m.id === id) as { result?: any; error?: any };
+  };
   const events = () => (tool.get("events") as { ts: number; text: string; kind: string }[]).map((e) => e.text);
-  return { tool, tree, settingsFile, timers, service, changes, settle, watch, events, reads: () => reads, logs: () => received.filter((m) => m.method === "log").map((m) => m.params.msg as string) };
+  return { tool, tree, settingsFile, stockFile, act, timers, service, changes, settle, watch, events, reads: () => reads, logs: () => received.filter((m) => m.method === "log").map((m) => m.params.msg as string) };
 }
 
 test("start: one read for the page's shape, then stale and silent until watched", async (t) => {
@@ -249,7 +260,7 @@ test("events are capped at 50, newest kept", async (t) => {
   assert.equal(ev.at(-1), "Boost now on (was off).");
 });
 
-test("Intel: no cpu.json read or created, no profiles, the generic state", async (t) => {
+test("Intel without the limits option: no cpu.json read or created, no profiles, the generic state", async (t) => {
   const s = setup(t, intelHybrid());
   s.service.start();
   await s.watch(true);
@@ -275,4 +286,107 @@ test("a reading problem shows in status and is logged once", async (t) => {
   await s.settle();
   assert.match(s.tool.get("status") as string, /^Can't list the CPUs/);
   assert.equal(s.logs().filter((m) => m.startsWith("Can't list the CPUs")).length, 1);
+});
+
+const PL1 = "sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw";
+const PL2 = "sys/class/powercap/intel-rapl:0/constraint_1_power_limit_uw";
+
+test("Intel limits: cpu.json with the Intel defaults, limits polled while watched", async (t) => {
+  const s = setup(t, intelHybrid(), { limits: true });
+  s.service.start();
+  await s.settle();
+  assert.equal(s.service.intel, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(s.settingsFile, "utf8")).profiles.underclock, { name: "Underclock", pl1W: 125, pl2W: 188 });
+  assert.equal(s.tool.get("profiles.kind"), "limits");
+  assert.equal(s.tool.get("limits.rows.pl1W.now"), 241);
+  assert.equal(s.tool.isStale("limits"), true, "polled: stale while nobody watches");
+  assert.deepEqual(s.events(), ["CPU tool started: no profile active (stock), apply at login on.", "Created cpu.json with the default profiles."]);
+  await s.watch(true);
+  assert.equal(s.tool.isStale("limits"), false);
+  fs.writeFileSync(path.join(s.tree.root, PL1), "200000000");
+  s.timers.advance(POLL_MS);
+  await s.settle();
+  assert.equal(s.tool.get("limits.rows.pl1W.now"), 200);
+  assert.equal(s.tool.get("limits.drift"), undefined, "nothing applied, no profile active: nothing to compare with");
+});
+
+test("Intel limits: useProfile applies, saves active, logs; stock puts it back; empty profiles refused", async (t) => {
+  const s = setup(t, intelHybrid(), { limits: true });
+  s.service.start();
+  await s.settle();
+  const r = await s.act("useProfile", { id: "underclock" });
+  assert.equal(r.error, undefined);
+  assert.equal(r.result.text, "Underclock applied now: PL1 (long-term power) 241 W → 125 W, PL2 (short-term power) 241 W → 188 W.");
+  assert.equal(readFile(s.tree.root, PL1), "125000000");
+  assert.equal(JSON.parse(fs.readFileSync(s.settingsFile, "utf8")).active, "underclock");
+  assert.equal(s.tool.get("profiles.active"), "underclock");
+  assert.equal(s.tool.get("limits.stockFrom"), "snapshot");
+  assert.equal(s.tool.get("limits.rows.pl1W.stock"), 241);
+  assert.ok(s.events().includes("Underclock applied now: PL1 (long-term power) 241 W → 125 W, PL2 (short-term power) 241 W → 188 W."));
+
+  // something else changes PL1: drift against the active profile, and reapply fixes it
+  fs.writeFileSync(path.join(s.tree.root, PL1), "200000000");
+  await s.watch(true);
+  assert.deepEqual(s.tool.get("limits.drift"), ["PL1 (long-term power) 200 W (wanted 125 W)"]);
+  const again = await s.act("reapply");
+  assert.match(again.result.text, /^Underclock applied again: PL1 \(long-term power\) 200 W → 125 W\.$/);
+  assert.equal(s.tool.get("limits.drift"), undefined);
+
+  const empty = await s.act("useProfile", { id: "overclock" });
+  assert.match(empty.error.message, /Overclock has nothing set yet/);
+  assert.equal((await s.act("useProfile", { id: "turbo" })).error.code, -32602);
+
+  const stock = await s.act("useProfile", { id: "stock" });
+  assert.match(stock.result.text, /^Stock applied now: PL1 .* 125 W → 241 W, PL2 .* 188 W → 241 W\.$/);
+  assert.equal(readFile(s.tree.root, PL2), "241000000");
+  assert.equal(JSON.parse(fs.readFileSync(s.settingsFile, "utf8")).active, null);
+});
+
+test("Intel limits: saveProfile validates, writes cpu.json, re-applies the active profile", async (t) => {
+  const s = setup(t, intelHybrid(), { limits: true });
+  s.service.start();
+  await s.settle();
+  const bad = await s.act("saveProfile", { id: "overclock", values: { pl1W: 300, pl2W: 200 } });
+  assert.match(bad.error.message, /can't be above/);
+  const ok = await s.act("saveProfile", { id: "overclock", values: { pl1W: 253, pl2W: 4095, maxMHz: null } });
+  assert.equal(ok.result.text, "Overclock saved.");
+  assert.deepEqual(JSON.parse(fs.readFileSync(s.settingsFile, "utf8")).profiles.overclock, { name: "Overclock", pl1W: 253, pl2W: 4095 });
+  assert.deepEqual(s.tool.get("profiles.list.overclock.values"), { pl1W: 253, pl2W: 4095 });
+  assert.equal(readFile(s.tree.root, PL2), "241000000", "not active: nothing applied");
+
+  await s.act("useProfile", { id: "overclock" });
+  assert.equal(readFile(s.tree.root, PL2), "4095000000");
+  const re = await s.act("saveProfile", { id: "overclock", values: { pl1W: 253, pl2W: 300, turbo: false } });
+  assert.match(re.result.text, /^Overclock applied after saving: Turbo on → off, PL2 \(short-term power\) 4095 W → 300 W\.$/);
+  assert.equal(readFile(s.tree.root, "sys/devices/system/cpu/intel_pstate/no_turbo"), "1");
+
+  const login = await s.act("setApplyOnStart", { value: false });
+  assert.equal(login.result.text, "Apply at login turned off.");
+  assert.equal(JSON.parse(fs.readFileSync(s.settingsFile, "utf8")).applyOnStart, false);
+  assert.equal(s.tool.get("profiles.applyOnStart"), false);
+});
+
+test("Intel limits: the active profile is applied when the tool starts (apply at login on)", async (t) => {
+  const s = setup(t, intelHybrid(), {
+    limits: true,
+    before: (_root, file) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ version: 1, active: "underclock", applyOnStart: true, profiles: { underclock: { pl1W: 100, pl2W: 150 } } }));
+    },
+  });
+  s.service.start();
+  await s.settle();
+  assert.equal(readFile(s.tree.root, PL1), "100000000");
+  assert.deepEqual(s.events(), [
+    "CPU tool started: Underclock active, apply at login on.",
+    "Underclock applied at start: PL1 (long-term power) 241 W → 100 W, PL2 (short-term power) 241 W → 150 W.",
+  ]);
+});
+
+test("Intel limits: actions on a Ryzen are refused", async (t) => {
+  const s = setup(t, ryzen3900x(), { limits: true });
+  s.service.start();
+  await s.settle();
+  assert.equal(s.service.intel, false);
+  assert.match((await s.act("useProfile", { id: "stock" })).error.message, /only available on Intel/);
 });

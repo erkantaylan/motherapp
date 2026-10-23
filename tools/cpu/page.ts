@@ -4,9 +4,11 @@
 // cores as a live clock/heat map, details on hover or tap) and the Tuning console (target vs
 // actual per CCX, the two profiles side by side, a clock/temperature timeline built here from
 // the state updates while the page is open, and the tool's event log). On top, the profile
-// selector Stock | Underclock | Overclock, which only shows cpu.json's `active` for now:
-// applying comes in a later step, so the page has no action and writes nothing.
-// The profiles, the per-CCX table and the SMU placeholders are AMD Ryzen (family 0x17) only
+// selector Stock | Underclock | Overclock. On AMD it only shows cpu.json's `active` (applying
+// needs the SMU, a later step). On Intel (`profiles.kind` "limits") it applies the profile
+// (the useProfile action), and the Limits card shows each limit now, at stock and in both
+// profiles, with the profiles editable in place (saveProfile).
+// The CCX profiles, the per-CCX table and the SMU placeholders are AMD Ryzen (family 0x17) only
 // (`cpu.tuning`); other CPUs, Intel hybrids included, get the core grid, cores, timeline,
 // sensors and log. The package drawing needs 2 CCD × 2 CCX; any other shape gets the grid.
 // Styled with the theme variables (an unlayered <style> scoped by `.mcpu`) and Bootstrap 6's
@@ -87,11 +89,38 @@ interface SensorS {
   value: number;
   unit: string;
 }
+type LimitKey = "maxMHz" | "eMaxMHz" | "turbo" | "governor" | "epp" | "pl1W" | "pl2W";
+type LVal = number | boolean | string;
 interface ProfileS extends ProfileView {
   order: number;
   detail?: string;
+  /** Intel: what the profile sets (absent = stock). */
+  values?: Partial<Record<LimitKey, LVal>>;
+}
+interface LimitRowS {
+  order: number;
+  label: string;
+  now?: LVal;
+  stock?: LVal;
+  min?: number;
+  max?: number;
+  writable: boolean;
+}
+interface LimitsS {
+  supported?: boolean;
+  hybrid?: boolean;
+  access?: "full" | "partial" | "none";
+  accessText?: string;
+  rows?: Partial<Record<LimitKey, LimitRowS>>;
+  governors?: string[];
+  epps?: string[];
+  stockFrom?: "snapshot" | "now";
+  stockAt?: number;
+  drift?: string[];
 }
 interface ProfilesS {
+  /** "limits" on Intel; absent on AMD. */
+  kind?: "limits";
   active?: "underclock" | "overclock";
   applyOnStart?: boolean;
   file?: string;
@@ -106,6 +135,9 @@ const WINDOW_MS = 180_000;
 const SAMPLE_MS = 1000;
 const NO_SMU = "—, needs the SMU (later step)";
 const AMD_ONLY = "Profiles and per-CCX tuning are for AMD Ryzen (Zen 2) only.";
+const PIDS = ["underclock", "overclock"] as const;
+type Pid = (typeof PIDS)[number];
+const UNIT: Partial<Record<LimitKey, string>> = { maxMHz: "MHz", eMaxMHz: "MHz", pl1W: "W", pl2W: "W" };
 const ORDER_KEY = "motherapp.cpu.order";
 const OPEN_KEY = "motherapp.cpu.open";
 
@@ -206,6 +238,35 @@ const STYLE = `
 .mcpu-pc-r { display: flex; justify-content: space-between; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 0.875rem;
   font-variant-numeric: tabular-nums; }
 .mcpu-pc-r[data-hl="true"] { background: color-mix(in oklch, var(--accent) 16%, var(--bg)); }
+
+/* Intel limits */
+.mcpu-lt-wrap { overflow-x: auto; }
+.mcpu-lt { min-width: 600px; font-size: 0.875rem; }
+.mcpu-lt-row { display: grid; grid-template-columns: minmax(150px, 1.4fr) repeat(2, minmax(80px, 0.8fr)) repeat(2, minmax(130px, 1fr)); gap: 8px;
+  padding: 8px 16px; align-items: center; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.mcpu-lt-head { font-size: 0.75rem; color: var(--muted); border-top: 0; }
+.mcpu-lt-row [data-hl="true"] { color: var(--accent); font-weight: 600; }
+.mcpu-lt-row [data-active="true"] { font-weight: 600; }
+.mcpu-in { width: 100%; min-height: 36px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg);
+  font: inherit; min-width: 0; }
+.mcpu-in:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mcpu-in[data-dirty="true"] { border-color: var(--accent); }
+.mcpu-in:disabled { opacity: .6; }
+.mcpu-btn { min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--fg);
+  cursor: pointer; font: inherit; font-size: 0.875rem; white-space: nowrap; }
+.mcpu-btn:hover:not(:disabled) { border-color: var(--accent); }
+.mcpu-btn:disabled { opacity: .5; cursor: default; }
+.mcpu-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.mcpu-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.mcpu-lt-foot { padding: 10px 16px 14px; display: flex; flex-direction: column; gap: 8px; }
+.mcpu-msg { font-size: 0.875rem; }
+.mcpu-msg:empty { display: none; }
+.mcpu-msg[data-kind="err"] { color: var(--danger, var(--warn)); }
+.mcpu-msg[data-kind="warn"] { color: var(--warn); }
+.mcpu-drift { padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border); font-size: 0.875rem; color: var(--warn); }
+.mcpu-access { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 0.875rem; color: var(--warn); }
+.mcpu-access code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
 
 /* timeline */
 .mcpu-tl { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; cursor: crosshair; touch-action: pan-y; }
@@ -342,6 +403,9 @@ interface View {
   stale: boolean;
   tuning: boolean;
   amd: boolean;
+  /** Intel limits: the selector applies, the Limits card shows. */
+  intel: boolean;
+  limits: LimitsS;
 }
 
 interface CellRefs {
@@ -382,6 +446,21 @@ export default class CpuPage extends HTMLElement {
   private login = document.createElement("input");
   private profSummary = el("p", "mcpu-psum");
   private profProblems = el("p", "mcpu-status");
+  private toolbarNote = el("div");
+  private actMsg = el("p", "mcpu-msg");
+  private busy = false;
+  private limitsCard = el("section", "mcpu-card");
+  private limAccess = el("div", "mcpu-access");
+  private limDrift = el("div", "mcpu-drift");
+  private limDriftText = el("span");
+  private limTable = el("div", "mcpu-lt");
+  private limNote = el("p", "mcpu-note");
+  private limMsg = el("p", "mcpu-msg");
+  private limSig = "";
+  private limCells = new Map<LimitKey, { now: HTMLElement; stock: HTMLElement; inputs: Map<Pid, HTMLInputElement | HTMLSelectElement> }>();
+  private limActs = new Map<Pid, { save: HTMLButtonElement; revert: HTMLButtonElement }>();
+  /** Edited, unsaved profile inputs (raw input text per setting), kept across re-renders. */
+  private drafts = new Map<Pid, Partial<Record<LimitKey, string>>>();
   private orderSegs: HTMLElement[] = [];
   private pkg = el("div", "mcpu-pkg");
   private legend = el("div", "mcpu-legend");
@@ -425,7 +504,7 @@ export default class CpuPage extends HTMLElement {
     style.textContent = STYLE;
     this.build();
     this.replaceChildren(style, this.root);
-    for (const k of ["cpu", "ccx", "cores", "sensors", "profiles", "events", "status"]) this.off.push(ctx.subscribe(k, () => this.schedule()));
+    for (const k of ["cpu", "ccx", "cores", "sensors", "limits", "profiles", "events", "status"]) this.off.push(ctx.subscribe(k, () => this.schedule()));
     this.sample();
     this.timer = setInterval(() => {
       this.sample();
@@ -469,6 +548,7 @@ export default class CpuPage extends HTMLElement {
       b.type = "button";
       b.disabled = true;
       b.title = "Switching profiles comes in a later step.";
+      b.addEventListener("click", () => void this.run("useProfile", { id: k }, this.actMsg));
       seg.append(b);
       this.profBtns.set(k, b);
     }
@@ -479,6 +559,7 @@ export default class CpuPage extends HTMLElement {
     this.login.setAttribute("role", "switch");
     this.login.setAttribute("switch", "");
     this.login.disabled = true;
+    this.login.addEventListener("change", () => void this.run("setApplyOnStart", { value: this.login.checked }, this.actMsg));
     const loginLabel = el("label", "", "Apply at login");
     loginLabel.htmlFor = this.login.id;
     const toolbar = this.toolbar;
@@ -486,10 +567,29 @@ export default class CpuPage extends HTMLElement {
       el("div", "mcpu-ctl", undefined, plbl, seg),
       el("div", "mcpu-login", undefined, el("div", "switch", undefined, this.login), loginLabel),
       this.profSummary,
-      note("Switching profiles comes in a later step. The selector shows the active profile from cpu.json."),
+      this.toolbarNote,
+      this.actMsg,
       this.profProblems,
     );
+    this.toolbarNote.style.flex = "1 1 100%";
+    this.actMsg.style.flex = "1 1 100%";
+    this.actMsg.setAttribute("aria-live", "polite");
     toolbar.setAttribute("aria-label", "Profile");
+
+    // Intel limits
+    const reapply = el("button", "mcpu-btn", "Re-apply");
+    reapply.type = "button";
+    reapply.addEventListener("click", () => void this.run("reapply", {}, this.limMsg));
+    this.limDrift.append(this.limDriftText, reapply);
+    this.limMsg.setAttribute("aria-live", "polite");
+    this.limitsCard.append(
+      el("div", "mcpu-sec-h", undefined, el("h3", "", "Limits"), el("span", "small muted", "now · stock · the two profiles")),
+      this.limAccess,
+      this.limDrift,
+      el("div", "mcpu-lt-wrap mcpu-live", undefined, this.limTable),
+      el("div", "mcpu-lt-foot", undefined, this.limNote, this.limMsg),
+    );
+    this.limitsCard.setAttribute("aria-label", "Limits");
 
     // die map
     const mapHead = el(
@@ -591,7 +691,7 @@ export default class CpuPage extends HTMLElement {
       this.log,
     );
 
-    this.root.append(head, toolbar, map, console_, timeline, this.board, this.details, log, el("div", "mcpu-spacer"));
+    this.root.append(head, toolbar, this.limitsCard, map, console_, timeline, this.board, this.details, log, el("div", "mcpu-spacer"));
   }
 
   private orderControl(id: string): HTMLElement {
@@ -642,7 +742,26 @@ export default class CpuPage extends HTMLElement {
     const hi = cpu.maxMHz ?? Math.max(4000, ...[...cores.values()].map((c) => c.mhz ?? 0));
     const lo = Math.min(cpu.minMHz ?? 1500, hi - 500);
     const tuning = cpu.tuning === true;
-    return { cpu, ccx, cores, sensors, profiles, activeKey: tuning ? activeKey : "stock", active: tuning ? active : undefined, rankNo: rankNumbers(ranked), lo, hi, stale: ctx.isStale("cores"), tuning, amd: cpu.vendor === "AMD" };
+    const limits = obj<LimitsS>(ctx.get("limits"));
+    const intel = !tuning && profiles.kind === "limits" && limits.supported === true;
+    const shows = tuning || intel;
+    return {
+      cpu,
+      ccx,
+      cores,
+      sensors,
+      profiles,
+      activeKey: shows ? activeKey : "stock",
+      active: tuning ? active : undefined,
+      rankNo: rankNumbers(ranked),
+      lo,
+      hi,
+      stale: ctx.isStale("cores"),
+      tuning,
+      amd: cpu.vendor === "AMD",
+      intel,
+      limits,
+    };
   }
 
   /** The cores of `c` in layout order. */
@@ -682,12 +801,17 @@ export default class CpuPage extends HTMLElement {
     this.view = v;
     this.root.classList.toggle("mcpu-stale", v.stale);
     this.renderHead(v);
-    this.toolbar.hidden = !v.tuning;
+    this.toolbar.hidden = !v.tuning && !v.intel;
     this.targetCard.hidden = !v.tuning;
     this.profilesCard.hidden = !v.tuning;
-    this.amdNote.hidden = v.tuning || v.cores.size === 0;
+    this.limitsCard.hidden = !v.intel;
+    this.amdNote.hidden = v.tuning || v.intel || v.cores.size === 0;
     for (const seg of this.orderSegs) (seg.parentElement as HTMLElement).hidden = v.rankNo.size === 0;
     if (v.tuning) this.renderProfiles(v);
+    if (v.intel) {
+      this.renderIntelToolbar(v);
+      this.renderLimits(v);
+    }
     const sig = JSON.stringify([v.tuning, v.amd, v.cpu.model, v.ccx.map((c) => [c.index, c.name, c.ccd, c.cores, c.slots]), [...v.cores.values()].map((c) => [c.key, c.name, c.ccx, c.kind])]);
     if (sig !== this.topoSig) {
       this.topoSig = sig;
@@ -745,7 +869,234 @@ export default class CpuPage extends HTMLElement {
     return [...by.entries()].map(([ccd, ccx]) => ({ ccd, ccx }));
   }
 
+  // ---- Intel limits ----
+
+  /** Runs an action, showing its result (or error) in `out`; one at a time. */
+  private async run(name: string, args: Record<string, JsonValue>, out: HTMLElement): Promise<boolean> {
+    const ctx = this.ctx;
+    if (!ctx || this.busy) return false;
+    this.busy = true;
+    out.dataset.kind = "";
+    put(out, "Working…");
+    this.schedule();
+    try {
+      const r = obj<{ text?: string; problems?: string[] }>(await ctx.action(name, args));
+      const problems = Array.isArray(r.problems) ? r.problems : [];
+      out.dataset.kind = problems.length ? "warn" : "";
+      put(out, [r.text ?? "Done.", ...problems].join(" "));
+      return true;
+    } catch (e) {
+      out.dataset.kind = "err";
+      put(out, (e as Error).message || String(e));
+      return false;
+    } finally {
+      this.busy = false;
+      this.schedule();
+    }
+  }
+
+  private renderIntelToolbar(v: View): void {
+    const list = v.profiles.list ?? {};
+    const none = v.limits.access === "none";
+    for (const [k, b] of this.profBtns) {
+      b.setAttribute("aria-pressed", String(k === v.activeKey));
+      const p = k === "stock" ? undefined : list[k];
+      const empty = k !== "stock" && (!p?.values || Object.keys(p.values).length === 0);
+      b.disabled = this.busy || none || empty;
+      b.title = none ? "motherapp has no write access to the CPU limits yet (see Limits)." : empty ? "Nothing set in this profile yet: set values in Limits first." : "";
+    }
+    this.login.disabled = this.busy;
+    this.login.checked = v.profiles.applyOnStart !== false;
+    const p = v.activeKey === "stock" ? undefined : list[v.activeKey];
+    const what = p ? `${p.name}: ${p.detail ?? ""}. Everything else at stock.` : "Stock: the limits as they were before motherapp changed anything.";
+    const login = v.profiles.applyOnStart === false ? "Not applied at login." : p ? "Applied again when the tool starts (at login)." : "Apply at login is on; with stock there is nothing to apply.";
+    put(this.profSummary, `${what} ${login}`);
+    put(this.profProblems, v.profiles.problems ?? "");
+    this.setNote(this.toolbarNote, "Picking a profile applies it at once. A profile changes only what it sets; everything else goes back to stock.");
+  }
+
+  private setNote(box: HTMLElement, text: string): void {
+    if (box.dataset.text === text) return;
+    box.dataset.text = text;
+    box.replaceChildren(note(text));
+  }
+
+  /** Display text for a limit value. */
+  private lText(k: LimitKey, val: LVal | undefined): string {
+    if (val === undefined) return "—";
+    if (k === "turbo") return val ? "on" : "off";
+    const u = UNIT[k];
+    return u ? `${val} ${u}` : String(val);
+  }
+
+  private renderLimits(v: View): void {
+    const l = v.limits;
+    const rows = Object.entries(l.rows ?? {})
+      .filter(([, r]) => isObj(r))
+      .map(([k, r]) => ({ key: k as LimitKey, ...(r as LimitRowS) }))
+      .sort((a, b) => a.order - b.order);
+    const list = v.profiles.list ?? {};
+    const sig = JSON.stringify([rows.map((r) => [r.key, r.label, r.min, r.max, r.writable]), l.governors, l.epps, PIDS.map((id) => [list[id]?.name, list[id]?.values]), v.activeKey]);
+    if (sig !== this.limSig) {
+      this.limSig = sig;
+      this.buildLimits(v, rows);
+    }
+    this.limAccess.hidden = !l.accessText;
+    if (l.accessText && this.limAccess.dataset.text !== l.accessText) {
+      this.limAccess.dataset.text = l.accessText;
+      // "… run `motherapp install` …": the backticked part as code
+      this.limAccess.replaceChildren(...l.accessText.split(/`([^`]+)`/).map((part, i) => (i % 2 ? el("code", "", part) : document.createTextNode(part))));
+    }
+    const drift = l.drift ?? [];
+    this.limDrift.hidden = drift.length === 0;
+    put(this.limDriftText, drift.length ? `Changed outside this profile: ${drift.join(", ")}.` : "");
+    for (const b of this.limDrift.querySelectorAll("button")) b.disabled = this.busy || l.access === "none";
+    for (const r of rows) {
+      const c = this.limCells.get(r.key);
+      if (!c) continue;
+      put(c.now, this.lText(r.key, r.now));
+      c.now.dataset.hl = String(r.now !== undefined && r.stock !== undefined && r.now !== r.stock);
+      put(c.stock, this.lText(r.key, r.stock));
+    }
+    for (const id of PIDS) {
+      const a = this.limActs.get(id);
+      if (!a) continue;
+      const dirty = this.drafts.has(id);
+      a.save.disabled = this.busy || !dirty;
+      a.revert.disabled = this.busy || !dirty;
+    }
+    const stockWhen = l.stockFrom === "snapshot" && l.stockAt ? `the values before motherapp first changed them this boot (${clock(l.stockAt)})` : "the current values, since motherapp hasn't changed anything this boot";
+    this.setNote(
+      this.limNote,
+      `Stock = ${stockWhen}. In a profile, leave a field empty (or "stock") to keep it at stock. Saving the active profile applies it at once. Highlighted "now" values differ from stock.`,
+    );
+  }
+
+  private buildLimits(v: View, rows: (LimitRowS & { key: LimitKey })[]): void {
+    const l = v.limits;
+    const list = v.profiles.list ?? {};
+    this.limCells.clear();
+    this.limActs.clear();
+    const head = el("div", "mcpu-lt-row mcpu-lt-head", undefined, el("span", "", "Setting"), el("span", "", "Now"), el("span", "", "Stock"));
+    for (const id of PIDS) {
+      const h = el("span", "", list[id]?.name ?? id);
+      h.dataset.active = String(v.activeKey === id);
+      if (v.activeKey === id) h.append(" ", el("span", "badge badge-subtle theme-primary mcpu-badge-sm", "Active"));
+      head.append(h);
+    }
+    const out: HTMLElement[] = [head];
+    for (const r of rows) {
+      const now = el("span");
+      const stock = el("span", "muted");
+      const lbl = el("span", "", r.label + (UNIT[r.key] ? `, ${UNIT[r.key]}` : ""));
+      if (!r.writable) lbl.append(el("span", "small muted", " (no access)"));
+      const row = el("div", "mcpu-lt-row", undefined, lbl, now, stock);
+      const inputs = new Map<Pid, HTMLInputElement | HTMLSelectElement>();
+      for (const id of PIDS) {
+        const saved = list[id]?.values?.[r.key];
+        const draft = this.drafts.get(id)?.[r.key];
+        const inp = this.limInput(r, l, saved);
+        if (draft !== undefined) inp.value = draft;
+        inp.dataset.dirty = String(draft !== undefined && draft !== this.inputText(r.key, saved));
+        inp.setAttribute("aria-label", `${list[id]?.name ?? id}: ${r.label}`);
+        inp.addEventListener(inp instanceof HTMLSelectElement ? "change" : "input", () => {
+          const d = { ...(this.drafts.get(id) ?? {}) };
+          d[r.key] = inp.value;
+          const changed = Object.entries(d).some(([k, val]) => val !== this.inputText(k as LimitKey, list[id]?.values?.[k as LimitKey]));
+          if (changed) this.drafts.set(id, d);
+          else this.drafts.delete(id);
+          inp.dataset.dirty = String(inp.value !== this.inputText(r.key, list[id]?.values?.[r.key]));
+          this.schedule();
+        });
+        inputs.set(id, inp);
+        row.append(inp);
+      }
+      this.limCells.set(r.key, { now, stock, inputs });
+      out.push(row);
+    }
+    const foot = el("div", "mcpu-lt-row", undefined, el("span"), el("span"), el("span"));
+    for (const id of PIDS) {
+      const save = el("button", "mcpu-btn primary", "Save");
+      const revert = el("button", "mcpu-btn", "Revert");
+      save.type = revert.type = "button";
+      save.addEventListener("click", () => void this.saveProfile(id));
+      revert.addEventListener("click", () => {
+        this.drafts.delete(id);
+        this.limSig = "";
+        this.schedule();
+      });
+      this.limActs.set(id, { save, revert });
+      foot.append(el("div", "mcpu-acts", undefined, save, revert));
+    }
+    out.push(foot);
+    this.limTable.replaceChildren(...out);
+  }
+
+  /** The input text for a saved value ("" = stock). */
+  private inputText(k: LimitKey, val: LVal | undefined): string {
+    if (val === undefined) return "";
+    if (k === "turbo") return val ? "on" : "off";
+    return String(val);
+  }
+
+  private limInput(r: LimitRowS & { key: LimitKey }, l: LimitsS, saved: LVal | undefined): HTMLInputElement | HTMLSelectElement {
+    const choices = r.key === "turbo" ? ["on", "off"] : r.key === "governor" ? (l.governors ?? []) : r.key === "epp" ? (l.epps ?? []) : undefined;
+    if (choices) {
+      const sel = el("select", "mcpu-in");
+      sel.append(el("option", "", "stock"));
+      (sel.lastChild as HTMLOptionElement).value = "";
+      for (const c of choices) {
+        const o = el("option", "", c);
+        o.value = c;
+        sel.append(o);
+      }
+      const want = this.inputText(r.key, saved);
+      // a saved value this CPU doesn't list still shows
+      if (want && !choices.includes(want)) {
+        const o = el("option", "", want);
+        o.value = want;
+        sel.append(o);
+      }
+      sel.value = want;
+      return sel;
+    }
+    const inp = el("input", "mcpu-in num");
+    inp.type = "number";
+    inp.inputMode = "numeric";
+    inp.step = r.key === "maxMHz" || r.key === "eMaxMHz" ? "100" : "1";
+    if (r.min !== undefined) inp.min = String(r.min);
+    if (r.max !== undefined) inp.max = String(r.max);
+    inp.placeholder = "stock";
+    inp.value = this.inputText(r.key, saved);
+    return inp;
+  }
+
+  private async saveProfile(id: Pid): Promise<void> {
+    const values: Record<string, JsonValue> = {};
+    for (const [k, c] of this.limCells) {
+      const raw = c.inputs.get(id)?.value.trim() ?? "";
+      if (raw === "") continue;
+      if (k === "turbo") values[k] = raw === "on";
+      else if (k === "governor" || k === "epp") values[k] = raw;
+      else {
+        const n = Number(raw);
+        if (!Number.isInteger(n)) {
+          this.limMsg.dataset.kind = "err";
+          put(this.limMsg, `${this.view?.limits.rows?.[k]?.label ?? k}: "${raw}" isn't a whole number.`);
+          return;
+        }
+        values[k] = n;
+      }
+    }
+    if (await this.run("saveProfile", { id, values }, this.limMsg)) {
+      this.drafts.delete(id);
+      this.limSig = "";
+      this.schedule();
+    }
+  }
+
   private renderProfiles(v: View): void {
+    this.setNote(this.toolbarNote, "Switching profiles comes in a later step. The selector shows the active profile from cpu.json.");
     for (const [k, b] of this.profBtns) b.setAttribute("aria-pressed", String(k === v.activeKey));
     this.login.checked = v.profiles.applyOnStart !== false;
     const login = v.profiles.applyOnStart === false ? "Apply at login is off." : v.activeKey === "stock" ? "Apply at login is on, but with stock there is nothing to re-apply." : "Apply at login is on: this profile will be re-applied when the tool starts, once applying exists.";
@@ -1255,6 +1606,7 @@ export default class CpuPage extends HTMLElement {
         .map((s): [string, string] => [`${s.name} (${s.description})`, formatTemp(s.value)]),
     ];
     if (v.tuning) rows.push(["Vcore", NO_SMU], ["Package power (PPT)", NO_SMU], ["SMU overclock mode", NO_SMU], ["Profiles file", v.profiles.file ?? "—"]);
+    else if (v.intel) rows.push(["Profiles file", v.profiles.file ?? "—"], ["Stock values", v.limits.stockFrom === "snapshot" && v.limits.stockAt ? `as they were before motherapp first changed them (${clock(v.limits.stockAt)})` : "the current values (nothing changed this boot)"]);
     else rows.push(["Profiles", AMD_ONLY]);
     const sig = JSON.stringify(rows);
     if (this.detailsBody.dataset.sig === sig) return;

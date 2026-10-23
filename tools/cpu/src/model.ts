@@ -14,6 +14,7 @@ export const NOT_AVAILABLE_TEXT =
 export const APPLY_NOTE = "Applying profiles isn't available yet.";
 export const NOT_SET = "values not set yet";
 export const AMD_ONLY = "Profiles and per-CCX tuning are for AMD Ryzen (Zen 2) only.";
+export const INTEL_TEXT = "Clock caps, turbo, EPP and PL1/PL2: `cpuctl limits`, `cpuctl profiles`, `cpuctl use <stock|underclock|overclock>`.";
 
 /** "AMD" / "Intel" from /proc/cpuinfo's vendor_id; undefined for anything else. */
 export function vendorName(vendorId: string | undefined): "AMD" | "Intel" | undefined {
@@ -376,7 +377,7 @@ export function formatStatus(r: Report): string {
     }
   }
   for (const h of r.hidden) lines.push(`  hidden: ${h}`);
-  lines.push("", r.tuning ? NOT_AVAILABLE_TEXT : AMD_ONLY);
+  lines.push("", r.tuning ? NOT_AVAILABLE_TEXT : r.vendor === "Intel" ? INTEL_TEXT : AMD_ONLY);
   return lines.join("\n");
 }
 

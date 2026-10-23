@@ -15,7 +15,8 @@ async function cli(root: string, ...argv: string[]) {
   stdout.on("data", (c) => (out += c));
   stderr.on("data", (c) => (err += c));
   const settingsFile = path.join(root, "config", "motherapp", "cpu.json");
-  const code = await runCli(argv, { root, settingsFile, stdout, stderr });
+  const stockFile = path.join(root, "state", "motherapp", "cpu-stock.json");
+  const code = await runCli(argv, { root, settingsFile, stockFile, stdout, stderr });
   return { code, out, err, settingsFile };
 }
 
@@ -82,7 +83,7 @@ test("help and unknown commands", async (t) => {
   assert.match(u.err, /unknown command "apply"/);
 });
 
-test("Intel: status works, profiles says AMD only and never creates cpu.json", async (t) => {
+test("Intel: status works, profiles creates cpu.json with the Intel defaults", async (t) => {
   const { root, cleanup } = tempTree(intelHybrid());
   t.after(cleanup);
   const s = await cli(root, "status");
@@ -91,8 +92,41 @@ test("Intel: status works, profiles says AMD only and never creates cpu.json", a
   assert.match(s.out, /\nL3 group 1 {4}avg/);
   const p = await cli(root, "profiles");
   assert.equal(p.code, 0);
-  assert.equal(p.out, "Profiles and per-CCX tuning are for AMD Ryzen (Zen 2) only.\n");
-  const j = await cli(root, "profiles", "--json");
-  assert.deepEqual(JSON.parse(j.out), { supported: false, reason: "Profiles and per-CCX tuning are for AMD Ryzen (Zen 2) only." });
-  assert.equal(fs.existsSync(p.settingsFile), false);
+  assert.match(p.out, /\nunderclock  Underclock\n    PL1 \(long-term power\): 125 W\n    PL2 \(short-term power\): 188 W\n\noverclock   Overclock\n    nothing set yet \(all stock\)\n/);
+  assert.equal(JSON.parse(fs.readFileSync(p.settingsFile, "utf8")).profiles.underclock.pl1W, 125);
+  const j = JSON.parse((await cli(root, "profiles", "--json")).out);
+  assert.deepEqual(j.profiles.underclock, { name: "Underclock", pl1W: 125, pl2W: 188 });
+  assert.equal(j.active, null);
+});
+
+test("Intel: limits shows now / stock / writable; use applies and makes it active", async (t) => {
+  const { root, cleanup } = tempTree(intelHybrid());
+  t.after(cleanup);
+  const l = await cli(root, "limits");
+  assert.equal(l.code, 0);
+  assert.match(l.out, /\nPL1 \(long-term power\) +241 W +241 W +yes\n/);
+  assert.match(l.out, /motherapp hasn't changed anything this boot: stock = now\./);
+  const u = await cli(root, "use", "underclock");
+  assert.equal(u.code, 0, u.err);
+  assert.equal(u.out, "PL1 (long-term power) 241 W → 125 W\nPL2 (short-term power) 241 W → 188 W\nActive profile: Underclock.\n");
+  assert.equal(JSON.parse(fs.readFileSync(u.settingsFile, "utf8")).active, "underclock");
+  const lj = JSON.parse((await cli(root, "limits", "--json")).out);
+  assert.equal(lj.current.pl1W, 125);
+  assert.equal(lj.stock.pl1W, 241);
+  assert.equal(lj.stockFrom, "snapshot");
+  const o = await cli(root, "use", "overclock");
+  assert.equal(o.code, 1);
+  assert.match(o.err, /Overclock has nothing set yet/);
+  assert.equal((await cli(root, "use", "fast")).code, 2);
+  const back = await cli(root, "use", "stock");
+  assert.equal(back.code, 0);
+  assert.match(back.out, /125 W → 241 W/);
+});
+
+test("AMD: limits and use say Intel only", async (t) => {
+  const { root, cleanup } = tempTree();
+  t.after(cleanup);
+  const r = await cli(root, "use", "stock");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Intel CPUs only/);
 });

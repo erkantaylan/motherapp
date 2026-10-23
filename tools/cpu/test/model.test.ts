@@ -167,7 +167,7 @@ test("Intel hybrid: P-/E-cores, coretemp package and per-core temps, no_turbo, n
   assert.equal(s.sensors["acpitz-temp1"], undefined, "only the known chips");
   const text = formatStatus(r);
   assert.match(text, /\n {2}Core 9 {3}E-core cpu 16 3700 MHz · 39 °C\n/);
-  assert.match(text, /Profiles and per-CCX tuning are for AMD Ryzen \(Zen 2\) only\.$/);
+  assert.match(text, /Clock caps, turbo, EPP and PL1\/PL2: `cpuctl limits`, `cpuctl profiles`, `cpuctl use <stock\|underclock\|overclock>`\.$/);
   assert.doesNotMatch(text, /Vcore/);
 });
 

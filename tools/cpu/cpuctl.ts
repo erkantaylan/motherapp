@@ -1,11 +1,13 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
-// cpuctl: the motherapp CPU tool (read-only for now). Shows the CPU's per-CCX and per-core
-// frequencies, cpufreq settings and temperatures from sysfs, and the saved ClockTuner for
-// Ryzen profiles from ~/.config/motherapp/cpu.json. `cpuctl serve` is the mode the core starts
-// (reads every second while its custom page, page.ts, is watched); every other subcommand works on its own
-// from a terminal (`cpuctl help`). Nothing here writes to the hardware or to sysfs.
+// cpuctl: the motherapp CPU tool. Shows the CPU's per-CCX and per-core frequencies, cpufreq
+// settings and temperatures from sysfs, and the saved profiles from ~/.config/motherapp/cpu.json.
+// On AMD Ryzen it is read-only (the ClockTuner for Ryzen profiles are shown, not applied). On
+// Intel it applies the profiles' clock caps, turbo, governor, EPP and PL1/PL2 (src/intel.ts).
+// `cpuctl serve` is the mode the core starts (reads every second while its custom page, page.ts,
+// is watched); every other subcommand works on its own from a terminal (`cpuctl help`).
 import { createTool, exitOnBrokenPipe } from "@motherapp/tool-sdk";
 import { runCli } from "./src/cli.ts";
+import { stockFile } from "./src/intel.ts";
 import { toolTitle } from "./src/model.ts";
 import { CpuService, INITIAL_STATE } from "./src/service.ts";
 import { settingsFile } from "./src/settings.ts";
@@ -18,7 +20,7 @@ if (process.argv[2] === "serve") {
   // "CPU - AMD" / "CPU - Intel": describe's title replaces the manifest's neutral "CPU" in the sidebar.
   const title = toolTitle(readCpuinfo(new SysReader(root)).vendor);
   const tool = createTool({ id: "cpu", title, icon: "🌡️", page: "custom", initialState: INITIAL_STATE, persist: false });
-  const service = new CpuService({ tool, read: () => readSnapshot(root), settingsFile: settingsFile() });
+  const service = new CpuService({ tool, read: () => readSnapshot(root), settingsFile: settingsFile(), limits: { root, stockFile: stockFile() } });
   const serving = tool.serve();
   tool.log.info("cpu tool serving", { root, title, settings: settingsFile() });
   service.start();
@@ -26,5 +28,5 @@ if (process.argv[2] === "serve") {
   service.stop();
 } else {
   exitOnBrokenPipe(); // `cpuctl status | head -1`
-  process.exitCode = await runCli(process.argv.slice(2), { root, settingsFile: settingsFile(), stdout: process.stdout, stderr: process.stderr });
+  process.exitCode = await runCli(process.argv.slice(2), { root, settingsFile: settingsFile(), stockFile: stockFile(), stdout: process.stdout, stderr: process.stderr });
 }

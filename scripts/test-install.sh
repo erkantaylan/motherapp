@@ -69,7 +69,7 @@ new_case() {
   mkdir -p "$R/packaging" "$R/scripts" "$HOME_" "$ROOT" "$FAKE"/{apt,dpkg,active,enabled} "$STUB"
   cp "$REPO/install.sh" "$REPO/VERSION" "$REPO/.gitignore" "$R/"
   cp "$REPO/scripts/build-info.sh" "$REPO/scripts/motherapp.sh" "$R/scripts/"
-  cp "$REPO/packaging/motherapp.service" "$R/packaging/"
+  cp "$REPO/packaging/motherapp.service" "$REPO/packaging/motherapp-cpu-access.service" "$REPO/packaging/motherapp-cpu-access.sh" "$R/packaging/"
   local t
   for t in "$REPO"/tools/*/manifest.json; do   # the real manifests (audio declares "bin")
     t="${t%/manifest.json}"
@@ -118,6 +118,7 @@ exec "$@"'
   stub id 'case "$*" in
   -u) echo 1000 ;;
   -un) echo tester ;;
+  -gn) echo tester ;;
   "-nG tester") cat "$FAKE/user_groups" ;;
   -nG) cat "$FAKE/proc_groups" ;;
   *) exit 1 ;;
@@ -159,8 +160,19 @@ done'
   stub gpg 'out=""; while (($#)); do [[ $1 == -o ]] && out=$2; shift; done; echo "gpg -o $out" >>"$FAKE/calls"; cat >"$out"'
   stub modprobe 'echo "modprobe $*" >>"$FAKE/calls"; mkdir -p "$MOTHERAPP_INSTALL_ROOT/sys/module/i2c_dev"; touch "$MOTHERAPP_INSTALL_ROOT/dev/i2c-1" "$MOTHERAPP_INSTALL_ROOT/dev/i2c-3"'
   stub usermod 'echo "usermod $*" >>"$FAKE/calls"; [[ $1 == -aG ]] && echo "$(cat "$FAKE/user_groups") $2" >"$FAKE/user_groups"'
+  # System units (no --user) live in $FAKE/sys_enabled.
   stub systemctl 'echo "systemctl $*" >>"$FAKE/calls"
-[[ $1 == --user ]] || exit 1; shift
+if [[ $1 != --user ]]; then
+  cmd=$1; shift; q=0; [[ ${1:-} == --quiet ]] && { q=1; shift; }
+  mkdir -p "$FAKE/sys_enabled"
+  case $cmd in
+    is-enabled) [[ -f $FAKE/sys_enabled/$1 ]] || exit 1 ;;
+    enable) touch "$FAKE/sys_enabled/$1" ;;
+    disable) rm -f "$FAKE/sys_enabled/$1" ;;
+  esac
+  exit 0
+fi
+shift
 cmd=$1; shift; q=0; [[ ${1:-} == --quiet ]] && { q=1; shift; }; [[ ${1:-} == --now ]] && shift
 u=${1:-}
 case $cmd in
@@ -410,6 +422,36 @@ new_case libddcutil-unknown
 rm "$FAKE/dpkg/libddcutil4" "$ROOT/usr/lib/x86_64-linux-gnu/libddcutil.so.4" "$FAKE/apt/libddcutil4"
 run_installer --check
 check "no apt candidate: MISSING with explanation" out_has '^MISSING +libddcutil +.*apt knows none of: libddcutil5 libddcutil4 libddcutil0'
+
+new_case cpu-limits-intel
+mkdir -p "$ROOT/proc" "$ROOT/sys/devices/system/cpu/intel_pstate"
+printf 'processor\t: 0\nvendor_id\t: GenuineIntel\n' >"$ROOT/proc/cpuinfo"
+run_installer --check
+check "intel --check: cpu-limits WARN" out_has '^WARN +cpu-limits +the CPU tool can.t change clock caps'
+check "intel --check: no sudo" calls_lacks '^sudo'
+run_installer <<<"n"
+check "intel answer no: asked" out_has 'Install motherapp-cpu-access\.service and /usr/local/lib/motherapp/cpu-access, enable and run it now \(sudo\) \[y/N\]'
+check "intel answer no: nothing installed" calls_lacks '^sudo install'
+run_installer --yes
+check "intel --yes: exit 0" exit_is 0
+check "intel --yes: helper installed" cmp -s "$REPO/packaging/motherapp-cpu-access.sh" "$ROOT/usr/local/lib/motherapp/cpu-access"
+check "intel --yes: unit for group tester" file_has "$ROOT/etc/systemd/system/motherapp-cpu-access.service" "ExecStart=/usr/local/lib/motherapp/cpu-access tester"
+check "intel --yes: template comments dropped" out_lacks '^#@'
+check "intel --yes: enabled" calls_has "sudo systemctl enable motherapp-cpu-access.service"
+check "intel --yes: run now" calls_has "sudo systemctl restart motherapp-cpu-access.service"
+check "intel --yes: OK after the re-check" out_has '^OK +cpu-limits +motherapp-cpu-access\.service installed and enabled \(group tester'
+: >"$FAKE/calls"
+run_installer --yes
+check "intel re-run: nothing to do, no sudo" calls_lacks '^sudo'
+run_installer --uninstall --yes
+check "intel uninstall: disabled" calls_has "sudo systemctl disable motherapp-cpu-access.service"
+check "intel uninstall: unit removed" test ! -e "$ROOT/etc/systemd/system/motherapp-cpu-access.service"
+check "intel uninstall: helper removed" test ! -e "$ROOT/usr/local/lib/motherapp/cpu-access"
+check "intel uninstall: OK" out_has '^OK +cpu-limits +removed motherapp-cpu-access\.service'
+
+new_case cpu-limits-not-intel
+run_installer --check
+check "no cpuinfo: nothing to set up" out_has '^OK +cpu-limits +not an Intel CPU'
 
 new_case not-in-i2c-group
 echo "tester adm" >"$FAKE/user_groups"

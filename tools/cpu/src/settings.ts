@@ -1,5 +1,5 @@
-// ~/.config/motherapp/cpu.json: the user's two overclock profiles and which one is chosen
-// (the user's call, 2026-10-22). Read-only for now: a later step applies the active profile
+// ~/.config/motherapp/cpu.json on AMD Ryzen (Intel has its own profile shape, src/intel.ts):
+// the user's two overclock profiles and which one is chosen (the user's call, 2026-10-22). Read-only for now: a later step applies the active profile
 // through the SMU, re-applying it whenever the tool starts (at login, with the service).
 //
 //   { "version": 1,
@@ -124,7 +124,7 @@ export function formatSettings(s: Settings): string {
 }
 
 /** Writes `data` atomically (temp file + rename), creating the directory. */
-function writeAtomic(file: string, data: string): void {
+export function writeAtomic(file: string, data: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, data);
