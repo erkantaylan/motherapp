@@ -22,4 +22,7 @@ PL2 held. Cause: `thermald --systemd --dbus-enable --adaptive` (Ubuntu's default
 ## Open
 
 - thermald is turned off only after the user runs `motherapp install` and says yes.
-- Undervolting: waiting on the BIOS check (`undervolt-probe.sh`, run with sudo by the user).
+- Undervolting: the probe (run with sudo by the user) read back 0 mV after writing −5 mV, OC
+  lock bit 0: ASUS PRIME Z690-A BIOS 4505 has Undervolt Protection on. The user turns it off in
+  the BIOS, then re-runs the probe; build the helper only after it reads back −4.9 mV. The probe
+  is in the session scratchpad; move it into the helper as `cpu-voltage probe` when building.
