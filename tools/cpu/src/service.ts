@@ -25,6 +25,7 @@ import {
   updateIntelSettings,
 } from "./intel.ts";
 import type { IntelSettings, Limits } from "./intel.ts";
+import type { PowerMeter } from "./power.ts";
 import { diffState } from "./diff.ts";
 import { buildReport, polledState, profilesState } from "./model.ts";
 import type { Report } from "./model.ts";
@@ -64,6 +65,8 @@ export interface ServiceOptions {
   now?: () => number;
   /** Intel limits: the sysfs root to write under and the stock snapshot file. Without it, Intel is read-only too. */
   limits?: { root: string; stockFile: string };
+  /** Package power from RAPL, published as cpu.powerW (or cpu.powerNote when it can't be read). */
+  power?: PowerMeter;
 }
 
 /** What the event log compares between reads. */
@@ -142,6 +145,7 @@ export class CpuService {
   private limits: { root: string; stockFile: string } | undefined;
   private intelSettings: IntelSettings | undefined;
   private hybrid = false;
+  private power: PowerMeter | undefined;
 
   constructor(opts: ServiceOptions) {
     this.tool = opts.tool;
@@ -151,6 +155,7 @@ export class CpuService {
     this.intervalMs = opts.intervalMs ?? POLL_MS;
     this.now = opts.now ?? Date.now;
     this.limits = opts.limits;
+    this.power = opts.power;
     this.registerActions();
   }
 
@@ -194,6 +199,7 @@ export class CpuService {
     if (!this.running) return;
     this.clearTimer();
     this.watched = watching;
+    if (watching) this.power?.reset(); // watts over the last second, not over the unwatched gap
     if (!watching) {
       for (const k of STALE_KEYS) if (!this.tool.isStale(k)) this.tool.markStale(k);
       return;
@@ -229,6 +235,12 @@ export class CpuService {
     this.intel = report.vendor === "Intel" && this.limits !== undefined;
     this.ccxCount = report.ccx.length || undefined;
     const next = polledState(report);
+    if (this.power) {
+      const p = this.power.read(this.now());
+      const cpu = next.cpu as JsonObject;
+      if (p.watts !== undefined) cpu.powerW = p.watts;
+      if (p.problem) cpu.powerNote = p.problem;
+    }
     for (const k of POLLED) this.publish(k, next[k]!);
     this.problem(report.problems.join(" "));
     this.noteCpufreq(report);

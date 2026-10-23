@@ -36,6 +36,8 @@ test("validateManifest", () => {
   assert.equal(typeof validateManifest({ id: "a", title: "A", serve: [] }), "string");
   assert.equal(typeof validateManifest({ id: "core", title: "A", serve: ["x"] }), "string");
   assert.equal(typeof validateManifest({ id: "a", title: "A", serve: ["x"], page: "../x.ts" }), "string");
+  assert.equal(validateManifest({ id: "a", title: "A", serve: ["x"], wide: "yes" }), "wide must be a boolean");
+  assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], wide: true }), { id: "a", title: "A", serve: ["x"], wide: true });
   assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], page: "p.ts", extra: 1 }), { id: "a", title: "A", serve: ["x"], page: "p.ts" });
   // "bin" is for install.sh only; the core accepts and ignores it.
   assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], bin: { actl: "a.ts" } }), { id: "a", title: "A", serve: ["x"] });

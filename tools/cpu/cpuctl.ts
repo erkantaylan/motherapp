@@ -8,6 +8,7 @@
 import { createTool, exitOnBrokenPipe } from "@motherapp/tool-sdk";
 import { runCli } from "./src/cli.ts";
 import { stockFile } from "./src/intel.ts";
+import { PowerMeter } from "./src/power.ts";
 import { toolTitle } from "./src/model.ts";
 import { CpuService, INITIAL_STATE } from "./src/service.ts";
 import { settingsFile } from "./src/settings.ts";
@@ -20,7 +21,7 @@ if (process.argv[2] === "serve") {
   // "CPU - AMD" / "CPU - Intel": describe's title replaces the manifest's neutral "CPU" in the sidebar.
   const title = toolTitle(readCpuinfo(new SysReader(root)).vendor);
   const tool = createTool({ id: "cpu", title, icon: "🌡️", page: "custom", initialState: INITIAL_STATE, persist: false });
-  const service = new CpuService({ tool, read: () => readSnapshot(root), settingsFile: settingsFile(), limits: { root, stockFile: stockFile() } });
+  const service = new CpuService({ tool, read: () => readSnapshot(root), settingsFile: settingsFile(), limits: { root, stockFile: stockFile() }, power: new PowerMeter(root) });
   const serving = tool.serve();
   tool.log.info("cpu tool serving", { root, title, settings: settingsFile() });
   service.start();

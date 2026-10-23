@@ -187,6 +187,8 @@ export interface Sample {
   mhz?: number;
   /** Package temperature (Tctl), °C. */
   temp?: number;
+  /** Package power, W. */
+  w?: number;
 }
 
 /** Appends a sample and drops those older than `windowMs` before `s.ts`. Mutates `buf`. */

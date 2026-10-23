@@ -104,6 +104,7 @@ export class Manager extends EventEmitter<ManagerEvents> {
       if (ICON_FILE_RE.test(m.icon)) info.iconUrl = `/tools/${host.id}/${m.icon}`;
       else info.icon = m.icon;
     }
+    if (m.wide) info.wide = true;
     if (host.statusText) info.statusText = host.statusText;
     if (host.restartAt !== undefined) info.restartAt = host.restartAt;
     if (host.describe) {

@@ -29,6 +29,7 @@ tools/<id>/
 | `serve` | Command line, relative to the tool dir. `"node"` means the Node that runs the core (so systemd's PATH doesn't matter). A command with a `/` is resolved against the tool dir. Any language works. |
 | `page` | Optional custom page module (see § 6). |
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
+| `wide` | Optional, default `false`. The page may grow to 1600 px on a wide screen instead of the usual 960 px column (the CPU page uses it for its live column). Lay the page out so it still works at 960 px and on a phone. |
 | `order` | Optional number, a default sidebar position hint: lower comes first, and tools without one follow alphabetically by id. It applies only until the user re-orders the tools on the Settings page; after that their saved order rules, and a newly installed tool is appended at the end (alphabetically among other new ones), hint or not. Audio has `"order": 1` so it comes first out of the box. |
 | `bin` | Optional. `{ "<command>": "<script relative to the tool dir>" }`, e.g. `{"audioctl": "audioctl.ts"}`. For each entry `install.sh` writes `~/.local/bin/<command>`, a bash wrapper that runs the script with the installer's Node 24 by absolute path (so an older `node` on PATH or a keyboard shortcut's minimal PATH doesn't matter), and `--uninstall` removes it. The script must be a Node script; the command name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and must be unique across tools. The core ignores this field. |
 

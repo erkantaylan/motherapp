@@ -16,6 +16,8 @@ export interface ToolManifest {
   page?: string;
   /** Enabled when first discovered. Default true. */
   defaultEnabled?: boolean;
+  /** The page may use the full width of a wide screen instead of the usual 960 px column. */
+  wide?: boolean;
   /**
    * Default sidebar position hint (lower first), used until the user re-orders the tools on
    * the Settings page. Tools without one follow, alphabetically.

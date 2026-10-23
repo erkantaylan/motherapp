@@ -6,7 +6,9 @@
 # Gives that group write access to these sysfs files only, so the CPU tool can set them
 # without sudo: per-CPU clock caps, governor and EPP (cpufreq), turbo (intel_pstate no_turbo or
 # cpufreq boost), and the package power limits PL1/PL2 (RAPL). The kernel checks every value
-# written to them. Nothing else changes: no voltages, no MSRs, no values are written here.
+# written to them. It also gives the group read access to the package energy counters, for the
+# package power the CPU page shows. Nothing else changes: no voltages, no MSRs, no values are
+# written here.
 # sysfs permissions don't survive a reboot, which is why this runs at every boot.
 #
 # Usage: cpu-access GROUP
@@ -28,18 +30,19 @@ root=${MOTHERAPP_CPU_ACCESS_ROOT:-}
 cpu=$root/sys/devices/system/cpu
 n=0 failed=0
 
-grant() {
-  local f
+grant() { # mode (g+w or g+r) files...
+  local mode=$1 f
+  shift
   for f in "$@"; do
     [[ -f $f && ! -L $f ]] || continue
-    if chgrp "$group" "$f" && chmod g+w "$f"; then n=$((n + 1)); else failed=$((failed + 1)); fi
+    if chgrp "$group" "$f" && chmod "$mode" "$f"; then n=$((n + 1)); else failed=$((failed + 1)); fi
   done
 }
 
 for d in "$cpu"/cpufreq/policy[0-9]*; do
-  grant "$d"/scaling_max_freq "$d"/scaling_governor "$d"/energy_performance_preference
+  grant g+w "$d"/scaling_max_freq "$d"/scaling_governor "$d"/energy_performance_preference
 done
-grant "$cpu"/intel_pstate/no_turbo "$cpu"/cpufreq/boost
+grant g+w "$cpu"/intel_pstate/no_turbo "$cpu"/cpufreq/boost
 
 # Package zones only (intel-rapl:0, intel-rapl-mmio:0), not their core/uncore subzones
 # (intel-rapl:0:0), and only the long-term (PL1) and short-term (PL2) constraints.
@@ -47,13 +50,17 @@ for z in "$root"/sys/class/powercap/intel-rapl:* "$root"/sys/class/powercap/inte
   [[ ${z##*/} =~ ^intel-rapl(-mmio)?:[0-9]+$ ]] || continue
   for c in "$z"/constraint_[0-9]_name; do
     case $(<"$c") in
-      long_term | short_term) grant "${c%_name}_power_limit_uw" ;;
+      long_term | short_term) grant g+w "${c%_name}_power_limit_uw" ;;
     esac
   done
+  # Read access to the package energy counter, for the CPU page's package power (W). The kernel
+  # keeps it root-only because power readings are a side channel (CVE-2020-8694); this opens it
+  # to this one group.
+  grant g+r "$z"/energy_uj
 done
 
 if (( failed )); then
-  echo "cpu-access: group $group can now write $n CPU limit file(s); $failed couldn't be changed" >&2
+  echo "cpu-access: group $group now has access to $n CPU file(s); $failed couldn't be changed" >&2
   exit 1
 fi
-echo "cpu-access: group $group can now write $n CPU limit file(s)"
+echo "cpu-access: group $group now has access to $n CPU file(s)"

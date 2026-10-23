@@ -252,6 +252,8 @@ export function writeTree(root: string, m: MachineSpec): void {
       put(path.join(dir, "constraint_1_power_limit_uw"), String(pl2 * 1_000_000));
       put(path.join(dir, "constraint_2_name"), "peak_power");
       put(path.join(dir, "constraint_2_power_limit_uw"), "380000000");
+      put(path.join(dir, "energy_uj"), "1000000");
+      put(path.join(dir, "max_energy_range_uj"), "262143328850");
     };
     const pc = path.join(root, "sys/class/powercap");
     zone(path.join(pc, "intel-rapl:0"), "package-0", m.rapl.pl1W, m.rapl.pl2W);

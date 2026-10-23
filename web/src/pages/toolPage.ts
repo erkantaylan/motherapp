@@ -111,6 +111,7 @@ export function mountToolPage(app: App, toolId: string, root: HTMLElement): () =
       return;
     }
     title.textContent = info.title;
+    root.closest(".content")?.classList.toggle("content-wide", info.wide === true);
     statusEl.textContent = STATUS_TEXT[info.status];
     statusEl.dataset.status = info.status;
     statusEl.className = `tool-status badge badge-subtle ${STATUS_THEME[info.status]}`;
@@ -130,6 +131,7 @@ export function mountToolPage(app: App, toolId: string, root: HTMLElement): () =
   return () => {
     off();
     cleanup();
+    root.closest(".content")?.classList.remove("content-wide");
     root.replaceChildren();
   };
 }

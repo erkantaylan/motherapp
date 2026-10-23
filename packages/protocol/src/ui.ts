@@ -29,6 +29,8 @@ export interface ToolInfo {
   layout?: Widget[];
   /** Module URL for custom pages. */
   pageUrl?: string;
+  /** The manifest's `wide`: the page gets the full width of a wide screen. */
+  wide?: boolean;
 }
 
 export interface LogEntry {

@@ -33,11 +33,13 @@ export function validateManifest(raw: unknown): ToolManifest | string {
   }
   if (m.defaultEnabled !== undefined && typeof m.defaultEnabled !== "boolean") return "defaultEnabled must be a boolean";
   if (m.order !== undefined && (typeof m.order !== "number" || !Number.isFinite(m.order))) return "order must be a number";
+  if (m.wide !== undefined && typeof m.wide !== "boolean") return "wide must be a boolean";
   const out: ToolManifest = { id: m.id, title: m.title, serve: m.serve as string[] };
   if (m.icon !== undefined) out.icon = m.icon;
   if (m.page !== undefined) out.page = m.page;
   if (m.defaultEnabled !== undefined) out.defaultEnabled = m.defaultEnabled;
   if (m.order !== undefined) out.order = m.order;
+  if (m.wide !== undefined) out.wide = m.wide;
   return out;
 }
 

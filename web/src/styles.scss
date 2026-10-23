@@ -97,6 +97,8 @@
   .conn-banner { padding: var(--bs-spacer-2) var(--bs-spacer-5); color: var(--bs-danger-contrast); background: var(--bs-danger-bg); }
   .conn-banner[hidden] { display: none; }
   .content { width: 100%; max-width: 960px; padding: 20px 28px 40px; }
+  // a tool page whose manifest says "wide": true (the CPU page's live column)
+  .content.content-wide { max-width: 1600px; }
 
   @media (max-width: 720px) {
     .topbar { display: flex; }

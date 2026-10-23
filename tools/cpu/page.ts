@@ -54,6 +54,9 @@ interface CpuS {
   minMHz?: number;
   pkgTemp?: Temp;
   hidden?: string[];
+  /** Package power from RAPL, W. */
+  powerW?: number;
+  powerNote?: string;
 }
 interface CcxS {
   index: number;
@@ -142,7 +145,24 @@ const ORDER_KEY = "motherapp.cpu.order";
 const OPEN_KEY = "motherapp.cpu.open";
 
 const STYLE = `
+.mcpu-cq { container-type: inline-size; }
 .mcpu { display: grid; gap: 20px; color: var(--fg); min-width: 0; }
+/* Narrow: one column, the Live card where the timeline used to be (after the console). */
+.mcpu-main { display: contents; }
+.mcpu-main > .mcpu-after { order: 2; }
+.mcpu-rail { order: 1; min-width: 0; }
+/* Wide (a "wide" page on a big screen): the Live card becomes a sticky column on the right. */
+@container (min-width: 1240px) {
+  .mcpu { grid-template-columns: minmax(0, 1fr) minmax(360px, 420px); column-gap: 24px; align-items: start; }
+  .mcpu-main { display: grid; gap: 20px; align-content: start; min-width: 0; }
+  .mcpu-rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+  .mcpu-rail .mcpu-plot { height: 130px; }
+}
+.mcpu-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px 16px 0; }
+.mcpu-tile { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+.mcpu-tile .v { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; white-space: nowrap; }
+.mcpu-tile .v small { font-size: 0.875rem; font-weight: 500; color: var(--muted); margin-inline-start: 2px; }
+.mcpu-tile .s { font-size: 0.75rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.2em; }
 .mcpu *, .mcpu *::before, .mcpu *::after { box-sizing: border-box; }
 .mcpu .num { font-variant-numeric: tabular-nums; }
 .mcpu .muted { color: var(--muted); }
@@ -266,7 +286,7 @@ const STYLE = `
 .mcpu-drift { padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between;
   border-bottom: 1px solid var(--border); font-size: 0.875rem; color: var(--warn); }
 .mcpu-access { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 0.875rem; color: var(--warn); }
-.mcpu-access code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
+.mcpu-status code, .mcpu-access code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
 
 /* timeline */
 .mcpu-tl { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; cursor: crosshair; touch-action: pan-y; }
@@ -342,6 +362,13 @@ function note(text: string): HTMLParagraphElement {
   p.innerHTML = INFO_ICON; // static markup, no user text
   p.append(el("span", "", text));
   return p;
+}
+
+/** Like put, with `backticked` parts as <code> ("run `motherapp install`"). */
+function setCodeText(node: HTMLElement, text: string): void {
+  if (node.dataset.text === text) return;
+  node.dataset.text = text;
+  node.replaceChildren(...text.split(/`([^`]+)`/).map((part, i) => (i % 2 ? el("code", "", part) : document.createTextNode(part))));
 }
 
 /** Sets text only when it changed, so unchanged nodes aren't touched every second. */
@@ -478,6 +505,15 @@ export default class CpuPage extends HTMLElement {
   private tlFill = el("span", "small muted num");
   private tl = el("div", "mcpu-tl");
   private clockPlot = el("div", "mcpu-plot");
+  private powerPlot = el("div", "mcpu-plot");
+  private powerLabel = el("span", "mcpu-lbl", "Package power, W");
+  private powerNote = el("p", "mcpu-status");
+  private tileW = el("div", "v");
+  private tileT = el("div", "v");
+  private tileC = el("div", "v");
+  private tileWs = el("div", "s");
+  private tileTs = el("div", "s");
+  private tileCs = el("div", "s");
   private tempPlot = el("div", "mcpu-plot short");
   private tlRead = el("div", "mcpu-read");
   private tempLabel = el("span", "mcpu-lbl", "Tctl, °C");
@@ -503,7 +539,7 @@ export default class CpuPage extends HTMLElement {
     const style = el("style");
     style.textContent = STYLE;
     this.build();
-    this.replaceChildren(style, this.root);
+    this.replaceChildren(style, el("div", "mcpu-cq", undefined, this.root));
     for (const k of ["cpu", "ccx", "cores", "sensors", "limits", "profiles", "events", "status"]) this.off.push(ctx.subscribe(k, () => this.schedule()));
     this.sample();
     this.timer = setInterval(() => {
@@ -645,14 +681,15 @@ export default class CpuPage extends HTMLElement {
 
     // timeline
     this.tl.append(
-      el("div", "mcpu-stack", undefined, el("span", "mcpu-lbl", "Fastest core, MHz"), this.clockPlot),
+      el("div", "mcpu-stack", undefined, this.powerLabel, this.powerPlot),
       el("div", "mcpu-stack", undefined, this.tempLabel, this.tempPlot),
+      el("div", "mcpu-stack", undefined, el("span", "mcpu-lbl", "Fastest core, MHz"), this.clockPlot),
       el("div", "mcpu-axis", undefined, el("span", "", "−3 min"), el("span", "", "−2 min"), el("span", "", "−1 min"), el("span", "", "now")),
       this.tlRead,
     );
     for (const s of this.tl.querySelectorAll<HTMLElement>(".mcpu-stack")) s.style.gap = "4px";
     const hover = (e: PointerEvent) => {
-      const r = this.clockPlot.getBoundingClientRect();
+      const r = this.powerPlot.getBoundingClientRect();
       if (r.width <= 0) return;
       const fr = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
       this.hoverTs = Date.now() - WINDOW_MS + fr * WINDOW_MS;
@@ -665,7 +702,16 @@ export default class CpuPage extends HTMLElement {
       this.hoverTs = undefined;
       this.renderTimeline();
     });
-    const timeline = el("section", "mcpu-card", undefined, el("div", "mcpu-sec-h", undefined, el("h3", "", "Timeline"), this.tlFill), el("div", "mcpu-live", undefined, this.tl));
+    const tile = (label: string, v: HTMLElement, sub: HTMLElement) => el("div", "mcpu-tile", undefined, el("div", "mcpu-lbl", label), v, sub);
+    this.powerNote.style.padding = "8px 16px 0";
+    const timeline = el(
+      "section",
+      "mcpu-card mcpu-rail",
+      undefined,
+      el("div", "mcpu-sec-h", undefined, el("h3", "", "Live"), this.tlFill),
+      el("div", "mcpu-live", undefined, el("div", "mcpu-tiles", undefined, tile("Package power", this.tileW, this.tileWs), tile("Package temp", this.tileT, this.tileTs), tile("Fastest core", this.tileC, this.tileCs)), this.powerNote, this.tl),
+    );
+    timeline.setAttribute("aria-label", "Live power, temperature and clock");
 
     // collapsed sections
     const sum = (d: HTMLDetailsElement, id: string, title: string, extra?: HTMLElement) => {
@@ -691,7 +737,9 @@ export default class CpuPage extends HTMLElement {
       this.log,
     );
 
-    this.root.append(head, toolbar, this.limitsCard, map, console_, timeline, this.board, this.details, log, el("div", "mcpu-spacer"));
+    for (const n of [this.board, this.details, log]) n.classList.add("mcpu-after");
+    const main = el("div", "mcpu-main", undefined, head, toolbar, this.limitsCard, map, console_, this.board, this.details, log);
+    this.root.append(main, timeline, el("div", "mcpu-spacer"));
   }
 
   private orderControl(id: string): HTMLElement {
@@ -786,10 +834,12 @@ export default class CpuPage extends HTMLElement {
     if (!ctx || ctx.isStale("cores")) return; // no fresh numbers: leave a gap
     const cores = Object.values(obj<Record<string, CoreS>>(ctx.get("cores")));
     const mhz = Math.max(...cores.map((c) => (isObj(c) && typeof c.mhz === "number" ? c.mhz : 0)));
-    const t = obj<CpuS>(ctx.get("cpu")).pkgTemp;
+    const cpu = obj<CpuS>(ctx.get("cpu"));
+    const t = cpu.pkgTemp;
     const s: Sample = { ts: Date.now() };
     if (mhz > 0) s.mhz = mhz;
     if (t) s.temp = t.value;
+    if (typeof cpu.powerW === "number") s.w = cpu.powerW;
     pushSample(this.samples, s, WINDOW_MS);
   }
 
@@ -942,11 +992,7 @@ export default class CpuPage extends HTMLElement {
       this.buildLimits(v, rows);
     }
     this.limAccess.hidden = !l.accessText;
-    if (l.accessText && this.limAccess.dataset.text !== l.accessText) {
-      this.limAccess.dataset.text = l.accessText;
-      // "… run `motherapp install` …": the backticked part as code
-      this.limAccess.replaceChildren(...l.accessText.split(/`([^`]+)`/).map((part, i) => (i % 2 ? el("code", "", part) : document.createTextNode(part))));
-    }
+    if (l.accessText) setCodeText(this.limAccess, l.accessText);
     const drift = l.drift ?? [];
     this.limDrift.hidden = drift.length === 0;
     put(this.limDriftText, drift.length ? `Changed outside this profile: ${drift.join(", ")}.` : "");
@@ -1461,6 +1507,12 @@ export default class CpuPage extends HTMLElement {
     const x = (ts: number) => ((ts - start) / WINDOW_MS) * 600;
     const mhz = s.filter((p) => p.mhz !== undefined).map((p) => p.mhz!);
     const temps = s.filter((p) => p.temp !== undefined).map((p) => p.temp!);
+    const watts = s.filter((p) => p.w !== undefined).map((p) => p.w!);
+    // PL1/PL2 as a band on the power chart, when they're in a sensible range for the axis
+    const rows = v?.limits.rows;
+    const pl = [rows?.pl1W?.now, rows?.pl2W?.now].filter((x): x is number => typeof x === "number");
+    const plShown = pl.length === 2 && Math.max(...pl) <= Math.max(400, ...watts) ? pl : [];
+    const [wLo, wHi] = axisRange([...watts, ...plShown], [0, 100], 50, 50);
     const lo = v ? Math.floor(v.lo / 500) * 500 : 1500;
     const hi = v ? Math.ceil(v.hi / 500) * 500 : 5000;
     const [cLo, cHi] = axisRange(mhz, [lo, hi], 1000, 500);
@@ -1469,7 +1521,7 @@ export default class CpuPage extends HTMLElement {
     const events = this.events().filter((e) => e.ts >= start && e.kind !== "start");
     const hover = this.hoverTs;
 
-    const plot = (box: HTMLElement, field: "mhz" | "temp", a: number, b: number, grid: number, color: string, band?: [number, number, string]) => {
+    const plot = (box: HTMLElement, field: "mhz" | "temp" | "w", a: number, b: number, grid: number, color: string, band?: [number, number, string]) => {
       const top = (val: number) => `${((1 - (val - a) / (b - a)) * 100).toFixed(2)}%`;
       const kids: Element[] = [];
       for (let g = Math.ceil(a / grid) * grid; g < b; g += grid) {
@@ -1512,7 +1564,7 @@ export default class CpuPage extends HTMLElement {
         const mk = el("div", "mcpu-mk");
         mk.style.left = `${((e.ts - start) / WINDOW_MS) * 100}%`;
         mk.title = `${clock(e.ts)} ${e.text}`;
-        if (field === "mhz") {
+        if (field === "w") {
           const x = ((e.ts - start) / WINDOW_MS) * 100;
           const lab = el("span", "", e.kind === "config" ? "cpu.json" : e.kind === "problem" ? "cpu.json!" : e.kind);
           // keep the label inside the plot: right of the line, or left of it near "now"
@@ -1534,6 +1586,9 @@ export default class CpuPage extends HTMLElement {
       t && t.length ? [Math.min(...t), Math.max(...t), `${v!.active!.name} targets ${Math.min(...t)}–${Math.max(...t)}`] : undefined;
     plot(this.clockPlot, "mhz", cLo, cHi, 1000, "var(--accent)", band);
     plot(this.tempPlot, "temp", tLo, tHi, 10, "var(--warn)");
+    const plBand: [number, number, string] | undefined = plShown.length ? [Math.min(...plShown), Math.max(...plShown), plShown[0] === plShown[1] ? `PL1 = PL2 ${plShown[0]} W` : `PL1 ${plShown[0]} W · PL2 ${plShown[1]} W`] : undefined;
+    plot(this.powerPlot, "w", Math.max(0, wLo), wHi, wHi - wLo > 200 ? 100 : 50, "var(--ok)", plBand);
+    this.renderTiles(v, s);
 
     let read = "Hover or tap the chart for values.";
     if (hover !== undefined) {
@@ -1541,12 +1596,41 @@ export default class CpuPage extends HTMLElement {
       const p = nearestSample(s, hover, 1500);
       const when = ago === 0 ? "now" : `−${ago} s`;
       if (p) {
-        read = `${when}: fastest core ${mhzText(p.mhz)} MHz · ${tempLabel(v?.cpu.pkgTemp?.label)} ${p.temp === undefined ? "—" : formatTemp(p.temp)}`;
+        read = `${when}: ${p.w === undefined ? "— W" : `${p.w} W`} · fastest core ${mhzText(p.mhz)} MHz · ${tempLabel(v?.cpu.pkgTemp?.label)} ${p.temp === undefined ? "—" : formatTemp(p.temp)}`;
         const ev = events.find((e) => Math.abs(e.ts - hover) <= 2000);
         if (ev) read += ` · ${ev.text}`;
       } else read = `${when}: no sample (the page wasn't open or the values weren't fresh).`;
     }
     put(this.tlRead, read);
+  }
+
+  /** The big numbers on top of the Live card, with the 3-minute peak under each. */
+  private renderTiles(v: View | undefined, s: Sample[]): void {
+    const cpu = v?.cpu ?? {};
+    const fresh = !!this.ctx && !this.ctx.isStale("cpu");
+    const big = (box: HTMLElement, val: number | undefined, unit: string, digits = 0) => {
+      const text = val === undefined || !fresh ? "—" : val.toFixed(digits);
+      if (box.dataset.v === text + unit) return;
+      box.dataset.v = text + unit;
+      box.replaceChildren(text, el("small", "", unit));
+    };
+    const peak = (k: "w" | "temp" | "mhz") => {
+      const xs = s.filter((p) => p[k] !== undefined).map((p) => p[k]!);
+      return xs.length ? Math.max(...xs) : undefined;
+    };
+    big(this.tileW, cpu.powerW, "W", cpu.powerW !== undefined && cpu.powerW < 100 ? 1 : 0);
+    big(this.tileT, cpu.pkgTemp?.value, "°C");
+    const fast = Math.max(0, ...[...(v?.cores.values() ?? [])].map((c) => c.mhz ?? 0));
+    big(this.tileC, fast || undefined, "MHz");
+    const pw = peak("w");
+    const pt = peak("temp");
+    const pc = peak("mhz");
+    // the 3-minute peak, as far as this page has seen
+    put(this.tileWs, pw === undefined ? "" : `peak ${Math.round(pw)} W`);
+    put(this.tileTs, pt === undefined ? "" : `peak ${formatTemp(pt)}`);
+    put(this.tileCs, pc === undefined ? "" : `peak ${pc} MHz`);
+    setCodeText(this.powerNote, cpu.powerNote ?? "");
+    this.powerNote.hidden = !cpu.powerNote;
   }
 
   private events(): CpuEvent[] {

@@ -10,6 +10,7 @@ import { LineDecoder } from "@motherapp/protocol";
 import { CpuService, INITIAL_STATE, POLL_MS } from "../src/service.ts";
 import type { Timers } from "../src/service.ts";
 import { readSnapshot } from "../src/sysfs.ts";
+import { PowerMeter } from "../src/power.ts";
 import { intelHybrid, readFile, ryzen3900x, setFreq, setHwmon, tempTree } from "./fixtures.ts";
 import type { MachineSpec } from "./fixtures.ts";
 
@@ -59,7 +60,7 @@ function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: 
     settingsFile,
     timers,
     now: () => 1_000_000 + timers.t,
-    ...(opts.limits ? { limits: { root: tree.root, stockFile } } : {}),
+    ...(opts.limits ? { limits: { root: tree.root, stockFile }, power: new PowerMeter(tree.root) } : {}),
   });
   const received: Msg[] = [];
   const dec = new LineDecoder();
@@ -389,4 +390,15 @@ test("Intel limits: actions on a Ryzen are refused", async (t) => {
   await s.settle();
   assert.equal(s.service.intel, false);
   assert.match((await s.act("useProfile", { id: "stock" })).error.message, /only available on Intel/);
+});
+
+test("Intel limits: package power published as cpu.powerW while watched", async (t) => {
+  const s = setup(t, intelHybrid(), { limits: true });
+  s.service.start();
+  await s.watch(true);
+  assert.equal(s.tool.get("cpu.powerW"), undefined, "first read after watching: nothing to compare with");
+  fs.writeFileSync(path.join(s.tree.root, "sys/class/powercap/intel-rapl:0/energy_uj"), String(1_000_000 + 88_000_000));
+  s.timers.advance(POLL_MS);
+  await s.settle();
+  assert.equal(s.tool.get("cpu.powerW"), 88);
 });
