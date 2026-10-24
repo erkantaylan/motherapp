@@ -312,9 +312,10 @@ const STYLE = `
 .mcpu-band { position: absolute; left: 0; right: 0; background: color-mix(in oklch, var(--accent) 12%, var(--bg));
   border-top: 1px dashed var(--accent); border-bottom: 1px dashed var(--accent); }
 .mcpu-band span { position: absolute; right: 4px; bottom: 100%; font-size: 0.6875rem; color: var(--accent); white-space: nowrap; }
+/* a limit line (PL1/PL2 on the power chart): no text, drawn under the grid labels; ::before widens the hover target for its title */
+.mcpu-lim { position: absolute; left: 0; right: 0; border-top: 1px dashed color-mix(in oklch, var(--accent) 60%, var(--bg)); }
+.mcpu-lim::before { content: ""; position: absolute; left: 0; right: 0; top: -4px; height: 8px; }
 .mcpu-mk { position: absolute; top: 0; bottom: 0; border-inline-start: 2px solid var(--fg); opacity: .7; }
-.mcpu-mk span { position: absolute; top: 2px; white-space: nowrap; font-size: 0.6875rem; background: var(--bg); border: 1px solid var(--border);
-  border-radius: 4px; padding: 0 4px; color: var(--fg); }
 .mcpu-xh { position: absolute; top: 0; bottom: 0; border-inline-start: 1px solid var(--muted); pointer-events: none; }
 .mcpu-axis { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); }
 .mcpu-read { min-height: 2.6em; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
@@ -1575,7 +1576,7 @@ export default class CpuPage extends HTMLElement {
     const watts = s.filter((p) => p.w !== undefined).map((p) => p.w!);
     // The power axis is fixed (the user's choice): idle and spikes outside it sit on the edge.
     const [wLo, wHi] = [W_AXIS_LO, W_AXIS_HI];
-    // PL1/PL2 as a band on the power chart, its edges clamped into the axis (stock is 253 W)
+    // PL1/PL2 as dashed lines on the power chart, clamped into the axis (stock is 253 W)
     const rows = v?.limits.rows;
     const pl = [rows?.pl1W?.now, rows?.pl2W?.now].filter((x): x is number => typeof x === "number");
     const lo = v ? Math.floor(v.lo / 500) * 500 : 1500;
@@ -1586,9 +1587,16 @@ export default class CpuPage extends HTMLElement {
     const events = this.events().filter((e) => e.ts >= start && e.kind !== "start");
     const hover = this.hoverTs;
 
-    const plot = (box: HTMLElement, field: "mhz" | "temp" | "w", a: number, b: number, grid: number, color: string, band?: [number, number, string]) => {
+    const plot = (box: HTMLElement, field: "mhz" | "temp" | "w", a: number, b: number, grid: number, color: string, band?: [number, number, string], lines?: [number, string][]) => {
       const top = (val: number) => `${((1 - (val - a) / (b - a)) * 100).toFixed(2)}%`;
       const kids: Element[] = [];
+      // limit lines first, so the grid labels (opaque background) paint over them
+      for (const [val, hint] of lines ?? []) {
+        const ln = el("div", "mcpu-lim");
+        ln.style.top = top(val);
+        ln.title = hint;
+        kids.push(ln);
+      }
       for (let g = Math.ceil(a / grid) * grid; g < b; g += grid) {
         if (g <= a) continue;
         const gl = el("div", "mcpu-gl", undefined, el("span", "", String(g)));
@@ -1596,10 +1604,7 @@ export default class CpuPage extends HTMLElement {
         kids.push(gl);
       }
       if (band) {
-        const lab = el("span", "", band[2]);
-        // a band at the top of the fixed power axis keeps its label inside the plot, below the event labels (top: 2px)
-        if (field === "w" && band[1] >= b) Object.assign(lab.style, { bottom: "auto", top: "18px" });
-        const bd = el("div", "mcpu-band", undefined, lab);
+        const bd = el("div", "mcpu-band", undefined, el("span", "", band[2]));
         bd.style.top = top(band[1]);
         bd.style.height = `calc(${top(band[0])} - ${top(band[1])})`;
         kids.push(bd);
@@ -1631,15 +1636,8 @@ export default class CpuPage extends HTMLElement {
       for (const e of events) {
         const mk = el("div", "mcpu-mk");
         mk.style.left = `${((e.ts - start) / WINDOW_MS) * 100}%`;
+        // no visible label (it covered the plot); the title is the hover hint
         mk.title = `${clock(e.ts)} ${e.text}`;
-        if (field === "w") {
-          const x = ((e.ts - start) / WINDOW_MS) * 100;
-          const lab = el("span", "", e.kind === "config" ? "cpu.json" : e.kind === "problem" ? "cpu.json!" : e.kind);
-          // keep the label inside the plot: right of the line, or left of it near "now"
-          if (x > 70) lab.style.right = "4px";
-          else lab.style.left = "4px";
-          mk.append(lab);
-        }
         kids.push(mk);
       }
       if (hover !== undefined) {
@@ -1655,9 +1653,9 @@ export default class CpuPage extends HTMLElement {
     plot(this.clockPlot, "mhz", cLo, cHi, 1000, "var(--accent)", band);
     plot(this.tempPlot, "temp", tLo, tHi, 10, "var(--warn)");
     const wClamp = (w: number) => Math.min(wHi, Math.max(wLo, w));
-    const plBand: [number, number, string] | undefined =
-      pl.length === 2 ? [wClamp(Math.min(...pl)), wClamp(Math.max(...pl)), pl[0] === pl[1] ? `PL1 = PL2 ${pl[0]} W` : `PL1 ${pl[0]} W · PL2 ${pl[1]} W`] : undefined;
-    plot(this.powerPlot, "w", wLo, wHi, 50, "var(--ok)", plBand);
+    const plLines: [number, string][] =
+      pl.length !== 2 ? [] : pl[0] === pl[1] ? [[wClamp(pl[0]!), `PL1 = PL2 ${pl[0]} W`]] : [[wClamp(pl[0]!), `PL1 ${pl[0]} W`], [wClamp(pl[1]!), `PL2 ${pl[1]} W`]];
+    plot(this.powerPlot, "w", wLo, wHi, 50, "var(--ok)", undefined, plLines);
     this.renderTiles(v, s);
 
     let read = "Hover or tap the chart for values.";
