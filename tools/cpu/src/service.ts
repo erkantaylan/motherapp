@@ -6,7 +6,9 @@
 // a missing cpu.json. On Intel (src/intel.ts) it also publishes `limits` (clock caps, turbo,
 // governor, EPP, PL1/PL2: now, stock, writable) and has the actions useProfile, saveProfile,
 // setApplyOnStart and reapply, which write sysfs and cpu.json; the active profile is applied
-// when the tool starts if applyOnStart is on. On other CPUs cpu.json is neither read nor
+// when the tool starts if applyOnStart is on. With the voltage helper it also sets the
+// undervolt, under the crash guard (src/voltage.ts): a trial timer after each new offset, and a
+// start that finds a trial from another boot doesn't set the undervolt again. On other CPUs cpu.json is neither read nor
 // created and `profiles` stays empty.
 import { RpcError } from "@motherapp/tool-sdk";
 import type { JsonObject, JsonValue, Tool } from "@motherapp/tool-sdk";
@@ -27,6 +29,8 @@ import {
 } from "./intel.ts";
 import type { IntelSettings, Limits } from "./intel.ts";
 import type { PowerMeter } from "./power.ts";
+import { TRIAL_MS, blockedText, checkCrash, endTrial, loadGuard } from "./voltage.ts";
+import type { Voltage } from "./voltage.ts";
 import { diffState } from "./diff.ts";
 import { buildReport, polledState, profilesState } from "./model.ts";
 import type { Report } from "./model.ts";
@@ -65,7 +69,7 @@ export interface ServiceOptions {
   /** Clock for event timestamps (ms since the epoch). */
   now?: () => number;
   /** Intel limits: the sysfs root to write under and the stock snapshot file. Without it, Intel is read-only too. */
-  limits?: { root: string; stockFile: string };
+  limits?: { root: string; stockFile: string; voltage?: Voltage; guardFile?: string };
   /** Package power from RAPL, published as cpu.powerW (or cpu.powerNote when it can't be read). */
   power?: PowerMeter;
 }
@@ -143,7 +147,8 @@ export class CpuService {
   tuning = false;
   /** Intel limits apply (set by the first read). */
   intel = false;
-  private limits: { root: string; stockFile: string } | undefined;
+  private limits: ServiceOptions["limits"];
+  private trialTimer: unknown;
   private intelSettings: IntelSettings | undefined;
   private hybrid = false;
   private power: PowerMeter | undefined;
@@ -189,6 +194,8 @@ export class CpuService {
     this.offWatch = undefined;
     this.watched = false;
     this.clearTimer();
+    if (this.trialTimer !== undefined) this.timers.clearTimeout(this.trialTimer);
+    this.trialTimer = undefined;
   }
 
   private clearTimer(): void {
@@ -213,6 +220,7 @@ export class CpuService {
     this.poll();
     if (this.tuning) this.loadProfiles(false);
     if (this.intel) this.loadIntel(false);
+    if (this.intel && this.trialTimer === undefined) this.watchTrial(); // a trial `cpuctl use` started
     if (this.running && this.watched) this.timer = this.timers.setTimeout(() => this.tick(), this.intervalMs);
   }
 
@@ -322,9 +330,21 @@ export class CpuService {
     const active = s.active === null ? "no profile active (stock)" : `${intelName(s, s.active)} active`;
     this.addEvent("start", `CPU tool started: ${active}, apply at login ${s.applyOnStart ? "on" : "off"}.`);
     if (created) this.addEvent("config", "Created cpu.json with the default profiles.");
+    const l = this.limits!;
+    let blocked = false;
+    if (l.guardFile && l.voltage) {
+      const { guard, crashed } = checkCrash(l.guardFile, bootId(l.root));
+      if (crashed !== undefined) {
+        const msg = blockedText(crashed);
+        this.addEvent("problem", msg);
+        this.tool.log.warn(msg);
+      }
+      blocked = guard.blocked !== undefined;
+    }
+    this.watchTrial();
     if (s.active !== null && s.applyOnStart) {
       try {
-        this.apply(s.active, "at start");
+        this.apply(s.active, "at start", blocked);
       } catch (e) {
         this.tool.log.warn(`applying ${s.active} at start failed: ${(e as Error).message}`);
       }
@@ -359,22 +379,47 @@ export class CpuService {
   private pollLimits(): void {
     const l = this.limits;
     if (!l) return;
-    const hw = readLimits(l.root);
+    const hw = readLimits(l.root, l.voltage);
     this.hybrid = hw.hybrid;
     const stock = loadStock(l.stockFile, bootId(l.root));
+    const guard = l.guardFile ? loadGuard(l.guardFile) : {};
     const s = this.intelSettings;
     let target: Limits | undefined;
     // Nothing to compare against until motherapp has applied something this boot (the snapshot) or a profile is active.
     if (s?.active) target = targetOf(stock?.values ?? hw.current, s.profiles.find((p) => p.id === s.active), hw);
     else if (stock) target = targetOf(stock.values, undefined, hw);
-    this.publish(LIMITS, limitsState(hw, stock, target, thermaldRunning(l.root)) as JsonValue);
+    if (target && guard.blocked) delete target.undervoltMV; // left alone on purpose, not drift
+    const blocked = guard.blocked ? blockedText(guard.blocked.mV) : undefined;
+    this.publish(LIMITS, limitsState(hw, stock, target, thermaldRunning(l.root), guard, blocked) as JsonValue);
+  }
+
+  /** Ends this boot's undervolt trial when its time is up, now or with a timer. */
+  private watchTrial(): void {
+    const l = this.limits;
+    if (!l?.guardFile || !this.running) return;
+    if (this.trialTimer !== undefined) this.timers.clearTimeout(this.trialTimer);
+    this.trialTimer = undefined;
+    const boot = bootId(l.root);
+    const held = endTrial(l.guardFile, boot, this.now());
+    if (held !== undefined) {
+      this.addEvent("apply", `Undervolt ${held} mV held for ${TRIAL_MS / 60_000} minutes: the trial is over.`);
+      this.pollLimits();
+      return;
+    }
+    const t = loadGuard(l.guardFile).trial;
+    if (!t || t.bootId !== boot) return;
+    this.trialTimer = this.timers.setTimeout(() => {
+      this.trialTimer = undefined;
+      this.watchTrial();
+    }, Math.max(1000, t.at + TRIAL_MS - this.now()));
   }
 
   /** Applies a profile (null = stock), records it, publishes the new values. Throws when nothing could be changed. */
-  private apply(id: ProfileId | null, why: string): { text: string; problems: string[] } {
+  private apply(id: ProfileId | null, why: string, skipUndervolt = false): { text: string; problems: string[] } {
     const l = this.limits!;
     const s = this.intelSettings!;
-    const r = applyProfile(l.root, l.stockFile, s, id, this.now());
+    const uv = { skipUndervolt, ...(l.voltage ? { voltage: l.voltage } : {}), ...(l.guardFile ? { guardFile: l.guardFile } : {}) };
+    const r = applyProfile(l.root, l.stockFile, s, id, this.now(), uv);
     const what = r.changed.length ? r.changed.join(", ") : "nothing needed changing";
     const text = `${r.name} applied ${why}: ${what}.`;
     if (r.problems.length && !r.changed.length) {
@@ -386,7 +431,10 @@ export class CpuService {
     }
     this.addEvent("apply", text);
     for (const p of r.problems) this.addEvent("problem", p);
+    if (skipUndervolt) this.addEvent("problem", "The undervolt was left at 0 mV: it is blocked since the computer went down during its trial. Apply the profile again to retry it.");
+    if (r.trial !== undefined) this.addEvent("apply", `Undervolt ${r.trial} mV: on trial for ${TRIAL_MS / 60_000} minutes; a crash or restart before then stops motherapp from setting it again on its own.`);
     this.tool.log.info(text, { problems: r.problems });
+    this.watchTrial();
     this.pollLimits();
     return { text, problems: r.problems };
   }

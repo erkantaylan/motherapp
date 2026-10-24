@@ -1,6 +1,7 @@
 // Intel CPU limits (the user's call, 2026-10-23: the safe operations first): clock caps per
 // core type, turbo, governor and EPP through cpufreq / intel_pstate, and the package power
-// limits PL1/PL2 through RAPL (powercap). No voltages, no MSRs. The kernel checks every value.
+// limits PL1/PL2 through RAPL (powercap). The kernel checks every value. The one setting outside
+// sysfs is the undervolt (undervoltMV), set through a root helper (src/voltage.ts).
 //
 // Writing needs access to the sysfs files, which motherapp-cpu-access.service grants the
 // user's group at boot (packaging/, offered by install.sh). Without it every write fails with
@@ -17,7 +18,8 @@
 //   "overclock":  { "name": "Overclock" }
 // Fields: maxMHz (clock cap, all cores; the P-cores on a hybrid), eMaxMHz (E-cores, hybrids
 // only), turbo (true/false), governor ("performance" / "powersave"), epp (powersave only),
-// pl1W, pl2W. Absent or null = stock. The underclock defaults are Intel's "Baseline" power
+// pl1W, pl2W, undervoltMV (core + cache voltage offset, -150..0 mV in 5 mV steps; stock is
+// 0). Absent or null = stock. The underclock defaults are Intel's "Baseline" power
 // profile for the i9-13900K (125 W / 188 W); the overclock profile starts empty.
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -25,8 +27,10 @@ import * as path from "node:path";
 import { PROFILE_IDS, writeAtomic } from "./settings.ts";
 import type { ProfileId } from "./settings.ts";
 import { DEFAULT_ROOT, SysReader, parseCpuList } from "./sysfs.ts";
+import { UNDERVOLT_RANGE, UNDERVOLT_STEP, VOLTAGE_HELPER, NO_VOLTAGE, saveGuard, loadGuard } from "./voltage.ts";
+import type { Guard, Voltage } from "./voltage.ts";
 
-export const LIMIT_KEYS = ["maxMHz", "eMaxMHz", "turbo", "governor", "epp", "pl1W", "pl2W"] as const;
+export const LIMIT_KEYS = ["maxMHz", "eMaxMHz", "turbo", "governor", "epp", "pl1W", "pl2W", "undervoltMV"] as const;
 export type LimitKey = (typeof LIMIT_KEYS)[number];
 
 export interface Limits {
@@ -37,6 +41,8 @@ export interface Limits {
   epp?: string;
   pl1W?: number;
   pl2W?: number;
+  /** mV, <= 0. */
+  undervoltMV?: number;
 }
 
 export const GOVERNORS = ["performance", "powersave"];
@@ -78,6 +84,8 @@ export interface LimitsHw {
   files: Record<LimitKey, string[]>;
   /** The setting exists and every one of its files is writable by this process. */
   writable: Record<LimitKey, boolean>;
+  /** Why the undervolt can't be read or set (no helper, the BIOS refused). */
+  voltageProblem?: string;
 }
 
 const mhz = (khz: number) => Math.round(khz / 1000);
@@ -111,7 +119,8 @@ function constraintFile(r: SysReader, zone: string, name: string): string | unde
   return undefined;
 }
 
-export function readLimits(root = DEFAULT_ROOT): LimitsHw {
+/** `voltage`: the undervolt helper; without it there is no undervolt setting. */
+export function readLimits(root = DEFAULT_ROOT, voltage?: Voltage): LimitsHw {
   const r = new SysReader(root);
   const online = parseCpuList(r.text(`${CPU_DIR}/online`) ?? "");
   const cpus = online.filter((c) => r.text(`${CPU_DIR}/cpu${c}/cpufreq/scaling_max_freq`) !== undefined);
@@ -122,7 +131,7 @@ export function readLimits(root = DEFAULT_ROOT): LimitsHw {
   const e = hybrid ? pmuE : [];
   const cf = (c: number, f: string) => `${CPU_DIR}/cpu${c}/cpufreq/${f}`;
 
-  const files: Record<LimitKey, string[]> = { maxMHz: [], eMaxMHz: [], turbo: [], governor: [], epp: [], pl1W: [], pl2W: [] };
+  const files: Record<LimitKey, string[]> = { maxMHz: [], eMaxMHz: [], turbo: [], governor: [], epp: [], pl1W: [], pl2W: [], undervoltMV: [] };
   const current: Limits = {};
   const range: LimitsHw["range"] = {};
   const group = (key: "maxMHz" | "eMaxMHz", list: number[]) => {
@@ -171,16 +180,29 @@ export function readLimits(root = DEFAULT_ROOT): LimitsHw {
   }
 
   const writable = {} as Record<LimitKey, boolean>;
-  for (const k of LIMIT_KEYS) writable[k] = files[k].length > 0 && files[k].every((f) => canWrite(path.join(root, f)));
-  return { hybrid, p, e, current, range, governors, epps, files, writable };
+  for (const k of LIMIT_KEYS) writable[k] = k !== "undervoltMV" && files[k].length > 0 && files[k].every((f) => canWrite(path.join(root, f)));
+  const hw: LimitsHw = { hybrid, p, e, current, range, governors, epps, files, writable };
+
+  if (voltage) {
+    // Not a file: the helper. Shown (and editable in profiles) even when it isn't set up yet.
+    files.undervoltMV = [VOLTAGE_HELPER];
+    const v = voltage.state();
+    if (v.offsets) {
+      current.undervoltMV = v.offsets.core;
+      writable.undervoltMV = true;
+    }
+    if (v.problem) hw.voltageProblem = v.problem;
+    else if (v.offsets && v.offsets.cache !== v.offsets.core) hw.voltageProblem = `Undervolt: the cache reads ${v.offsets.cache} mV, the core ${v.offsets.core} mV (they should match).`;
+  }
+  return hw;
 }
 
 /** Settings this CPU has (a file to read them from). */
 export const presentKeys = (hw: LimitsHw): LimitKey[] => LIMIT_KEYS.filter((k) => hw.files[k].length > 0);
 
-/** "full" when every present setting can be written, "none" when none can. */
+/** "full" when every present sysfs setting can be written, "none" when none can (the undervolt has its own text). */
 export function access(hw: LimitsHw): "full" | "partial" | "none" {
-  const keys = presentKeys(hw);
+  const keys = presentKeys(hw).filter((k) => k !== "undervoltMV");
   const n = keys.filter((k) => hw.writable[k]).length;
   return keys.length > 0 && n === keys.length ? "full" : n === 0 ? "none" : "partial";
 }
@@ -203,6 +225,8 @@ export function label(k: LimitKey, hybrid: boolean): string {
       return "PL1 (long-term power)";
     case "pl2W":
       return "PL2 (short-term power)";
+    case "undervoltMV":
+      return "Undervolt (core + cache)";
   }
 }
 
@@ -211,10 +235,11 @@ export function formatValue(k: LimitKey, v: Limits[LimitKey]): string {
   if (k === "turbo") return v ? "on" : "off";
   if (k === "maxMHz" || k === "eMaxMHz") return `${v} MHz`;
   if (k === "pl1W" || k === "pl2W") return `${v} W`;
+  if (k === "undervoltMV") return `${v} mV`;
   return String(v);
 }
 
-const short: Record<LimitKey, string> = { maxMHz: "cap", eMaxMHz: "E-core cap", turbo: "turbo", governor: "governor", epp: "EPP", pl1W: "PL1", pl2W: "PL2" };
+const short: Record<LimitKey, string> = { maxMHz: "cap", eMaxMHz: "E-core cap", turbo: "turbo", governor: "governor", epp: "EPP", pl1W: "PL1", pl2W: "PL2", undervoltMV: "undervolt" };
 
 /** "PL1 125 W · PL2 188 W · turbo off" (only what is set). */
 export function describeLimits(l: Limits, hybrid: boolean): string {
@@ -248,6 +273,10 @@ export function parseLimits(v: Record<string, unknown>, problems: string[], wher
     if (v[k] === undefined || v[k] === null) continue;
     if (intIn(v[k], PL_RANGE)) out[k] = v[k];
     else bad(`"${k}" must be null or whole watts (${PL_RANGE[0]}-${PL_RANGE[1]})`);
+  }
+  if (v.undervoltMV !== undefined && v.undervoltMV !== null) {
+    if (intIn(v.undervoltMV, UNDERVOLT_RANGE) && v.undervoltMV % UNDERVOLT_STEP === 0) out.undervoltMV = v.undervoltMV;
+    else bad(`"undervoltMV" must be null or ${UNDERVOLT_RANGE[0]} to ${UNDERVOLT_RANGE[1]} mV in steps of ${UNDERVOLT_STEP} (never positive)`);
   }
   if (out.pl1W !== undefined && out.pl2W !== undefined && out.pl1W > out.pl2W) {
     bad(`"pl1W" (${out.pl1W} W) can't be above "pl2W" (${out.pl2W} W)`);
@@ -294,12 +323,13 @@ function raw(k: LimitKey, v: NonNullable<Limits[LimitKey]>, file: string): strin
  * (turbo, governor, then EPP, the clock caps, the power limits), then reads them back and
  * reports any that didn't take. Settings the CPU doesn't have are skipped.
  */
-export function applyLimits(root: string, target: Limits, hw: LimitsHw = readLimits(root)): ApplyResult {
+export function applyLimits(root: string, target: Limits, hw: LimitsHw = readLimits(root), voltage?: Voltage): ApplyResult {
   const changed: string[] = [];
   const problems: string[] = [];
   const skipped = new Set<LimitKey>();
   const denied: string[] = [];
-  const order: LimitKey[] = ["turbo", "governor", "epp", "maxMHz", "eMaxMHz", "pl1W", "pl2W"];
+  // The undervolt last: the other settings never need it.
+  const order: LimitKey[] = ["turbo", "governor", "epp", "maxMHz", "eMaxMHz", "pl1W", "pl2W", "undervoltMV"];
   const governor = target.governor ?? hw.current.governor;
   for (const k of order) {
     const want = target[k];
@@ -319,6 +349,14 @@ export function applyLimits(root: string, target: Limits, hw: LimitsHw = readLim
       skipped.add(k);
       continue;
     }
+    if (k === "undervoltMV") {
+      const r = voltage?.set(want as number);
+      if (!r || r.problem) {
+        problems.push(r?.problem ?? NO_VOLTAGE);
+        skipped.add(k);
+      } else changed.push(`${label(k, hw.hybrid)} ${formatValue(k, hw.current[k])} → ${formatValue(k, want)}`);
+      continue;
+    }
     for (const f of hw.files[k]) {
       const value = raw(k, want, f);
       try {
@@ -335,7 +373,7 @@ export function applyLimits(root: string, target: Limits, hw: LimitsHw = readLim
   }
   if (denied.length) problems.unshift(`Not allowed to change ${denied.join(", ")}. ${NO_ACCESS}`);
   if (changed.length) {
-    const after = readLimits(root).current;
+    const after = readLimits(root, voltage).current;
     for (const k of order) {
       const want = target[k];
       if (want === undefined || hw.files[k].length === 0 || after[k] === want || skipped.has(k)) continue;
@@ -398,7 +436,8 @@ export function ensureStock(file: string, boot: string | undefined, hw: LimitsHw
 export function targetOf(stock: Limits, profile: Limits | undefined, hw: LimitsHw): Limits {
   const t: Limits = {};
   for (const k of presentKeys(hw)) {
-    const v = profile?.[k] ?? stock[k];
+    // A snapshot taken before the helper was set up has no undervolt: offsets start at 0 every boot.
+    const v = profile?.[k] ?? stock[k] ?? (k === "undervoltMV" ? 0 : undefined);
     if (v !== undefined) (t as Record<string, unknown>)[k] = v;
   }
   // A profile that picks performance can't keep a powersave-only EPP from stock.
@@ -416,7 +455,7 @@ export function drift(target: Limits, hw: LimitsHw): string[] {
   const out: string[] = [];
   for (const k of presentKeys(hw)) {
     const want = target[k];
-    if (want === undefined || hw.current[k] === want) continue;
+    if (want === undefined || hw.current[k] === want || hw.current[k] === undefined) continue;
     if (k === "epp" && hw.current.governor === "performance") continue;
     out.push(`${label(k, hw.hybrid)} ${formatValue(k, hw.current[k])} (wanted ${formatValue(k, want)})`);
   }
@@ -532,18 +571,53 @@ export function updateIntelSettings(file: string, edit: (s: IntelSettings) => vo
 }
 
 /** Applies profile `id` (null = stock): snapshots stock first if this boot has none. */
+export interface UndervoltOpts {
+  voltage?: Voltage;
+  /** The crash guard (src/voltage.ts guardFile). */
+  guardFile?: string;
+  /** Leave the undervolt alone (it is blocked by the crash guard): only at start. */
+  skipUndervolt?: boolean;
+}
+
+/**
+ * Applies profile `id` (null = stock): snapshots stock first if this boot has none. A new
+ * negative undervolt starts a trial in the crash guard; any other apply that isn't
+ * skipUndervolt lifts a block (the user chose again).
+ */
 export function applyProfile(
   root: string,
   stockPath: string,
   settings: IntelSettings,
   id: ProfileId | null,
   now = Date.now(),
-): ApplyResult & { target: Limits; name: string } {
-  const hw = readLimits(root);
-  const stock = ensureStock(stockPath, bootId(root), hw, now);
+  uv: UndervoltOpts = {},
+): ApplyResult & { target: Limits; name: string; trial?: number } {
+  const hw = readLimits(root, uv.voltage);
+  const boot = bootId(root);
+  const stock = ensureStock(stockPath, boot, hw, now);
   const p = id === null ? undefined : settings.profiles.find((x) => x.id === id);
   const target = targetOf(stock.values, p, hw);
-  return { ...applyLimits(root, target, hw), target, name: p?.name ?? "Stock" };
+  if (uv.skipUndervolt) delete target.undervoltMV;
+  let guard: Guard | undefined;
+  const want = target.undervoltMV;
+  if (uv.guardFile && !uv.skipUndervolt) {
+    guard = loadGuard(uv.guardFile);
+    delete guard.blocked;
+    if (want !== undefined && want !== hw.current.undervoltMV && hw.writable.undervoltMV) {
+      // Written before the offset is set: a crash right after it must find it.
+      if (want < 0) guard.trial = boot === undefined ? { mV: want, at: now } : { mV: want, bootId: boot, at: now };
+      else delete guard.trial;
+    }
+    saveGuard(uv.guardFile, guard);
+  }
+  const r = applyLimits(root, target, hw, uv.voltage);
+  if (uv.guardFile && guard?.trial && uv.voltage?.state().offsets?.core !== guard.trial.mV) {
+    delete guard.trial; // it didn't take: nothing to watch
+    saveGuard(uv.guardFile, guard);
+  }
+  const out: ApplyResult & { target: Limits; name: string; trial?: number } = { ...r, target, name: p?.name ?? "Stock" };
+  if (guard?.trial && guard.trial.at === now) out.trial = guard.trial.mV;
+  return out;
 }
 
 // ---- page state ----
@@ -555,14 +629,22 @@ type Row = { order: number; label: string; now?: number | boolean | string; stoc
  * access, the choices for governor/EPP, and how the hardware differs from the active profile.
  * State can't hold null: unknown values are absent fields.
  */
-export function limitsState(hw: LimitsHw, stock: Stock | undefined, target: Limits | undefined, thermald = false): Record<string, unknown> {
+export function limitsState(
+  hw: LimitsHw,
+  stock: Stock | undefined,
+  target: Limits | undefined,
+  thermald = false,
+  guard: Guard = {},
+  blockedText?: string,
+): Record<string, unknown> {
   const rows: Record<string, Row> = {};
   const stockValues = stock?.values ?? hw.current;
   presentKeys(hw).forEach((k, i) => {
     const r: Row = { order: i, label: label(k, hw.hybrid), writable: hw.writable[k] };
     if (hw.current[k] !== undefined) r.now = hw.current[k];
-    if (stockValues[k] !== undefined) r.stock = stockValues[k];
-    const range = k === "maxMHz" || k === "eMaxMHz" ? hw.range[k] : k === "pl1W" || k === "pl2W" ? PL_RANGE : undefined;
+    const st = stockValues[k] ?? (k === "undervoltMV" ? 0 : undefined); // offsets start at 0 every boot
+    if (st !== undefined) r.stock = st;
+    const range = k === "maxMHz" || k === "eMaxMHz" ? hw.range[k] : k === "pl1W" || k === "pl2W" ? PL_RANGE : k === "undervoltMV" ? UNDERVOLT_RANGE : undefined;
     if (range) [r.min, r.max] = range;
     rows[k] = r;
   });
@@ -570,6 +652,9 @@ export function limitsState(hw: LimitsHw, stock: Stock | undefined, target: Limi
   const out: Record<string, unknown> = { supported: true, hybrid: hw.hybrid, access: a, rows, governors: hw.governors, epps: hw.epps };
   if (a !== "full") out.accessText = NO_ACCESS;
   if (thermald && hw.files.pl1W.length) out.thermaldText = THERMALD;
+  if (hw.voltageProblem) out.voltageText = hw.voltageProblem;
+  if (guard.trial) out.undervoltTrial = { mV: guard.trial.mV, at: guard.trial.at };
+  if (guard.blocked && blockedText) out.undervoltBlocked = blockedText;
   out.stockFrom = stock ? "snapshot" : "now";
   if (stock) out.stockAt = stock.takenAt;
   const d = target ? drift(target, hw) : [];

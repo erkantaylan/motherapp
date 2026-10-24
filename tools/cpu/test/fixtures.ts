@@ -289,3 +289,24 @@ export function setHwmon(root: string, index: number, file: string, value: strin
 export function readFile(root: string, rel: string): string {
   return fs.readFileSync(path.join(root, rel), "utf8").trim();
 }
+
+/**
+ * The voltage helper (packaging/motherapp-cpu-voltage.sh) as a src/voltage.ts Runner, in memory.
+ * `protect`: the BIOS's Undervolt Protection (offsets read back 0); `setUp: false`: sudo has no rule.
+ */
+export function fakeVoltage(opts: { protect?: boolean; setUp?: boolean } = {}) {
+  const state = { core: 0, cache: 0, calls: [] as string[][] };
+  const out = () => `core ${state.core}\ncache ${state.cache}\n`;
+  const run = (args: string[]) => {
+    state.calls.push(args);
+    if (opts.setUp === false) return { status: 1, stdout: "", stderr: "sudo: a password is required\n" };
+    if (args[0] === "read") return { status: 0, stdout: out(), stderr: "" };
+    const mV = Number(args[1]);
+    if (!opts.protect) state.core = state.cache = mV;
+    if (state.core !== mV) {
+      return { status: 3, stdout: out(), stderr: `cpu-voltage: the CPU didn't take ${mV} mV (it reads core 0 mV, cache 0 mV): turn off "Undervolt Protection" (and "IA CEP Support") in the BIOS\n` };
+    }
+    return { status: 0, stdout: out(), stderr: "" };
+  };
+  return { state, run };
+}

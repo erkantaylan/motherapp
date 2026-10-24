@@ -46,6 +46,11 @@ CPU_UNIT_TEMPLATE="$REPO_DIR/packaging/$CPU_UNIT_NAME"
 CPU_HELPER_SRC="$REPO_DIR/packaging/motherapp-cpu-access.sh"
 CPU_UNIT_FILE="$ROOT/etc/systemd/system/$CPU_UNIT_NAME"
 CPU_HELPER="$ROOT/usr/local/lib/motherapp/cpu-access"
+CPU_VOLTAGE_SRC="$REPO_DIR/packaging/motherapp-cpu-voltage.sh"
+CPU_VOLTAGE_TEMPLATE="$REPO_DIR/packaging/motherapp-cpu-voltage.sudoers"
+CPU_VOLTAGE_PATH="/usr/local/lib/motherapp/cpu-voltage"   # as the sudoers rule names it
+CPU_VOLTAGE="$ROOT$CPU_VOLTAGE_PATH"
+CPU_SUDOERS="$ROOT/etc/sudoers.d/motherapp-cpu-voltage"   # no dot: sudo skips names with one
 SOUND_DIR="$ROOT/usr/share/sounds/freedesktop/stereo"
 TEST_SOUNDS=("$SOUND_DIR/audio-channel-front-left.oga" "$SOUND_DIR/audio-channel-front-right.oga")
 NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
@@ -618,6 +623,85 @@ uninstall_cpu_access() {
   fi
 }
 
+# ---------------------------------------------------------------- CPU undervolt (Intel)
+#
+# The CPU tool's undervolt (a negative core/cache voltage offset) goes through MSR 0x150, which
+# only root can write. Instead of giving the tool /dev/cpu/*/msr (root-equivalent), a root-owned
+# helper that only reads or sets that offset, 0 to -150 mV (packaging/motherapp-cpu-voltage.sh),
+# is installed with a sudoers rule letting the user run that one file without a password.
+# The helper needs msr-tools (rdmsr, wrmsr).
+NEED_CPU_VOLTAGE=0
+
+render_cpu_sudoers() {
+  local u
+  u="$(id -un 2>/dev/null)" || return 1
+  [[ $u =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
+  sed -e '/^#@/d' -e "s|@USER@|$u|g" "$CPU_VOLTAGE_TEMPLATE"
+}
+
+# The sudoers rule is in place: sudo lists the helper without asking for a password. (/etc/sudoers.d
+# isn't readable by the user, so the file itself can't be compared.)
+cpu_sudoers_ok() { have sudo && sudo -n -l "$CPU_VOLTAGE_PATH" >/dev/null 2>&1; }
+
+check_cpu_voltage() {
+  cpu_is_intel || return 0
+  if [[ ! -x $ROOT/usr/sbin/rdmsr || ! -x $ROOT/usr/sbin/wrmsr ]]; then
+    record WARN msr-tools "not installed; the CPU tool's voltage helper needs rdmsr and wrmsr" "$(apt_fix msr-tools)" 0
+    add_pkg msr-tools
+  fi
+  if [[ -f $CPU_VOLTAGE ]] && cmp -s "$CPU_VOLTAGE_SRC" "$CPU_VOLTAGE" && cpu_sudoers_ok; then
+    record OK cpu-undervolt "$CPU_VOLTAGE_PATH installed, sudo runs it without a password"
+  elif [[ -f $CPU_VOLTAGE ]]; then
+    record WARN cpu-undervolt "$CPU_VOLTAGE_PATH is out of date or its sudoers rule is missing" "./install.sh (asks before using sudo)" 0
+    NEED_CPU_VOLTAGE=1
+  else
+    record WARN cpu-undervolt "the CPU tool can't set an undervolt without its voltage helper" \
+      "./install.sh (asks before using sudo; installs $CPU_VOLTAGE_PATH and /etc/sudoers.d/motherapp-cpu-voltage)" 0
+    NEED_CPU_VOLTAGE=1
+  fi
+}
+
+offer_cpu_voltage() {
+  local rule tmp ok=1
+  section "CPU undervolt"
+  info "For the CPU page's undervolt: a root-owned helper that only reads or sets the core/cache voltage"
+  info "offset (0 to -150 mV, never positive), and a sudoers rule that lets $(id -un) run that one file"
+  info "without a password. Undo: sudo rm $CPU_VOLTAGE_PATH /etc/sudoers.d/motherapp-cpu-voltage"
+  if ! ask "Install $CPU_VOLTAGE_PATH and /etc/sudoers.d/motherapp-cpu-voltage (sudo)"; then
+    info "skipped; the CPU tool can't undervolt"
+    return
+  fi
+  rule="$(render_cpu_sudoers)" || { info "can't tell your user name (id -un); skipped"; return; }
+  run_sudo install -D -m 0755 "$CPU_VOLTAGE_SRC" "$CPU_VOLTAGE" || ok=0
+  if (( ok )); then
+    # Checked with visudo in a root-owned copy (a name with a dot, which sudo never reads), then
+    # moved into place: a broken sudoers file can lock sudo out.
+    tmp="$(mktemp)"
+    printf '%s\n' "$rule" >"$tmp"
+    run_sudo install -D -m 0440 "$tmp" "$CPU_SUDOERS.new" || ok=0
+    rm -f "$tmp"
+    (( ok )) && { run_sudo visudo -c -q -f "$CPU_SUDOERS.new" || { ok=0; info "visudo rejected the rule; not installed"; }; }
+    if (( ok )); then run_sudo mv -f "$CPU_SUDOERS.new" "$CPU_SUDOERS" || ok=0; else sudo rm -f "$CPU_SUDOERS.new"; fi
+  fi
+  if (( ok )); then APPLIED_FIX=1; else info "setting up the voltage helper failed (see above)"; fi
+}
+
+uninstall_cpu_voltage() {
+  if [[ ! -f $CPU_VOLTAGE ]] && ! cpu_sudoers_ok; then
+    record OK cpu-undervolt "voltage helper not installed"
+    return
+  fi
+  if ! ask "Remove $CPU_VOLTAGE_PATH and /etc/sudoers.d/motherapp-cpu-voltage (sudo)? An undervolt already set stays until the next reboot"; then
+    record WARN cpu-undervolt "kept the voltage helper (you said no)" "sudo rm $CPU_VOLTAGE_PATH /etc/sudoers.d/motherapp-cpu-voltage" 0
+    return
+  fi
+  if run_sudo rm -f "$CPU_SUDOERS" "$CPU_VOLTAGE"; then
+    record OK cpu-undervolt "removed the voltage helper and its sudoers rule"
+  else
+    record FAIL cpu-undervolt "couldn't remove the voltage helper" "sudo rm $CPU_VOLTAGE_PATH /etc/sudoers.d/motherapp-cpu-voltage"
+  fi
+}
+
 check_misc_tools() {
   if have curl; then
     record OK curl "$(command -v curl)"
@@ -627,7 +711,7 @@ check_misc_tools() {
 }
 
 run_checks() {
-  NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0 NEED_CPU_ACCESS=0 NEED_THERMALD_OFF=0
+  NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0 NEED_CPU_ACCESS=0 NEED_THERMALD_OFF=0 NEED_CPU_VOLTAGE=0
   section "Runtime"
   check_node
   check_misc_tools
@@ -641,6 +725,7 @@ run_checks() {
   check_i2c
   section "CPU limits"
   check_cpu_access
+  check_cpu_voltage
   section "Service manager"
   check_systemd_user
 }
@@ -857,6 +942,9 @@ offer_fixes() {
 
   if (( NEED_CPU_ACCESS )); then
     if (( can_apt )); then offer_cpu_access; else info "sudo not available; the CPU tool stays read-only"; fi
+  fi
+  if (( NEED_CPU_VOLTAGE )); then
+    if (( can_apt )); then offer_cpu_voltage; else info "sudo not available; the CPU tool can't undervolt"; fi
   fi
   if (( NEED_THERMALD_OFF && can_apt )); then offer_thermald_off; fi
 
@@ -1467,6 +1555,7 @@ uninstall() {
   uninstall_shortcuts
   uninstall_bins
   uninstall_cpu_access
+  uninstall_cpu_voltage
   local d
   for d in "$APP_CONFIG_DIR" "$APP_STATE_DIR"; do
     if [[ ! -e $d ]]; then

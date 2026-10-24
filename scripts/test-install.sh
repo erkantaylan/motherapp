@@ -69,7 +69,8 @@ new_case() {
   mkdir -p "$R/packaging" "$R/scripts" "$HOME_" "$ROOT" "$FAKE"/{apt,dpkg,active,enabled} "$STUB"
   cp "$REPO/install.sh" "$REPO/VERSION" "$REPO/.gitignore" "$R/"
   cp "$REPO/scripts/build-info.sh" "$REPO/scripts/motherapp.sh" "$R/scripts/"
-  cp "$REPO/packaging/motherapp.service" "$REPO/packaging/motherapp-cpu-access.service" "$REPO/packaging/motherapp-cpu-access.sh" "$R/packaging/"
+  cp "$REPO/packaging/motherapp.service" "$REPO/packaging/motherapp-cpu-access.service" "$REPO/packaging/motherapp-cpu-access.sh" \
+    "$REPO/packaging/motherapp-cpu-voltage.sh" "$REPO/packaging/motherapp-cpu-voltage.sudoers" "$R/packaging/"
   local t
   for t in "$REPO"/tools/*/manifest.json; do   # the real manifests (audio declares "bin")
     t="${t%/manifest.json}"
@@ -90,6 +91,7 @@ new_case() {
   echo 0.8-2ubuntu1 >"$FAKE/apt/sound-theme-freedesktop"
   echo 4.3-4build2 >"$FAKE/apt/i2c-tools"
   echo 24.1.0-1nodesource1 >"$FAKE/apt/nodejs"
+  echo 1.3-5build1 >"$FAKE/apt/msr-tools"
   echo 1.4.1-1build2 >"$FAKE/dpkg/ddcutil"
   echo 1.4.1-1build2 >"$FAKE/dpkg/libddcutil4"
   mkdir -p "$ROOT/usr/lib/x86_64-linux-gnu"
@@ -108,7 +110,13 @@ new_case() {
   touch "$FAKE/active/pipewire" "$FAKE/active/wireplumber" "$FAKE/active/pipewire-pulse"
 
   # $FAKE/sudo_password: sudo needs a password, so `sudo -n` fails like the real one.
-  stub sudo 'echo "sudo $*" >>"$FAKE/calls"
+  # `sudo -n -l CMD` (is there a NOPASSWD rule for CMD) changes nothing and isn't logged; the
+  # only rule this fake knows is the voltage helper's, from its sudoers.d file.
+  stub sudo 'if [[ ${1:-} == -n && ${2:-} == -l ]]; then
+  [[ ! -f $FAKE/sudo_password && $3 == /usr/local/lib/motherapp/cpu-voltage && -f $MOTHERAPP_INSTALL_ROOT/etc/sudoers.d/motherapp-cpu-voltage ]] && { echo "$3"; exit 0; }
+  exit 1
+fi
+echo "sudo $*" >>"$FAKE/calls"
 if [[ ${1:-} == -n ]]; then
   [[ -f $FAKE/sudo_password ]] && { echo "sudo: a password is required" >&2; exit 1; }
   shift
@@ -151,12 +159,15 @@ for p in "${@:2}"; do
     pipewire-bin) for t in pw-dump pw-play pw-record pw-metadata; do printf "#!/bin/sh\n" >"$FAKE_STUB/$t"; chmod +x "$FAKE_STUB/$t"; done ;;
     wireplumber) printf "#!/bin/sh\n" >"$FAKE_STUB/wpctl"; chmod +x "$FAKE_STUB/wpctl" ;;
     sound-theme-freedesktop) mkdir -p "$R/usr/share/sounds/freedesktop/stereo"; touch "$R/usr/share/sounds/freedesktop/stereo/audio-channel-front-"{left,right}.oga ;;
+    msr-tools) mkdir -p "$R/usr/sbin"; for t in rdmsr wrmsr; do printf "#!/bin/sh\n" >"$R/usr/sbin/$t"; chmod +x "$R/usr/sbin/$t"; done ;;
     libddcutil4) mkdir -p "$R/usr/lib/x86_64-linux-gnu"; touch "$R/usr/lib/x86_64-linux-gnu/libddcutil.so.4" ;;
     nodejs) mkdir -p "$R/usr/bin"; cp "$FAKE/node_template" "$R/usr/bin/node"; cp "$FAKE/npm_template" "$R/usr/bin/npm"; chmod +x "$R/usr/bin/node" "$R/usr/bin/npm" ;;
   esac
 done'
   cp "$NODE_PATH_DIR/npm" "$FAKE/npm_template"
   cp "$NODE_PATH_DIR/node" "$FAKE/node_template"
+  # $FAKE/visudo_bad: visudo rejects the file.
+  stub visudo 'echo "visudo $*" >>"$FAKE/calls"; [[ -f $FAKE/visudo_bad ]] && { echo "parse error" >&2; exit 1; }; exit 0'
   stub gpg 'out=""; while (($#)); do [[ $1 == -o ]] && out=$2; shift; done; echo "gpg -o $out" >>"$FAKE/calls"; cat >"$out"'
   stub modprobe 'echo "modprobe $*" >>"$FAKE/calls"; mkdir -p "$MOTHERAPP_INSTALL_ROOT/sys/module/i2c_dev"; touch "$MOTHERAPP_INSTALL_ROOT/dev/i2c-1" "$MOTHERAPP_INSTALL_ROOT/dev/i2c-3"'
   stub usermod 'echo "usermod $*" >>"$FAKE/calls"; [[ $1 == -aG ]] && echo "$(cat "$FAKE/user_groups") $2" >"$FAKE/user_groups"'
@@ -239,6 +250,8 @@ calls_has() { grep -qF -- "$1" "$FAKE/calls"; }
 calls_lacks() { ! grep -qE -- "$1" "$FAKE/calls"; }
 exit_is() { [[ $CODE == "$1" ]]; }
 file_has() { grep -qF -- "$2" "$1"; }
+file_lacks() { ! grep -qF -- "$2" "$1"; }
+calls_match() { grep -qE -- "$1" "$FAKE/calls"; }
 
 UNIT() { printf '%s' "$HOME_/.config/systemd/user/motherapp.service"; }
 WRAP() { printf '%s' "$HOME_/.local/bin/${1:-audioctl}"; }
@@ -449,6 +462,34 @@ check "intel uninstall: disabled" calls_has "sudo systemctl disable motherapp-cp
 check "intel uninstall: unit removed" test ! -e "$ROOT/etc/systemd/system/motherapp-cpu-access.service"
 check "intel uninstall: helper removed" test ! -e "$ROOT/usr/local/lib/motherapp/cpu-access"
 check "intel uninstall: OK" out_has '^OK +cpu-limits +removed motherapp-cpu-access\.service'
+check "intel uninstall: voltage helper removed" test ! -e "$ROOT/usr/local/lib/motherapp/cpu-voltage"
+check "intel uninstall: sudoers rule removed" test ! -e "$ROOT/etc/sudoers.d/motherapp-cpu-voltage"
+check "intel uninstall: voltage OK" out_has '^OK +cpu-undervolt +removed the voltage helper and its sudoers rule'
+
+new_case cpu-undervolt
+mkdir -p "$ROOT/proc" "$ROOT/sys/devices/system/cpu/intel_pstate"
+printf 'processor\t: 0\nvendor_id\t: GenuineIntel\n' >"$ROOT/proc/cpuinfo"
+run_installer --check
+check "undervolt --check: WARN" out_has '^WARN +cpu-undervolt +the CPU tool can.t set an undervolt without its voltage helper'
+check "undervolt --check: msr-tools missing" out_has '^WARN +msr-tools +not installed'
+check "undervolt --check: no sudo" calls_lacks '^sudo'
+touch "$FAKE/visudo_bad"
+run_installer --yes
+check "undervolt --yes: msr-tools installed" calls_match "^sudo apt-get install -y .*msr-tools"
+check "visudo rejects: no rule installed" test ! -e "$ROOT/etc/sudoers.d/motherapp-cpu-voltage"
+check "visudo rejects: no leftover" test ! -e "$ROOT/etc/sudoers.d/motherapp-cpu-voltage.new"
+check "visudo rejects: said so" out_has 'visudo rejected the rule; not installed'
+rm "$FAKE/visudo_bad"
+: >"$FAKE/calls"
+run_installer --yes
+check "undervolt --yes: helper installed" cmp -s "$REPO/packaging/motherapp-cpu-voltage.sh" "$ROOT/usr/local/lib/motherapp/cpu-voltage"
+check "undervolt --yes: checked with visudo" calls_has "sudo visudo -c -q -f $ROOT/etc/sudoers.d/motherapp-cpu-voltage.new"
+check "undervolt --yes: rule for tester" file_has "$ROOT/etc/sudoers.d/motherapp-cpu-voltage" "tester ALL=(root) NOPASSWD: /usr/local/lib/motherapp/cpu-voltage"
+check "undervolt --yes: template comments dropped" file_lacks "$ROOT/etc/sudoers.d/motherapp-cpu-voltage" "#@"
+check "undervolt --yes: OK after the re-check" out_has '^OK +cpu-undervolt +/usr/local/lib/motherapp/cpu-voltage installed, sudo runs it without a password'
+: >"$FAKE/calls"
+run_installer --yes
+check "undervolt re-run: no sudo" calls_lacks '^sudo'
 
 new_case cpu-limits-thermald
 mkdir -p "$ROOT/proc" "$ROOT/sys/devices/system/cpu/intel_pstate" "$FAKE/sys_active"

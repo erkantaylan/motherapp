@@ -1,0 +1,7 @@
+#@ Template, not a file to copy: install.sh renders it into /etc/sudoers.d/motherapp-cpu-voltage
+#@ (checked with visudo -c first), replacing @USER@ with the user's name. Lines starting with
+#@ "#@" are dropped.
+# motherapp, from install.sh: lets @USER@ run the CPU tool's voltage helper as root without a
+# password. The helper only reads or sets the core/cache voltage offset, 0 to -150 mV
+# (packaging/motherapp-cpu-voltage.sh in the motherapp checkout). Remove this file to take it back.
+@USER@ ALL=(root) NOPASSWD: /usr/local/lib/motherapp/cpu-voltage

@@ -22,6 +22,8 @@ import type { IntelSettings } from "./intel.ts";
 import { AMD_ONLY, buildReport, formatProfiles, formatStatus, tuningSupported } from "./model.ts";
 import { PROFILE_IDS, loadSettings, toFile } from "./settings.ts";
 import type { ProfileId } from "./settings.ts";
+import { TRIAL_MS } from "./voltage.ts";
+import type { Voltage } from "./voltage.ts";
 import { readSnapshot } from "./sysfs.ts";
 
 export const USAGE = `usage: cpuctl <command> [options]
@@ -33,6 +35,7 @@ export const USAGE = `usage: cpuctl <command> [options]
                        AMD Ryzen (family 0x17): ClockTuner for Ryzen values, shown only.
                        Intel: clock caps, turbo, governor, EPP and PL1/PL2
   limits [--json]      Intel: each limit now, at stock, and whether it can be written
+                       (the undervolt is read through the voltage helper, with sudo -n)
   use <profile>        Intel: apply stock, underclock or overclock and make it the active
                        profile (needs the access install.sh sets up)
   serve                JSON-RPC serve mode (started by the motherapp core)
@@ -46,6 +49,9 @@ export interface CliIO {
   settingsFile: string;
   /** Intel: the stock snapshot (src/intel.ts stockFile). */
   stockFile: string;
+  /** Intel: the undervolt helper and its crash guard (src/voltage.ts). */
+  voltage?: Voltage;
+  guardFile?: string;
   stdout: Writable;
   stderr: Writable;
 }
@@ -93,7 +99,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       case "limits": {
         const json = jsonFlag(args);
         if (readSnapshot(io.root).vendor !== "GenuineIntel") throw new Error(INTEL_ONLY);
-        const hw = readLimits(io.root);
+        const hw = readLimits(io.root, io.voltage);
         const stock = loadStock(io.stockFile, bootId(io.root));
         if (json) {
           line(io.stdout, JSON.stringify({ hybrid: hw.hybrid, access: access(hw), current: hw.current, stock: stock?.values ?? hw.current, stockFrom: stock ? "snapshot" : "now", writable: hw.writable, range: hw.range }, null, 2));
@@ -107,6 +113,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         line(io.stdout, "");
         line(io.stdout, stock ? `Stock = the values before motherapp first changed them this boot (${new Date(stock.takenAt).toLocaleString()}).` : "motherapp hasn't changed anything this boot: stock = now.");
         if (access(hw) !== "full") line(io.stdout, NO_WRITE);
+        if (hw.voltageProblem) line(io.stdout, hw.voltageProblem.replaceAll("`", ""));
         if (thermaldRunning(io.root)) line(io.stdout, THERMALD.replaceAll("`", ""));
         return 0;
       }
@@ -119,13 +126,17 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         const id = which === "stock" ? null : (which as ProfileId);
         const p = loaded.settings.profiles.find((x) => x.id === id);
         if (p && !hasValues(p)) throw new Error(`${p.name} has nothing set yet: edit ${io.settingsFile} or use the CPU page`);
-        const r = applyProfile(io.root, io.stockFile, loaded.settings, id);
+        const r = applyProfile(io.root, io.stockFile, loaded.settings, id, Date.now(), {
+          ...(io.voltage ? { voltage: io.voltage } : {}),
+          ...(io.guardFile ? { guardFile: io.guardFile } : {}),
+        });
         for (const c of r.changed) line(io.stdout, c);
         if (!r.changed.length && !r.problems.length) line(io.stdout, `${r.name}: nothing needed changing.`);
         for (const pr of r.problems) line(io.stderr, `cpuctl: ${pr}`);
         if (r.problems.length && !r.changed.length) return 1;
         if (loaded.settings.active !== id) updateIntelSettings(io.settingsFile, (s) => (s.active = id));
         line(io.stdout, `Active profile: ${r.name}.`);
+        if (r.trial !== undefined) line(io.stdout, `Undervolt ${r.trial} mV is on trial for ${TRIAL_MS / 60_000} minutes: if the computer crashes or restarts before then, motherapp won't set it again on its own.`);
         return r.problems.length ? 1 : 0;
       }
       case undefined:
@@ -159,7 +170,7 @@ function intelProfiles(io: CliIO, json: boolean): number {
     line(io.stdout, JSON.stringify({ file: io.settingsFile, active: s.active, applyOnStart: s.applyOnStart, profiles, problems: loaded.problems }, null, 2));
     return 0;
   }
-  const hybrid = readLimits(io.root).hybrid;
+  const hybrid = readLimits(io.root).hybrid; // no helper call: only the core layout
   line(io.stdout, `Profiles, from ${io.settingsFile}:`);
   line(io.stdout, "");
   for (const p of loaded.problems) line(io.stdout, `! ${p}`);

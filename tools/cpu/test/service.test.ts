@@ -11,7 +11,8 @@ import { CpuService, INITIAL_STATE, POLL_MS } from "../src/service.ts";
 import type { Timers } from "../src/service.ts";
 import { readSnapshot } from "../src/sysfs.ts";
 import { PowerMeter } from "../src/power.ts";
-import { intelHybrid, readFile, ryzen3900x, setFreq, setHwmon, tempTree } from "./fixtures.ts";
+import { Voltage, TRIAL_MS, loadGuard, saveGuard } from "../src/voltage.ts";
+import { fakeVoltage, intelHybrid, readFile, ryzen3900x, setFreq, setHwmon, tempTree } from "./fixtures.ts";
 import type { MachineSpec } from "./fixtures.ts";
 
 type Msg = { id?: number; method?: string; params?: any };
@@ -41,10 +42,11 @@ class FakeTimers implements Timers {
 
 const tick = () => new Promise((r) => setImmediate(r));
 
-function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: MachineSpec = ryzen3900x(), opts: { limits?: boolean; before?: (root: string, settingsFile: string) => void } = {}) {
+function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: MachineSpec = ryzen3900x(), opts: { limits?: boolean; voltage?: ReturnType<typeof fakeVoltage>; before?: (root: string, settingsFile: string) => void } = {}) {
   const tree = tempTree(machine);
   const settingsFile = path.join(tree.root, "config", "motherapp", "cpu.json");
   const stockFile = path.join(tree.root, "state", "motherapp", "cpu-stock.json");
+  const guardFile = path.join(tree.root, "state", "motherapp", "cpu-undervolt.json");
   opts.before?.(tree.root, settingsFile);
   const input = new PassThrough();
   const output = new PassThrough();
@@ -60,7 +62,9 @@ function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: 
     settingsFile,
     timers,
     now: () => 1_000_000 + timers.t,
-    ...(opts.limits ? { limits: { root: tree.root, stockFile }, power: new PowerMeter(tree.root) } : {}),
+    ...(opts.limits
+      ? { limits: { root: tree.root, stockFile, ...(opts.voltage ? { voltage: new Voltage(opts.voltage.run), guardFile } : {}) }, power: new PowerMeter(tree.root) }
+      : {}),
   });
   const received: Msg[] = [];
   const dec = new LineDecoder();
@@ -97,7 +101,7 @@ function setup(t: { after: (fn: () => void | Promise<void>) => void }, machine: 
     return received.find((m) => m.id === id) as { result?: any; error?: any };
   };
   const events = () => (tool.get("events") as { ts: number; text: string; kind: string }[]).map((e) => e.text);
-  return { tool, tree, settingsFile, stockFile, act, timers, service, changes, settle, watch, events, reads: () => reads, logs: () => received.filter((m) => m.method === "log").map((m) => m.params.msg as string) };
+  return { tool, tree, settingsFile, stockFile, guardFile, act, timers, service, changes, settle, watch, events, reads: () => reads, logs: () => received.filter((m) => m.method === "log").map((m) => m.params.msg as string) };
 }
 
 test("start: one read for the page's shape, then stale and silent until watched", async (t) => {
@@ -401,4 +405,57 @@ test("Intel limits: package power published as cpu.powerW while watched", async 
   s.timers.advance(POLL_MS);
   await s.settle();
   assert.equal(s.tool.get("cpu.powerW"), 88);
+});
+
+test("Intel undervolt: a trial from a boot that went down blocks it at start; retry starts a new trial that ends", async (t) => {
+  const v = fakeVoltage();
+  const s = setup(t, intelHybrid(), {
+    limits: true,
+    voltage: v,
+    before: (root, file) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ version: 1, active: "overclock", applyOnStart: true, profiles: { overclock: { pl2W: 253, undervoltMV: -80 } } }));
+      saveGuard(path.join(root, "state", "motherapp", "cpu-undervolt.json"), { trial: { mV: -80, bootId: "boot-0", at: 1 } });
+    },
+  });
+  s.service.start();
+  await s.settle();
+  assert.equal(v.state.core, 0, "not set again after the crash");
+  assert.equal(readFile(s.tree.root, PL2), "253000000", "the rest of the profile is");
+  const ev = s.events();
+  assert.match(ev[1]!, /^motherapp was trying an undervolt of -80 mV when the computer last went down/);
+  assert.match(ev[3]!, /^The undervolt was left at 0 mV: it is blocked/);
+  assert.match(s.tool.get("limits.undervoltBlocked") as string, /-80 mV/);
+  assert.equal(s.tool.get("limits.drift"), undefined, "blocked on purpose: not drift");
+
+  const r = await s.act("reapply");
+  assert.equal(r.error, undefined);
+  assert.equal(v.state.core, -80);
+  assert.equal(s.tool.get("limits.undervoltBlocked"), undefined);
+  assert.deepEqual(s.tool.get("limits.undervoltTrial"), { mV: -80, at: 1_000_000 });
+  assert.match(s.events().at(-1)!, /^Undervolt -80 mV: on trial for 10 minutes/);
+
+  s.timers.advance(TRIAL_MS);
+  await s.settle();
+  assert.deepEqual(loadGuard(s.guardFile), {});
+  assert.equal(s.tool.get("limits.undervoltTrial"), undefined);
+  assert.equal(s.events().at(-1), "Undervolt -80 mV held for 10 minutes: the trial is over.");
+});
+
+test("Intel undervolt: a tool restart during the trial (same boot) applies it and keeps the trial", async (t) => {
+  const v = fakeVoltage();
+  const s = setup(t, intelHybrid(), {
+    limits: true,
+    voltage: v,
+    before: (root, file) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ version: 1, active: "overclock", applyOnStart: true, profiles: { overclock: { undervoltMV: -40 } } }));
+      saveGuard(path.join(root, "state", "motherapp", "cpu-undervolt.json"), { trial: { mV: -40, bootId: "boot-1", at: 999_000 } });
+    },
+  });
+  s.service.start();
+  await s.settle();
+  assert.equal(v.state.core, -40);
+  assert.equal(s.tool.get("limits.undervoltBlocked"), undefined);
+  assert.equal(loadGuard(s.guardFile).trial?.at, 1_000_000, "set again at start: a fresh trial");
 });

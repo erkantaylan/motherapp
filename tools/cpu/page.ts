@@ -92,7 +92,7 @@ interface SensorS {
   value: number;
   unit: string;
 }
-type LimitKey = "maxMHz" | "eMaxMHz" | "turbo" | "governor" | "epp" | "pl1W" | "pl2W";
+type LimitKey = "maxMHz" | "eMaxMHz" | "turbo" | "governor" | "epp" | "pl1W" | "pl2W" | "undervoltMV";
 type LVal = number | boolean | string;
 interface ProfileS extends ProfileView {
   order: number;
@@ -116,6 +116,12 @@ interface LimitsS {
   accessText?: string;
   /** thermald is running and will undo PL1. */
   thermaldText?: string;
+  /** The undervolt can't be read or set (no helper, the BIOS refused). */
+  voltageText?: string;
+  /** A new undervolt being tried (src/voltage.ts crash guard): since `at`, for 10 minutes. */
+  undervoltTrial?: { mV: number; at: number };
+  /** The undervolt isn't set on its own since the computer went down during its trial. */
+  undervoltBlocked?: string;
   rows?: Partial<Record<LimitKey, LimitRowS>>;
   governors?: string[];
   epps?: string[];
@@ -138,11 +144,15 @@ type Order = "layout" | "rank";
 
 const WINDOW_MS = 180_000;
 const SAMPLE_MS = 1000;
+/** Fixed Y axis of the package power chart, W. */
+const W_AXIS_LO = 30;
+const W_AXIS_HI = 250;
 const NO_SMU = "—, needs the SMU (later step)";
 const AMD_ONLY = "Profiles and per-CCX tuning are for AMD Ryzen (Zen 2) only.";
 const PIDS = ["underclock", "overclock"] as const;
 type Pid = (typeof PIDS)[number];
-const UNIT: Partial<Record<LimitKey, string>> = { maxMHz: "MHz", eMaxMHz: "MHz", pl1W: "W", pl2W: "W" };
+const UNIT: Partial<Record<LimitKey, string>> = { maxMHz: "MHz", eMaxMHz: "MHz", pl1W: "W", pl2W: "W", undervoltMV: "mV" };
+const TRIAL_MS = 10 * 60_000;
 const ORDER_KEY = "motherapp.cpu.order";
 const OPEN_KEY = "motherapp.cpu.open";
 
@@ -485,6 +495,10 @@ export default class CpuPage extends HTMLElement {
   private limitsCard = el("section", "mcpu-card");
   private limAccess = el("div", "mcpu-access");
   private limThermald = el("div", "mcpu-access");
+  private limVoltage = el("div", "mcpu-access");
+  private limUvBlocked = el("div", "mcpu-drift");
+  private limUvBlockedText = el("span");
+  private limUvTrial = el("div", "mcpu-note small");
   private limDrift = el("div", "mcpu-drift");
   private limDriftText = el("span");
   private limTable = el("div", "mcpu-lt");
@@ -625,6 +639,10 @@ export default class CpuPage extends HTMLElement {
     reapply.type = "button";
     reapply.addEventListener("click", () => void this.run("reapply", {}, this.limMsg));
     this.limDrift.append(this.limDriftText, reapply);
+    const retry = el("button", "mcpu-btn", "Retry undervolt");
+    retry.type = "button";
+    retry.addEventListener("click", () => void this.run("reapply", {}, this.limMsg));
+    this.limUvBlocked.append(this.limUvBlockedText, retry);
     this.limMsg.setAttribute("aria-live", "polite");
     this.limitsCard.append(
       el("div", "mcpu-sec-h", undefined, el("h3", "", "Limits"), el("span", "small muted", "now · stock · the two profiles")),
@@ -632,6 +650,10 @@ export default class CpuPage extends HTMLElement {
       this.limThermald,
       this.limDrift,
       el("div", "mcpu-lt-wrap mcpu-live", undefined, this.limTable),
+      // Below the table: these come and go when a profile is applied, and must not move its inputs.
+      this.limVoltage,
+      this.limUvBlocked,
+      this.limUvTrial,
       el("div", "mcpu-lt-foot", undefined, this.limNote, this.limMsg),
     );
     this.limitsCard.setAttribute("aria-label", "Limits");
@@ -1020,6 +1042,19 @@ export default class CpuPage extends HTMLElement {
     if (l.accessText) setCodeText(this.limAccess, l.accessText);
     this.limThermald.hidden = !l.thermaldText;
     if (l.thermaldText) setCodeText(this.limThermald, l.thermaldText);
+    this.limVoltage.hidden = !l.voltageText;
+    if (l.voltageText) setCodeText(this.limVoltage, l.voltageText);
+    this.limUvBlocked.hidden = !l.undervoltBlocked;
+    put(this.limUvBlockedText, l.undervoltBlocked ?? "");
+    for (const b of this.limUvBlocked.querySelectorAll("button")) b.disabled = this.busy;
+    const trial = l.undervoltTrial;
+    this.limUvTrial.hidden = !trial;
+    put(
+      this.limUvTrial,
+      trial
+        ? `Trying an undervolt of ${trial.mV} mV until ${clock(trial.at + TRIAL_MS)}: if the computer crashes or restarts before then, motherapp won't set it again on its own. A heavy load now (a benchmark, a compile) is the best test.`
+        : "",
+    );
     const drift = l.drift ?? [];
     this.limDrift.hidden = drift.length === 0;
     put(this.limDriftText, drift.length ? `Changed outside this profile: ${drift.join(", ")}.` : "");
@@ -1041,7 +1076,7 @@ export default class CpuPage extends HTMLElement {
     const stockWhen = l.stockFrom === "snapshot" && l.stockAt ? `the values before motherapp first changed them this boot (${clock(l.stockAt)})` : "the current values, since motherapp hasn't changed anything this boot";
     this.setNote(
       this.limNote,
-      `Stock = ${stockWhen}. In a profile, leave a field empty (or "stock") to keep it at stock. Saving the active profile applies it at once. Highlighted "now" values differ from stock.`,
+      `Stock = ${stockWhen}. In a profile, leave a field empty (or "stock") to keep it at stock. Saving the active profile applies it at once. Highlighted "now" values differ from stock. Undervolt: 0 to -150 mV in 5 mV steps; start small (-25 to -50 mV) and go lower only after it has run stable under load.`,
     );
   }
 
@@ -1139,10 +1174,10 @@ export default class CpuPage extends HTMLElement {
     const inp = el("input", "mcpu-in num");
     inp.type = "number";
     inp.inputMode = "numeric";
-    inp.step = r.key === "maxMHz" || r.key === "eMaxMHz" ? "100" : "1";
+    inp.step = r.key === "maxMHz" || r.key === "eMaxMHz" ? "100" : r.key === "undervoltMV" ? "5" : "1";
     if (r.min !== undefined) inp.min = String(r.min);
     if (r.max !== undefined) inp.max = String(r.max);
-    inp.placeholder = "stock";
+    inp.placeholder = r.key === "undervoltMV" ? "stock (0)" : "stock";
     inp.value = this.inputText(r.key, saved);
     return inp;
   }
@@ -1538,11 +1573,11 @@ export default class CpuPage extends HTMLElement {
     const mhz = s.filter((p) => p.mhz !== undefined).map((p) => p.mhz!);
     const temps = s.filter((p) => p.temp !== undefined).map((p) => p.temp!);
     const watts = s.filter((p) => p.w !== undefined).map((p) => p.w!);
-    // PL1/PL2 as a band on the power chart, when they're in a sensible range for the axis
+    // The power axis is fixed (the user's choice): idle and spikes outside it sit on the edge.
+    const [wLo, wHi] = [W_AXIS_LO, W_AXIS_HI];
+    // PL1/PL2 as a band on the power chart, its edges clamped into the axis (stock is 253 W)
     const rows = v?.limits.rows;
     const pl = [rows?.pl1W?.now, rows?.pl2W?.now].filter((x): x is number => typeof x === "number");
-    const plShown = pl.length === 2 && Math.max(...pl) <= Math.max(400, ...watts) ? pl : [];
-    const [wLo, wHi] = axisRange([...watts, ...plShown], [0, 100], 50, 50);
     const lo = v ? Math.floor(v.lo / 500) * 500 : 1500;
     const hi = v ? Math.ceil(v.hi / 500) * 500 : 5000;
     const [cLo, cHi] = axisRange(mhz, [lo, hi], 1000, 500);
@@ -1561,7 +1596,10 @@ export default class CpuPage extends HTMLElement {
         kids.push(gl);
       }
       if (band) {
-        const bd = el("div", "mcpu-band", undefined, el("span", "", band[2]));
+        const lab = el("span", "", band[2]);
+        // a band at the top of the fixed power axis keeps its label inside the plot, below the event labels (top: 2px)
+        if (field === "w" && band[1] >= b) Object.assign(lab.style, { bottom: "auto", top: "18px" });
+        const bd = el("div", "mcpu-band", undefined, lab);
         bd.style.top = top(band[1]);
         bd.style.height = `calc(${top(band[0])} - ${top(band[1])})`;
         kids.push(bd);
@@ -1616,8 +1654,10 @@ export default class CpuPage extends HTMLElement {
       t && t.length ? [Math.min(...t), Math.max(...t), `${v!.active!.name} targets ${Math.min(...t)}–${Math.max(...t)}`] : undefined;
     plot(this.clockPlot, "mhz", cLo, cHi, 1000, "var(--accent)", band);
     plot(this.tempPlot, "temp", tLo, tHi, 10, "var(--warn)");
-    const plBand: [number, number, string] | undefined = plShown.length ? [Math.min(...plShown), Math.max(...plShown), plShown[0] === plShown[1] ? `PL1 = PL2 ${plShown[0]} W` : `PL1 ${plShown[0]} W · PL2 ${plShown[1]} W`] : undefined;
-    plot(this.powerPlot, "w", Math.max(0, wLo), wHi, wHi - wLo > 200 ? 100 : 50, "var(--ok)", plBand);
+    const wClamp = (w: number) => Math.min(wHi, Math.max(wLo, w));
+    const plBand: [number, number, string] | undefined =
+      pl.length === 2 ? [wClamp(Math.min(...pl)), wClamp(Math.max(...pl)), pl[0] === pl[1] ? `PL1 = PL2 ${pl[0]} W` : `PL1 ${pl[0]} W · PL2 ${pl[1]} W`] : undefined;
+    plot(this.powerPlot, "w", wLo, wHi, 50, "var(--ok)", plBand);
     this.renderTiles(v, s);
 
     let read = "Hover or tap the chart for values.";
