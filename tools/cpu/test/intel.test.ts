@@ -175,7 +175,7 @@ test("cpu.json (Intel): defaults, parsing, problems, broken files are never writ
     version: 1,
     active: null,
     applyOnStart: true,
-    profiles: { underclock: { name: "Underclock", pl1W: 125, pl2W: 188 }, overclock: { name: "Overclock" } },
+    profiles: { underclock: { name: "Underclock", pl1W: 125, pl2W: 188 }, overclock: { name: "Overclock", pl1W: 253, pl2W: 253, undervoltMV: -25 } },
   });
   assert.equal(formatIntelSettings(created.settings), fs.readFileSync(file, "utf8"));
 
@@ -207,7 +207,7 @@ test("page state: limits rows (now, stock, range, writable) and the profiles", (
   assert.deepEqual(st.rows.eMaxMHz, { order: 1, label: "E-core clock cap", writable: true, now: 3900, stock: 3900, min: 800, max: 3900 });
   const ps = intelProfilesState(defaultIntelSettings(), "/x/cpu.json", [], true) as any;
   assert.deepEqual(ps.list.underclock, { order: 0, name: "Underclock", values: { pl1W: 125, pl2W: 188 }, detail: "PL1 125 W · PL2 188 W" });
-  assert.deepEqual(ps.list.overclock.values, {});
+  assert.deepEqual(ps.list.overclock.values, { pl1W: 253, pl2W: 253, undervoltMV: -25 });
   assert.equal(ps.kind, "limits");
   assert.equal(ps.active, undefined);
 });

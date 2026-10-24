@@ -337,6 +337,7 @@ test("Intel limits: useProfile applies, saves active, logs; stock puts it back; 
   assert.match(again.result.text, /^Underclock applied again: PL1 \(long-term power\) 200 W → 125 W\.$/);
   assert.equal(s.tool.get("limits.drift"), undefined);
 
+  assert.equal((await s.act("saveProfile", { id: "overclock", values: {} })).error, undefined);
   const empty = await s.act("useProfile", { id: "overclock" });
   assert.match(empty.error.message, /Overclock has nothing set yet/);
   assert.equal((await s.act("useProfile", { id: "turbo" })).error.code, -32602);

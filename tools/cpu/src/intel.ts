@@ -15,12 +15,15 @@
 //
 // cpu.json on Intel has the same top level as on Ryzen (src/settings.ts) with these profiles:
 //   "underclock": { "name": "Underclock", "pl1W": 125, "pl2W": 188 },
-//   "overclock":  { "name": "Overclock" }
+//   "overclock":  { "name": "Overclock", "pl1W": 253, "pl2W": 253, "undervoltMV": -25 }
 // Fields: maxMHz (clock cap, all cores; the P-cores on a hybrid), eMaxMHz (E-cores, hybrids
 // only), turbo (true/false), governor ("performance" / "powersave"), epp (powersave only),
 // pl1W, pl2W, undervoltMV (core + cache voltage offset, -150..0 mV in 5 mV steps; stock is
 // 0). Absent or null = stock. The underclock defaults are Intel's "Baseline" power
-// profile for the i9-13900K (125 W / 188 W); the overclock profile starts empty.
+// profile for the i9-13900K (125 W / 188 W). The overclock is undervolt-based (the user's call,
+// 2026-10-24, over raising the ratios, which Raptor Lake degrades from): Intel's "Extreme"/
+// unlimited 253 W for both limits, plus a small undervolt, so the chip runs cooler and holds its
+// boost clocks longer under sustained load. -25 mV is a safe start; go lower in 5-10 mV steps.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -485,7 +488,7 @@ export function defaultIntelSettings(): IntelSettings {
     applyOnStart: true,
     profiles: [
       { id: "underclock", name: NAMES.underclock, pl1W: 125, pl2W: 188 },
-      { id: "overclock", name: NAMES.overclock },
+      { id: "overclock", name: NAMES.overclock, pl1W: 253, pl2W: 253, undervoltMV: -25 },
     ],
   };
 }

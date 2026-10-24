@@ -92,7 +92,7 @@ test("Intel: status works, profiles creates cpu.json with the Intel defaults", a
   assert.match(s.out, /\nL3 group 1 {4}avg/);
   const p = await cli(root, "profiles");
   assert.equal(p.code, 0);
-  assert.match(p.out, /\nunderclock  Underclock\n    PL1 \(long-term power\): 125 W\n    PL2 \(short-term power\): 188 W\n\noverclock   Overclock\n    nothing set yet \(all stock\)\n/);
+  assert.match(p.out, /\nunderclock  Underclock\n    PL1 \(long-term power\): 125 W\n    PL2 \(short-term power\): 188 W\n\noverclock   Overclock\n    PL1 \(long-term power\): 253 W\n    PL2 \(short-term power\): 253 W\n    Undervolt \(core \+ cache\): -25 mV\n/);
   assert.equal(JSON.parse(fs.readFileSync(p.settingsFile, "utf8")).profiles.underclock.pl1W, 125);
   const j = JSON.parse((await cli(root, "profiles", "--json")).out);
   assert.deepEqual(j.profiles.underclock, { name: "Underclock", pl1W: 125, pl2W: 188 });
@@ -114,13 +114,14 @@ test("Intel: limits shows now / stock / writable; use applies and makes it activ
   assert.equal(lj.current.pl1W, 125);
   assert.equal(lj.stock.pl1W, 241);
   assert.equal(lj.stockFrom, "snapshot");
+  // no voltage helper in tests: the overclock's undervolt is left out, its power limits apply
   const o = await cli(root, "use", "overclock");
-  assert.equal(o.code, 1);
-  assert.match(o.err, /Overclock has nothing set yet/);
+  assert.equal(o.code, 0, o.err);
+  assert.equal(o.out, "PL1 (long-term power) 125 W → 253 W\nPL2 (short-term power) 188 W → 253 W\nActive profile: Overclock.\n");
   assert.equal((await cli(root, "use", "fast")).code, 2);
   const back = await cli(root, "use", "stock");
   assert.equal(back.code, 0);
-  assert.match(back.out, /125 W → 241 W/);
+  assert.match(back.out, /253 W → 241 W/);
 });
 
 test("AMD: limits and use say Intel only", async (t) => {
