@@ -38,13 +38,14 @@ class Client {
   }
 }
 
-test("core + audio tool with fake PipeWire commands", async (t) => {
+/** Starts the real core with fake PipeWire commands first on PATH, serving `dump` as the graph. */
+async function startCore(t: { after(fn: () => void): void }, dump?: string) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-audio-e2e-"));
   const bin = path.join(tmp, "bin");
   const pw = path.join(tmp, "pw");
   fs.mkdirSync(bin);
   fs.mkdirSync(path.join(pw, "queue"), { recursive: true });
-  for (const name of ["pw-dump", "wpctl", "pw-play", "pw-record"]) {
+  for (const name of ["pw-dump", "wpctl", "pw-play", "pw-record", "pw-cli"]) {
     const script = `#!/bin/sh\nexec "${process.execPath}" --disable-warning=ExperimentalWarning "${path.join(here, "fake-pipewire.ts")}" ${name} "$@"\n`;
     fs.writeFileSync(path.join(bin, name), script, { mode: 0o755 });
   }
@@ -61,6 +62,7 @@ test("core + audio tool with fake PipeWire commands", async (t) => {
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
       FAKE_PW_DIR: pw,
+      ...(dump ? { FAKE_PW_DUMP: dump } : {}),
       XDG_CONFIG_HOME: path.join(tmp, "config"),
       XDG_STATE_HOME: path.join(tmp, "state"),
       MOTHERAPP_TOOLS_DIR: path.join(repo, "tools"),
@@ -83,7 +85,11 @@ test("core + audio tool with fake PipeWire commands", async (t) => {
   });
   await waitFor(() => lines.some((l) => l.fields?.port), "core listening", 10_000);
   const port = lines.find((l) => l.fields?.port)!.fields.port as number;
+  return { tmp, bin, pw, calls, core, lines, port };
+}
 
+test("core + audio tool with fake PipeWire commands", async (t) => {
+  const { bin, pw, calls, core, lines, port } = await startCore(t);
   const c = new Client(`ws://127.0.0.1:${port}/ws`);
   await c.open();
   // enabled by default, and the first dump arrives as fresh state
@@ -169,4 +175,25 @@ test("core + audio tool with fake PipeWire commands", async (t) => {
   core.kill("SIGTERM");
   await new Promise((res) => core.once("exit", res));
   await waitFor(() => calls().some((x) => x.cmd === "pw-dump" && x.signal === "SIGTERM"), "pw-dump stopped", 5000);
+});
+
+test("core + audio tool: selecting a Bluetooth headset's other mode on a real graph", async (t) => {
+  const { pw, calls, port } = await startCore(t, "pw-dump-real.json");
+  // what WirePlumber does on `wpctl set-profile 148 261`, as captured on the machine
+  fs.mkdirSync(path.join(pw, "profiles"));
+  fs.copyFileSync(path.join(here, "fixtures", "pw-dump-real-to-hfp.txt"), path.join(pw, "profiles", "148-261.txt"));
+  const c = new Client(`ws://127.0.0.1:${port}/ws`);
+  await c.open();
+  const has = (p: string) => () =>
+    c.notes("snapshot").some((s) => s.tool === "audio" && s.state.sinks?.[p.split(".")[1]!] && (s.stale ?? []).length === 0) ||
+    c.notes("state").some((s) => s.tool === "audio" && s.changes.some((x: any) => (x.path === "sinks" && x.value[p.split(".")[1]!]) || x.path === p));
+  await waitFor(has("sinks.route-148-3"), "the Handsfree output listed", 15_000);
+  const r = await c.call("action", { tool: "audio", name: "setDefault", args: { id: "route-148-3", value: "route-148-3" } });
+  assert.equal(r.error, undefined);
+  assert.deepEqual(
+    calls().filter((x) => x.cmd === "wpctl").map((x) => x.args!.join(" ")),
+    ["set-profile 148 261", "set-default 129"],
+  );
+  await waitFor(() => c.notes("state").some((s) => s.changes.some((x: any) => x.path === "defaultSink" && x.value === "129")), "default is the HFP node");
+  await waitFor(() => c.notes("state").some((s) => s.changes.some((x: any) => x.path === "sinks.route-148-1" && x.value?.title === "Headset – JBL Tune Flex 2")), "A2DP is the option now");
 });

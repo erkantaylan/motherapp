@@ -28,6 +28,7 @@ export interface PwObject {
 
 export const NODE = "PipeWire:Interface:Node";
 export const METADATA = "PipeWire:Interface:Metadata";
+export const DEVICE = "PipeWire:Interface:Device";
 
 const isDict = (v: unknown): v is Dict => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -149,6 +150,45 @@ export interface Device {
   /** Linear average channel volume from the node's Props, if it has reported one. */
   linear?: number;
   muted: boolean;
+  /** The card (PipeWire Device object) and its card.profile.device this node belongs to. */
+  card?: number;
+  cardDevice?: number;
+}
+
+/** A sound card (a PipeWire Device with media.class Audio/Device). */
+export interface Card {
+  id: number;
+  name: string;
+  description: string;
+  api: string;
+  /** Index of the active profile, if known. */
+  profile?: number;
+  /** Active route index per card.profile.device, from the Route param. */
+  routes: Map<number, number>;
+}
+
+/**
+ * An output or input the card offers but that has no node right now: an EnumRoute (a port, in
+ * GNOME's words) whose profile isn't active, or that isn't the active route of its device.
+ * Selecting it switches the card's profile (and/or route), waits for the node, then makes the
+ * node the default. GNOME lists these too: it shows one entry per available port.
+ */
+export interface RouteOption {
+  /** State key and CLI id: "route-<card>-<route index>". */
+  key: string;
+  kind: "sink" | "source";
+  card: number;
+  route: number;
+  routeName: string;
+  /** The profiles the route is part of; any of them being active counts. */
+  profiles: number[];
+  /** card.profile.device the node will have. */
+  device: number;
+  /** Profile to switch to; undefined when the route is on the active profile (only set-route). */
+  profile?: number;
+  /** "<port description> – <card description>", as GNOME titles it. */
+  title: string;
+  subtitle: string;
 }
 
 export interface AppStream {
@@ -170,6 +210,10 @@ export interface AppGroup {
 export interface AudioView {
   sinks: Device[];
   sources: Device[];
+  /** Outputs/inputs a card can switch to that have no node yet (see RouteOption). */
+  sinkRoutes: RouteOption[];
+  sourceRoutes: RouteOption[];
+  cards: Card[];
   defaultSinkName?: string;
   defaultSourceName?: string;
   apps: AppGroup[];
@@ -235,10 +279,148 @@ export function deviceTitles(p: Dict, name: string): { title: string; subtitle: 
   return { title, subtitle };
 }
 
+// ---- cards, profiles and routes ----
+//
+// A card (Device object) has profiles (EnumProfile, one active in Profile) and routes
+// (EnumRoute, the active ones in Route). Only the active profile has nodes, so a Bluetooth
+// headset in A2DP has no HFP node, and an HDA card with S/PDIF active has no Line Out node.
+// GNOME lists every route whose `available` isn't "no"; so does the tool.
+
+/** Bluetooth profile families. Codec variants (a2dp-sink-sbc_xq, headset-head-unit-msbc) share one. */
+export function bluezMode(profileName: string | undefined): string {
+  if (!profileName) return "";
+  if (/^a2dp/.test(profileName)) return "A2DP: high fidelity";
+  if (/^(headset-head-unit|hsp|hfp|audio-gateway)/.test(profileName)) return "HFP: headset with mic";
+  return "";
+}
+
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) ? v : undefined);
+const nums = (v: unknown): number[] => (Array.isArray(v) ? v.filter((x): x is number => typeof x === "number") : []);
+const params = (o: PwObject, name: string): Dict[] => {
+  const p = isDict(o.info) && isDict(o.info.params) ? o.info.params[name] : undefined;
+  return Array.isArray(p) ? p.filter(isDict) : [];
+};
+
+/**
+ * The card.profile.devices a profile has for a media class. ALSA writes `classes` as
+ * [count, [class, n, "card.profile.devices", [ids]], …], bluez5 without the leading count.
+ */
+export function profileDevices(profile: Dict, cls: string): number[] {
+  const classes = profile.classes;
+  if (!Array.isArray(classes)) return [];
+  for (const c of classes) {
+    if (!Array.isArray(c) || c[0] !== cls) continue;
+    const i = c.indexOf("card.profile.devices");
+    return i >= 0 ? nums(c[i + 1]) : [];
+  }
+  return [];
+}
+
+const UNUSABLE_PROFILES = new Set(["off", "pro-audio"]);
+
+/**
+ * Where selecting a route leads: the profile to switch to (none when the route is on the active
+ * profile) and the card.profile.device its node will have. Among the route's profiles, prefer
+ * one that keeps the card's other direction as it is (switching to Line Out keeps the analog
+ * mic of a duplex card), then the highest EnumProfile priority, as WirePlumber does.
+ */
+export function routeTarget(
+  route: Dict,
+  profiles: Dict[],
+  active: Dict | undefined,
+  kind: "sink" | "source",
+): { profile?: number; device: number } | undefined {
+  const cls = kind === "sink" ? "Audio/Sink" : "Audio/Source";
+  const other = kind === "sink" ? "Audio/Source" : "Audio/Sink";
+  const routeProfiles = nums(route.profiles);
+  const routeDevices = nums(route.devices);
+  const deviceIn = (p: Dict) => {
+    const devs = profileDevices(p, cls);
+    return routeDevices.find((d) => devs.includes(d));
+  };
+  if (active && routeProfiles.includes(num(active.index) ?? -1)) {
+    const device = deviceIn(active) ?? routeDevices[0];
+    return device === undefined ? undefined : { device };
+  }
+  const keep = active ? profileDevices(active, other) : [];
+  const candidates = profiles
+    .filter((p) => routeProfiles.includes(num(p.index) ?? -1) && p.available !== "no" && !UNUSABLE_PROFILES.has(String(p.name)))
+    .map((p) => {
+      const otherDevs = profileDevices(p, other);
+      return { p, device: deviceIn(p), keeps: keep.every((d) => otherDevs.includes(d)) ? 1 : 0, prio: num(p.priority) ?? 0 };
+    })
+    .filter((c) => c.device !== undefined)
+    .sort((a, b) => b.keeps - a.keeps || b.prio - a.prio || (num(a.p.index) ?? 0) - (num(b.p.index) ?? 0));
+  const best = candidates[0];
+  return best ? { profile: num(best.p.index)!, device: best.device! } : undefined;
+}
+
+function readCard(o: PwObject): { card: Card; options: RouteOption[] } | undefined {
+  const p = nodeProps(o);
+  if (!p || p["media.class"] !== "Audio/Device") return undefined;
+  const name = str(p["device.name"]) ?? `card ${o.id}`;
+  const description = str(p["device.description"]) ?? str(p["device.nick"]) ?? name;
+  const api = str(p["device.api"]) ?? "";
+  const profiles = params(o, "EnumProfile");
+  const activeIndex = num(params(o, "Profile")[0]?.index);
+  const active = profiles.find((x) => num(x.index) === activeIndex) ?? params(o, "Profile")[0];
+  const card: Card = { id: o.id, name, description, api, routes: new Map() };
+  if (activeIndex !== undefined) card.profile = activeIndex;
+  const activeRoutes = new Set<number>();
+  for (const r of params(o, "Route")) {
+    const idx = num(r.index);
+    const dev = num(r.device);
+    if (idx === undefined) continue;
+    activeRoutes.add(idx);
+    if (dev !== undefined) card.routes.set(dev, idx);
+  }
+  const options: RouteOption[] = [];
+  for (const r of params(o, "EnumRoute")) {
+    const idx = num(r.index);
+    if (idx === undefined || activeRoutes.has(idx) || r.available === "no") continue;
+    const kind = r.direction === "Output" ? "sink" : r.direction === "Input" ? "source" : undefined;
+    if (!kind) continue;
+    const target = routeTarget(r, profiles, active, kind);
+    if (!target) continue;
+    const routeName = str(r.name) ?? `route ${idx}`;
+    const portDesc = str(r.description) ?? routeName;
+    const targetProfile = target.profile === undefined ? active : profiles.find((x) => num(x.index) === target.profile);
+    const opt: RouteOption = {
+      key: `route-${o.id}-${idx}`,
+      kind,
+      card: o.id,
+      route: idx,
+      routeName,
+      profiles: nums(r.profiles),
+      device: target.device,
+      title: `${portDesc} – ${description}`,
+      subtitle: api === "bluez5" ? bluezMode(str(targetProfile?.name)) : "",
+    };
+    if (target.profile !== undefined) opt.profile = target.profile;
+    options.push(opt);
+  }
+  return { card, options };
+}
+
+/** The node a route option leads to, once its profile is active (undefined until then). */
+export function routeNode(view: AudioView, opt: RouteOption): Device | undefined {
+  const card = view.cards.find((c) => c.id === opt.card);
+  if (!card || card.profile === undefined || !opt.profiles.includes(card.profile)) return undefined;
+  const list = opt.kind === "sink" ? view.sinks : view.sources;
+  return list.find((d) => d.card === opt.card && d.cardDevice === opt.device);
+}
+
 export function buildView(objects: Iterable<PwObject>, opts: ViewOptions = {}): AudioView {
-  const view: AudioView = { sinks: [], sources: [], apps: [] };
+  const view: AudioView = { sinks: [], sources: [], sinkRoutes: [], sourceRoutes: [], cards: [], apps: [] };
   const apps = new Map<string, AppGroup>();
   for (const o of objects) {
+    if (o.type === DEVICE) {
+      const c = readCard(o);
+      if (!c) continue;
+      view.cards.push(c.card);
+      for (const opt of c.options) (opt.kind === "sink" ? view.sinkRoutes : view.sourceRoutes).push(opt);
+      continue;
+    }
     if (o.type === METADATA) {
       if (o.props?.["metadata.name"] !== "default") continue;
       for (const e of o.metadata ?? []) {
@@ -260,6 +442,12 @@ export function buildView(objects: Iterable<PwObject>, opts: ViewOptions = {}): 
       const dev: Device = { id: o.id, kind: cls === "Audio/Sink" ? "sink" : "source", name, title, subtitle, muted: nodeMuted(o) };
       const lin = nodeLinearVolume(o);
       if (lin !== undefined) dev.linear = lin;
+      const card = num(Number(p["device.id"]));
+      const cardDevice = num(Number(p["card.profile.device"]));
+      if (card !== undefined && p["device.id"] !== undefined) dev.card = card;
+      if (cardDevice !== undefined && p["card.profile.device"] !== undefined) dev.cardDevice = cardDevice;
+      // A Bluetooth node's second line names its mode, so A2DP and HFP read apart.
+      if (p["device.api"] === "bluez5" && dev.subtitle === "") dev.subtitle = bluezMode(str(p["api.bluez5.profile"]));
       (dev.kind === "sink" ? view.sinks : view.sources).push(dev);
     } else if (cls === "Stream/Output/Audio") {
       const role = str(p["media.role"]);
@@ -286,6 +474,9 @@ export function buildView(objects: Iterable<PwObject>, opts: ViewOptions = {}): 
   const byTitle = (a: Device, b: Device) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()) || a.id - b.id;
   view.sinks.sort(byTitle);
   view.sources.sort(byTitle);
+  const optByTitle = (a: RouteOption, b: RouteOption) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()) || a.key.localeCompare(b.key);
+  view.sinkRoutes.sort(optByTitle);
+  view.sourceRoutes.sort(optByTitle);
   view.apps = [...apps.values()].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   for (const a of view.apps) a.streams.sort((x, y) => x.id - y.id);
   return view;
@@ -318,12 +509,19 @@ function deviceItem(d: Device): Dict {
   return { name: d.name, title: d.title, subtitle: d.subtitle };
 }
 
+/** A route with no node yet: same row shape, no node name. */
+function routeItem(r: RouteOption): Dict {
+  return { name: "", title: r.title, subtitle: r.subtitle };
+}
+
 /** The tool state: maps keyed by PipeWire id (devices) or escaped app name (apps). */
 export function viewToState(view: AudioView): DerivedState {
   const sinks: Dict = {};
   for (const d of view.sinks) sinks[String(d.id)] = deviceItem(d);
+  for (const r of view.sinkRoutes) sinks[r.key] = routeItem(r);
   const sources: Dict = {};
   for (const d of view.sources) sources[String(d.id)] = deviceItem(d);
+  for (const r of view.sourceRoutes) sources[r.key] = routeItem(r);
   const apps: Dict = {};
   for (const a of view.apps) {
     const item: Dict = { name: a.name, volume: appVolume(a), muted: appMuted(a), streams: a.streams.length, detail: appDetail(a) };
@@ -406,6 +604,46 @@ export function findDevice(view: AudioView, query: string, kind?: "sink" | "sour
     if (hits.length > 1) {
       throw new Error(`"${q}" matches several ${what}s: ${hits.map((d) => `${d.id} (${d.title})`).join(", ")}`);
     }
+  }
+  throw new Error(`No ${what} matches "${q}"`);
+}
+
+/** What `set-default` and the radio can select: a node, or a route that has no node yet. */
+export type Target = { device: Device } | { route: RouteOption };
+
+/**
+ * Like findDevice, but also matches routes with no node (by key "route-<card>-<index>", title
+ * or a unique part of it), so `audioctl set-default "Line Out"` switches the card's profile.
+ */
+export function findTarget(view: AudioView, query: string, kind?: "sink" | "source"): Target {
+  const q = query.trim();
+  const routes = [...(kind !== "source" ? view.sinkRoutes : []), ...(kind !== "sink" ? view.sourceRoutes : [])];
+  if (/^\d+$/.test(q)) return { device: findDevice(view, q, kind) };
+  const exactRoute = routes.find((r) => r.key === q);
+  if (exactRoute) return { route: exactRoute };
+  const what = kind === "sink" ? "output" : kind === "source" ? "input" : "device";
+  const all = [...(kind !== "source" ? view.sinks : []), ...(kind !== "sink" ? view.sources : [])];
+  interface Hit {
+    label: string;
+    target: Target;
+    exact: boolean;
+    texts: string[];
+  }
+  const lowered = (xs: string[]) => xs.filter(Boolean).map((x) => x.toLowerCase());
+  const hits: Hit[] = [
+    ...all.map((d) => ({ label: `${d.id} (${d.title})`, target: { device: d }, exact: d.name === q, texts: lowered([d.name, d.title, d.subtitle]) })),
+    ...routes.map((r) => ({ label: `${r.key} (${r.title})`, target: { route: r }, exact: false, texts: lowered([r.title, r.subtitle, r.routeName]) })),
+  ];
+  const lower = q.toLowerCase();
+  const tiers: ((h: Hit) => boolean)[] = [
+    (h) => h.exact,
+    (h) => h.texts.includes(lower),
+    (h) => h.texts.some((x) => x.includes(lower)),
+  ];
+  for (const tier of tiers) {
+    const found = hits.filter(tier);
+    if (found.length === 1) return found[0]!.target;
+    if (found.length > 1) throw new Error(`"${q}" matches several ${what}s: ${found.map((h) => h.label).join(", ")}`);
   }
   throw new Error(`No ${what} matches "${q}"`);
 }

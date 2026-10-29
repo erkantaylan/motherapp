@@ -41,6 +41,22 @@ export class AudioOps {
     return this.wpctl(["set-default", String(dev.id)]);
   }
 
+  /** `wpctl set-profile <card> <index>`: the card's nodes are destroyed and recreated. */
+  setProfile(card: number, profile: number): Promise<unknown> {
+    return this.wpctl(["set-profile", String(card), String(profile)]);
+  }
+
+  /**
+   * Makes a route the active one of its card.profile.device, as GNOME's port switch does.
+   * wpctl 0.4 has no set-route, so this goes through `pw-cli set-param <card> Route`.
+   */
+  setRoute(card: number, route: number, device: number): Promise<unknown> {
+    return runCommand(this.runner, "pw-cli", ["set-param", String(card), "Route", `{ index: ${route}, device: ${device}, save: true }`], {
+      timeoutMs: WPCTL_TIMEOUT_MS,
+      label: "pw-cli set-param Route",
+    });
+  }
+
   /** Sets every stream to `percent` (the wpctl/cubic scale). */
   async setStreamsVolume(streams: readonly AppStream[], percent: number): Promise<void> {
     const v = percentToWpctl(percent);

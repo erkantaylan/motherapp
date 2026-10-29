@@ -1,0 +1,4361 @@
+[
+  {
+    "id": 142,
+    "info": null
+  }
+]
+[
+  {
+    "id": 138,
+    "info": null
+  }
+]
+[
+  {
+    "id": 134,
+    "info": null
+  }
+]
+[
+  {
+    "id": 92,
+    "info": null
+  }
+]
+[
+  {
+    "id": 136,
+    "info": null
+  }
+]
+[
+  {
+    "id": 99,
+    "info": null
+  }
+]
+[
+  {
+    "id": 110,
+    "info": null
+  }
+]
+[
+  {
+    "id": 129,
+    "info": null
+  }
+]
+[
+  {
+    "id": 98,
+    "info": null
+  }
+]
+[
+  {
+    "id": 91,
+    "info": null
+  }
+]
+[
+  {
+    "id": 85,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 65,
+      "change-mask": [ "params" ],
+      "n-input-ports": 0,
+      "n-output-ports": 2,
+      "state": "idle",
+      "error": null,
+      "props": {
+        "adapt.follower.spa-node": "",
+        "application.name": "Spotify",
+        "audio.adapt.follower": "",
+        "client.id": 88,
+        "clock.quantum-limit": 8192,
+        "factory.id": 7,
+        "factory.mode": "split",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.category": "Playback",
+        "media.class": "Stream/Output/Audio",
+        "media.name": "Spotify",
+        "media.role": "Music",
+        "media.type": "Audio",
+        "node.autoconnect": true,
+        "node.name": "spotify",
+        "node.rate": "1/44100",
+        "node.want-driver": true,
+        "object.id": 85,
+        "object.register": false,
+        "object.serial": 241,
+        "stream.is-live": true
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32LE",
+            "rate": 44100,
+            "channels": 2,
+            "position": [ "UNK", "UNK" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 0.092104, 0.092104 ],
+            "channelMap": [ "UNK", "UNK" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000, 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ 1.000000, 1.000000 ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32LE",
+            "rate": 44100,
+            "channels": 2,
+            "position": [ "UNK", "UNK" ]
+          }
+        ],
+        "EnumPortConfig": [
+          {
+            "direction": "Output",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Output",
+            "mode": "dsp",
+            "monitor": true,
+            "control": false,
+            "format": {
+              "mediaType": "audio",
+              "mediaSubtype": "raw",
+              "format": "F32P",
+              "channels": 2,
+              "position": [ "FL", "FR" ]
+            }
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [ ]
+      }
+    }
+  },
+  {
+    "id": 148,
+    "type": "PipeWire:Interface:Device",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "change-mask": [ "params" ],
+      "props": {
+        "api.bluez5.address": "00:1B:66:00:00:01",
+        "api.bluez5.class": "0x240404",
+        "api.bluez5.connection": "disconnected",
+        "api.bluez5.device": "",
+        "api.bluez5.icon": "audio-headset",
+        "api.bluez5.id": 0,
+        "api.bluez5.path": "/org/bluez/hci0/dev_00_1B_66_00_00_01",
+        "bluez5.profile": "off",
+        "client.id": 35,
+        "device.alias": "JBL Tune Flex 2",
+        "device.api": "bluez5",
+        "device.bus": "bluetooth",
+        "device.description": "JBL Tune Flex 2",
+        "device.form-factor": "headset",
+        "device.icon-name": "audio-headset-bluetooth",
+        "device.name": "bluez_card.00_1B_66_00_00_01",
+        "device.product.id": "0x0000",
+        "device.string": "00:1B:66:00:00:01",
+        "device.vendor.id": "bluetooth:02b0",
+        "factory.id": 14,
+        "media.class": "Audio/Device",
+        "object.id": 148,
+        "object.serial": 1049
+      },
+      "params": {
+        "EnumProfile": [
+          {
+            "index": 0,
+            "name": "off",
+            "description": "Off",
+            "available": "yes",
+            "priority": 0
+          },
+          {
+            "index": 3,
+            "name": "headset-head-unit",
+            "description": "Headset Head Unit (HSP/HFP)",
+            "available": "yes",
+            "priority": 1,
+            "classes": [
+              [
+                "Audio/Source",
+                1,
+                "card.profile.devices",
+                [ 0 ]
+              ],
+              [
+                "Audio/Sink",
+                1,
+                "card.profile.devices",
+                [ 1 ]
+              ]
+            ]
+          },
+          {
+            "index": 5,
+            "name": "a2dp-sink",
+            "description": "High Fidelity Playback (A2DP Sink, codec SBC)",
+            "available": "yes",
+            "priority": 18,
+            "classes": [
+              [
+                "Audio/Sink",
+                1,
+                "card.profile.devices",
+                [ 1 ]
+              ]
+            ]
+          },
+          {
+            "index": 6,
+            "name": "a2dp-sink-sbc_xq",
+            "description": "High Fidelity Playback (A2DP Sink, codec SBC-XQ)",
+            "available": "yes",
+            "priority": 17,
+            "classes": [
+              [
+                "Audio/Sink",
+                1,
+                "card.profile.devices",
+                [ 1 ]
+              ]
+            ]
+          },
+          {
+            "index": 260,
+            "name": "headset-head-unit-cvsd",
+            "description": "Headset Head Unit (HSP/HFP, codec CVSD)",
+            "available": "yes",
+            "priority": 2,
+            "classes": [
+              [
+                "Audio/Source",
+                1,
+                "card.profile.devices",
+                [ 0 ]
+              ],
+              [
+                "Audio/Sink",
+                1,
+                "card.profile.devices",
+                [ 1 ]
+              ]
+            ]
+          },
+          {
+            "index": 261,
+            "name": "headset-head-unit-msbc",
+            "description": "Headset Head Unit (HSP/HFP, codec mSBC)",
+            "available": "yes",
+            "priority": 3,
+            "classes": [
+              [
+                "Audio/Source",
+                1,
+                "card.profile.devices",
+                [ 0 ]
+              ],
+              [
+                "Audio/Sink",
+                1,
+                "card.profile.devices",
+                [ 1 ]
+              ]
+            ]
+          }
+        ],
+        "Profile": [
+          {
+            "index": 261,
+            "name": "headset-head-unit-msbc",
+            "description": "Headset Head Unit (HSP/HFP, codec mSBC)",
+            "available": "yes",
+            "priority": 3,
+            "classes": [
+              [
+                "Audio/Source",
+                1,
+                "card.profile.devices",
+                [ 0 ]
+              ],
+              [
+                "Audio/Sink",
+                1,
+                "card.profile.devices",
+                [ 1 ]
+              ]
+            ],
+            "save": false
+          }
+        ],
+        "EnumRoute": [
+          {
+            "index": 1,
+            "direction": "Output",
+            "name": "headset-output",
+            "description": "Headset",
+            "priority": 0,
+            "available": "yes",
+            "info": [
+              1,
+              "port.type",
+              "headset"
+            ],
+            "profiles": [ 5, 6 ],
+            "devices": [ 1 ]
+          },
+          {
+            "index": 2,
+            "direction": "Input",
+            "name": "headset-hf-input",
+            "description": "Handsfree",
+            "priority": 0,
+            "available": "yes",
+            "info": [
+              1,
+              "port.type",
+              "headset"
+            ],
+            "profiles": [ 3, 260, 261 ],
+            "devices": [ 0 ]
+          },
+          {
+            "index": 3,
+            "direction": "Output",
+            "name": "headset-hf-output",
+            "description": "Handsfree",
+            "priority": 0,
+            "available": "yes",
+            "info": [
+              1,
+              "port.type",
+              "headset"
+            ],
+            "profiles": [ 3, 260, 261 ],
+            "devices": [ 1 ]
+          }
+        ],
+        "Route": [
+          {
+            "index": 2,
+            "direction": "Input",
+            "name": "headset-hf-input",
+            "description": "Handsfree",
+            "priority": 0,
+            "available": "yes",
+            "info": [
+              1,
+              "port.type",
+              "headset"
+            ],
+            "profiles": [ 3, 260, 261 ],
+            "device": 0,
+            "props": {
+              "mute": false,
+              "channelVolumes": [ 1.000000 ],
+              "channelMap": [ "MONO" ]
+            },
+            "save": false,
+            "devices": [ 0 ],
+            "profile": 3
+          },
+          {
+            "index": 3,
+            "direction": "Output",
+            "name": "headset-hf-output",
+            "description": "Handsfree",
+            "priority": 0,
+            "available": "yes",
+            "info": [
+              1,
+              "port.type",
+              "headset"
+            ],
+            "profiles": [ 3, 260, 261 ],
+            "device": 1,
+            "props": {
+              "mute": false,
+              "channelVolumes": [ 0.125355 ],
+              "volumeStep": 0.062500,
+              "channelMap": [ "MONO" ]
+            },
+            "save": true,
+            "devices": [ 1 ],
+            "profile": 3
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "bluetoothAudioCodec",
+            "description": "Air codec",
+            "type": {
+              "default": 257,
+              "alt1": 257,
+              "alt2": 256
+            },
+            "labels": [
+              257,
+              "mSBC",
+              256,
+              "CVSD"
+            ]
+          },
+          {
+            "id": "bluetoothOffloadActive",
+            "description": "Bluetooth audio offload active",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "Props": [
+          {
+            "bluetoothAudioCodec": "msbc",
+            "bluetoothOffloadActive": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 84,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 65,
+      "change-mask": [ "state" ],
+      "n-input-ports": 0,
+      "n-output-ports": 2,
+      "state": "idle",
+      "error": null,
+      "props": {
+        "adapt.follower.spa-node": "",
+        "application.language": "en_US.UTF-8",
+        "application.name": "WEBRTC VoiceEngine",
+        "application.process.binary": "Discord",
+        "application.process.host": "kappa",
+        "application.process.id": 186541,
+        "application.process.machine-id": "00000000000000000000000000000000",
+        "application.process.user": "kappa",
+        "audio.adapt.follower": "",
+        "client.api": "pipewire-pulse",
+        "client.id": 80,
+        "clock.quantum-limit": 8192,
+        "factory.id": 6,
+        "factory.mode": "split",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Stream/Output/Audio",
+        "media.name": "playStream",
+        "node.autoconnect": true,
+        "node.latency": "360/48000",
+        "node.name": "WEBRTC VoiceEngine",
+        "node.rate": "1/48000",
+        "node.want-driver": true,
+        "object.id": 84,
+        "object.register": false,
+        "object.serial": 1092,
+        "pulse.attr.maxlength": 4194304,
+        "pulse.attr.minreq": 720,
+        "pulse.attr.prebuf": 1442,
+        "pulse.attr.tlength": 2160,
+        "pulse.server.type": "unix",
+        "stream.is-live": true,
+        "window.x11.display": ":0"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "S16LE",
+            "rate": 48000,
+            "channels": 1,
+            "position": [ "MONO" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 0.912673 ],
+            "channelMap": [ "MONO" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ 1.000000 ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "S16LE",
+            "rate": 48000,
+            "channels": 1,
+            "position": [ "MONO" ]
+          }
+        ],
+        "EnumPortConfig": [
+          {
+            "direction": "Output",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Output",
+            "mode": "dsp",
+            "monitor": true,
+            "control": false,
+            "format": {
+              "mediaType": "audio",
+              "mediaSubtype": "raw",
+              "format": "F32P",
+              "channels": 2,
+              "position": [ "FL", "FR" ]
+            }
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [ ]
+      }
+    }
+  },
+  {
+    "id": 97,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "params" ],
+      "props": {
+        "audio.channel": "FL",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 85,
+        "object.id": 97,
+        "object.path": "spotify:output_0",
+        "object.serial": 1119,
+        "port.alias": "spotify:output_FL",
+        "port.direction": "out",
+        "port.id": 0,
+        "port.name": "output_FL"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 124,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "params" ],
+      "props": {
+        "audio.channel": "FR",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 85,
+        "object.id": 124,
+        "object.path": "spotify:output_1",
+        "object.serial": 1120,
+        "port.alias": "spotify:output_FR",
+        "port.direction": "out",
+        "port.id": 1,
+        "port.name": "output_FR"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 81,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "params" ],
+      "props": {
+        "audio.channel": "FL",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 84,
+        "object.id": 81,
+        "object.path": "WEBRTC VoiceEngine:output_0",
+        "object.serial": 1121,
+        "port.alias": "WEBRTC VoiceEngine:output_FL",
+        "port.direction": "out",
+        "port.id": 0,
+        "port.name": "output_FL"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+          {
+            "direction": "Output",
+            "info": [
+              2,
+              "media.name",
+              "playStream",
+              "media.class",
+              "Stream/Output/Audio"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 133,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "params" ],
+      "props": {
+        "audio.channel": "FR",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 84,
+        "object.id": 133,
+        "object.path": "WEBRTC VoiceEngine:output_1",
+        "object.serial": 1122,
+        "port.alias": "WEBRTC VoiceEngine:output_FR",
+        "port.direction": "out",
+        "port.id": 1,
+        "port.name": "output_FR"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+          {
+            "direction": "Output",
+            "info": [
+              2,
+              "media.name",
+              "playStream",
+              "media.class",
+              "Stream/Output/Audio"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 98,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 65,
+      "change-mask": [ "input-ports", "output-ports", "state", "props", "params" ],
+      "n-input-ports": 0,
+      "n-output-ports": 0,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "api.bluez5.address": "00:1B:66:00:00:01",
+        "api.bluez5.codec": "msbc",
+        "api.bluez5.profile": "headset-head-unit",
+        "api.bluez5.transport": "",
+        "audio.adapt.follower": "",
+        "card.profile.device": 0,
+        "client.id": 35,
+        "clock.quantum-limit": 8192,
+        "device.api": "bluez5",
+        "device.id": 148,
+        "device.intended-roles": "Communication",
+        "device.routes": 1,
+        "factory.id": 8,
+        "factory.mode": "split",
+        "factory.name": "api.bluez5.sco.source",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Source",
+        "node.description": "JBL Tune Flex 2",
+        "node.driver": true,
+        "node.name": "bluez_input.00_1B_66_00_00_01.0",
+        "node.pause-on-idle": false,
+        "object.id": 98,
+        "object.serial": 1157,
+        "priority.driver": 2010,
+        "priority.session": 2010
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "S16LE",
+            "rate": 16000,
+            "channels": 1,
+            "position": [ "MONO" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 1.000000 ],
+            "channelMap": [ "MONO" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          }
+        ],
+        "Format": [ ],
+        "EnumPortConfig": [
+          {
+            "direction": "Output",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Output",
+            "mode": "dsp",
+            "monitor": false,
+            "control": false
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Output",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 129,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 65,
+      "max-output-ports": 0,
+      "change-mask": [ "input-ports", "output-ports", "state", "props", "params" ],
+      "n-input-ports": 0,
+      "n-output-ports": 0,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "api.bluez5.address": "00:1B:66:00:00:01",
+        "api.bluez5.codec": "msbc",
+        "api.bluez5.profile": "headset-head-unit",
+        "api.bluez5.transport": "",
+        "audio.adapt.follower": "",
+        "card.profile.device": 1,
+        "client.id": 35,
+        "clock.quantum-limit": 8192,
+        "device.api": "bluez5",
+        "device.id": 148,
+        "device.intended-roles": "Communication",
+        "device.routes": 1,
+        "factory.id": 8,
+        "factory.mode": "merge",
+        "factory.name": "api.bluez5.sco.sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "node.description": "JBL Tune Flex 2",
+        "node.driver": true,
+        "node.name": "bluez_output.00_1B_66_00_00_01.1",
+        "node.pause-on-idle": false,
+        "object.id": 129,
+        "object.serial": 1158,
+        "priority.driver": 1010,
+        "priority.session": 1010
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "S16LE",
+            "rate": 16000,
+            "channels": 1,
+            "position": [ "MONO" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 0.125355 ],
+            "channelMap": [ "MONO" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          },
+          {
+          }
+        ],
+        "Format": [ ],
+        "EnumPortConfig": [
+          {
+            "direction": "Input",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Input",
+            "mode": "dsp",
+            "monitor": false,
+            "control": false
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  }
+]
+[
+  {
+    "id": 36,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [ "r", "w", "x" ],
+    "props": {
+      "client.id": 34,
+      "factory.id": 6,
+      "metadata.name": "default",
+      "module.id": 5,
+      "object.serial": 36
+    },
+    "metadata": [
+      { "subject": 0, "key": "default.audio.sink", "type": "Spa:String:JSON", "value": { "name": "alsa_output.pci-0000_0c_00.4.iec958-stereo" } }
+    ]
+  },
+  {
+    "id": 98,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 65,
+      "change-mask": [ "params" ],
+      "n-input-ports": 0,
+      "n-output-ports": 0,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "api.bluez5.address": "00:1B:66:00:00:01",
+        "api.bluez5.codec": "msbc",
+        "api.bluez5.profile": "headset-head-unit",
+        "api.bluez5.transport": "",
+        "audio.adapt.follower": "",
+        "card.profile.device": 0,
+        "client.id": 35,
+        "clock.quantum-limit": 8192,
+        "device.api": "bluez5",
+        "device.id": 148,
+        "device.intended-roles": "Communication",
+        "device.routes": 1,
+        "factory.id": 8,
+        "factory.mode": "split",
+        "factory.name": "api.bluez5.sco.source",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Source",
+        "node.description": "JBL Tune Flex 2",
+        "node.driver": true,
+        "node.name": "bluez_input.00_1B_66_00_00_01.0",
+        "node.pause-on-idle": false,
+        "object.id": 98,
+        "object.serial": 1157,
+        "priority.driver": 2010,
+        "priority.session": 2010
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "S16LE",
+            "rate": 16000,
+            "channels": 1,
+            "position": [ "MONO" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 1.000000 ],
+            "channelMap": [ "MONO" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          }
+        ],
+        "Format": [ ],
+        "EnumPortConfig": [
+          {
+            "direction": "Output",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Output",
+            "mode": "dsp",
+            "monitor": false,
+            "control": false
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Output",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 129,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 65,
+      "max-output-ports": 0,
+      "change-mask": [ "params" ],
+      "n-input-ports": 0,
+      "n-output-ports": 0,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "api.bluez5.address": "00:1B:66:00:00:01",
+        "api.bluez5.codec": "msbc",
+        "api.bluez5.profile": "headset-head-unit",
+        "api.bluez5.transport": "",
+        "audio.adapt.follower": "",
+        "card.profile.device": 1,
+        "client.id": 35,
+        "clock.quantum-limit": 8192,
+        "device.api": "bluez5",
+        "device.id": 148,
+        "device.intended-roles": "Communication",
+        "device.routes": 1,
+        "factory.id": 8,
+        "factory.mode": "merge",
+        "factory.name": "api.bluez5.sco.sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "node.description": "JBL Tune Flex 2",
+        "node.driver": true,
+        "node.name": "bluez_output.00_1B_66_00_00_01.1",
+        "node.pause-on-idle": false,
+        "object.id": 129,
+        "object.serial": 1158,
+        "priority.driver": 1010,
+        "priority.session": 1010
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "S16LE",
+            "rate": 16000,
+            "channels": 1,
+            "position": [ "MONO" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 0.125355 ],
+            "channelMap": [ "MONO" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          },
+          {
+          }
+        ],
+        "Format": [ ],
+        "EnumPortConfig": [
+          {
+            "direction": "Input",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Input",
+            "mode": "dsp",
+            "monitor": false,
+            "control": false
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  }
+]
+[
+  {
+    "id": 129,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 65,
+      "max-output-ports": 0,
+      "change-mask": [ "input-ports", "output-ports", "params" ],
+      "n-input-ports": 1,
+      "n-output-ports": 1,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "api.bluez5.address": "00:1B:66:00:00:01",
+        "api.bluez5.codec": "msbc",
+        "api.bluez5.profile": "headset-head-unit",
+        "api.bluez5.transport": "",
+        "audio.adapt.follower": "",
+        "card.profile.device": 1,
+        "client.id": 35,
+        "clock.quantum-limit": 8192,
+        "device.api": "bluez5",
+        "device.id": 148,
+        "device.intended-roles": "Communication",
+        "device.routes": 1,
+        "factory.id": 8,
+        "factory.mode": "merge",
+        "factory.name": "api.bluez5.sco.sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "node.description": "JBL Tune Flex 2",
+        "node.driver": true,
+        "node.name": "bluez_output.00_1B_66_00_00_01.1",
+        "node.pause-on-idle": false,
+        "object.id": 129,
+        "object.serial": 1158,
+        "priority.driver": 1010,
+        "priority.session": 1010
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "S16LE",
+            "rate": 16000,
+            "channels": 1,
+            "position": [ "MONO" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 0.125355 ],
+            "channelMap": [ "MONO" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          },
+          {
+          }
+        ],
+        "Format": [ ],
+        "EnumPortConfig": [
+          {
+            "direction": "Input",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Input",
+            "mode": "dsp",
+            "monitor": true,
+            "control": false,
+            "format": {
+              "mediaType": "audio",
+              "mediaSubtype": "raw",
+              "format": "F32P",
+              "channels": 1,
+              "position": [ "MONO" ]
+            }
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 91,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "input",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "audio.channel": "MONO",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 129,
+        "object.id": 91,
+        "object.path": "bluez_output.00_1B_66_00_00_01.1:playback_0",
+        "object.serial": 38,
+        "port.alias": "JBL Tune Flex 2:playback_MONO",
+        "port.direction": "in",
+        "port.id": 0,
+        "port.name": "playback_MONO",
+        "port.physical": true,
+        "port.terminal": true
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 110,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "audio.channel": "MONO",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 129,
+        "object.id": 110,
+        "object.path": "bluez_output.00_1B_66_00_00_01.1:monitor_0",
+        "object.serial": 1160,
+        "port.alias": "JBL Tune Flex 2:monitor_MONO",
+        "port.direction": "out",
+        "port.id": 0,
+        "port.monitor": true,
+        "port.name": "monitor_MONO"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  }
+]
+[
+  {
+    "id": 98,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 65,
+      "change-mask": [ "output-ports", "params" ],
+      "n-input-ports": 0,
+      "n-output-ports": 1,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "api.bluez5.address": "00:1B:66:00:00:01",
+        "api.bluez5.codec": "msbc",
+        "api.bluez5.profile": "headset-head-unit",
+        "api.bluez5.transport": "",
+        "audio.adapt.follower": "",
+        "card.profile.device": 0,
+        "client.id": 35,
+        "clock.quantum-limit": 8192,
+        "device.api": "bluez5",
+        "device.id": 148,
+        "device.intended-roles": "Communication",
+        "device.routes": 1,
+        "factory.id": 8,
+        "factory.mode": "split",
+        "factory.name": "api.bluez5.sco.source",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Source",
+        "node.description": "JBL Tune Flex 2",
+        "node.driver": true,
+        "node.name": "bluez_input.00_1B_66_00_00_01.0",
+        "node.pause-on-idle": false,
+        "object.id": 98,
+        "object.serial": 1157,
+        "priority.driver": 2010,
+        "priority.session": 2010
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "S16LE",
+            "rate": 16000,
+            "channels": 1,
+            "position": [ "MONO" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 1.000000 ],
+            "channelMap": [ "MONO" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          }
+        ],
+        "Format": [ ],
+        "EnumPortConfig": [
+          {
+            "direction": "Output",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Output",
+            "mode": "dsp",
+            "monitor": true,
+            "control": false,
+            "format": {
+              "mediaType": "audio",
+              "mediaSubtype": "raw",
+              "format": "F32P",
+              "channels": 1,
+              "position": [ "MONO" ]
+            }
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Output",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 99,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "audio.channel": "MONO",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 98,
+        "object.id": 99,
+        "object.path": "bluez_input.00_1B_66_00_00_01.0:capture_0",
+        "object.serial": 40,
+        "port.alias": "JBL Tune Flex 2:capture_MONO",
+        "port.direction": "out",
+        "port.id": 0,
+        "port.name": "capture_MONO",
+        "port.physical": true,
+        "port.terminal": true
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  }
+]
+[
+  {
+    "id": 36,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [ "r", "w", "x" ],
+    "props": {
+      "client.id": 34,
+      "factory.id": 6,
+      "metadata.name": "default",
+      "module.id": 5,
+      "object.serial": 36
+    },
+    "metadata": [
+      { "subject": 0, "key": "default.audio.sink", "type": "Spa:String:JSON", "value": { "name": "bluez_output.00_1B_66_00_00_01.1" } }
+    ]
+  },
+  {
+    "id": 85,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 65,
+      "change-mask": [ "state" ],
+      "n-input-ports": 0,
+      "n-output-ports": 2,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "adapt.follower.spa-node": "",
+        "application.name": "Spotify",
+        "audio.adapt.follower": "",
+        "client.id": 88,
+        "clock.quantum-limit": 8192,
+        "factory.id": 7,
+        "factory.mode": "split",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.category": "Playback",
+        "media.class": "Stream/Output/Audio",
+        "media.name": "Spotify",
+        "media.role": "Music",
+        "media.type": "Audio",
+        "node.autoconnect": true,
+        "node.name": "spotify",
+        "node.rate": "1/44100",
+        "node.want-driver": true,
+        "object.id": 85,
+        "object.register": false,
+        "object.serial": 241,
+        "stream.is-live": true
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32LE",
+            "rate": 44100,
+            "channels": 2,
+            "position": [ "UNK", "UNK" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 0.092104, 0.092104 ],
+            "channelMap": [ "UNK", "UNK" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000, 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ 1.000000, 1.000000 ],
+            "params": [
+              "monitor.channel-volumes",
+              false,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false
+            ]
+          }
+        ],
+        "Format": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": "F32LE",
+            "rate": 44100,
+            "channels": 2,
+            "position": [ "UNK", "UNK" ]
+          }
+        ],
+        "EnumPortConfig": [
+          {
+            "direction": "Output",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Output",
+            "mode": "dsp",
+            "monitor": true,
+            "control": false,
+            "format": {
+              "mediaType": "audio",
+              "mediaSubtype": "raw",
+              "format": "F32P",
+              "channels": 2,
+              "position": [ "FL", "FR" ]
+            }
+          }
+        ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [ ]
+      }
+    }
+  }
+]

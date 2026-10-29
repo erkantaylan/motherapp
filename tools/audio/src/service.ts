@@ -21,8 +21,9 @@ import {
   masterState,
   viewToState,
 } from "./pipewire.ts";
-import type { AppGroup, AudioView, Device, MasterKind } from "./pipewire.ts";
+import type { AppGroup, AudioView, Device, MasterKind, RouteOption } from "./pipewire.ts";
 import type { Runner } from "./runner.ts";
+import { selectRoute } from "./select.ts";
 
 export interface ServiceOptions {
   tool: Tool;
@@ -31,6 +32,8 @@ export interface ServiceOptions {
   ops?: Omit<OpsOptions, "runner" | "ownPid">;
   /** How long a finished pw-play's pid stays hidden (its node can outlive the process briefly). */
   ownPidGraceMs?: number;
+  /** How long selecting a route waits for its node after a profile switch. */
+  switchTimeoutMs?: number;
 }
 
 export const INITIAL_STATE: JsonObject = {
@@ -51,6 +54,12 @@ function argId(args: JsonObject): number {
   return n;
 }
 
+/** A node id, or the key of a route with no node yet ("route-<card>-<index>"). */
+function argTarget(args: JsonObject): number | string {
+  if (typeof args.id === "string" && /^route-\d+-\d+$/.test(args.id)) return args.id;
+  return argId(args);
+}
+
 function argKind(args: JsonObject): MasterKind {
   const k = args.kind ?? "output";
   if (k !== "output" && k !== "input") throw invalid('kind must be "output" or "input"');
@@ -66,7 +75,7 @@ function argApp(args: JsonObject): string {
 
 export class AudioService {
   readonly model = new PwModel();
-  view: AudioView = { sinks: [], sources: [], apps: [] };
+  view: AudioView = { sinks: [], sources: [], sinkRoutes: [], sourceRoutes: [], cards: [], apps: [] };
   readonly ops: AudioOps;
   readonly monitor: PwMonitor;
   private tool: Tool;
@@ -74,9 +83,13 @@ export class AudioService {
   private writes = new Coalescer();
   private ownPids = new Map<number, unknown>();
   private graceMs: number;
+  private switchTimeoutMs: number | undefined;
+  /** Checked after every graph change; each returns true once it is done. */
+  private viewWaiters = new Set<(view: AudioView) => boolean>();
 
   constructor(opts: ServiceOptions) {
     this.tool = opts.tool;
+    this.switchTimeoutMs = opts.switchTimeoutMs;
     this.timers = opts.timers ?? realTimers;
     this.graceMs = opts.ownPidGraceMs ?? 5000;
     this.ops = new AudioOps({ ...opts.ops, runner: opts.runner, ownPid: (pid, running) => this.trackOwnPid(pid, running) });
@@ -138,6 +151,30 @@ export class AudioService {
     }
     this.refreshMaster();
     if (full && this.tool.get("status") !== undefined) this.tool.delete("status");
+    for (const w of [...this.viewWaiters]) if (w(this.view)) this.viewWaiters.delete(w);
+  }
+
+  /** Resolves with the first non-undefined pick(view), now or after a later graph change. */
+  waitView<T>(pick: (view: AudioView) => T | undefined, timeoutMs: number): Promise<T | undefined> {
+    return new Promise((resolve) => {
+      const now = pick(this.view);
+      if (now !== undefined) {
+        resolve(now);
+        return;
+      }
+      const timer = this.timers.setTimeout(() => {
+        this.viewWaiters.delete(check);
+        resolve(undefined);
+      }, timeoutMs);
+      const check = (view: AudioView) => {
+        const v = pick(view);
+        if (v === undefined) return false;
+        this.timers.clearTimeout(timer);
+        resolve(v);
+        return true;
+      };
+      this.viewWaiters.add(check);
+    });
   }
 
   /**
@@ -184,11 +221,29 @@ export class AudioService {
     return d;
   }
 
+  route(key: string): RouteOption {
+    const r = [...this.view.sinkRoutes, ...this.view.sourceRoutes].find((x) => x.key === key);
+    if (r) return r;
+    const title = (this.tool.get(`sinks.${key}.title`) ?? this.tool.get(`sources.${key}.title`)) as string | undefined;
+    throw new Error(`${title ?? "That output"} can't be selected any more (it is active already, or gone)`);
+  }
+
+  /** A row that is a route with no node can't play or record: say what to do instead. */
+  private nodeFor(id: number | string, kind: "sink" | "source"): Device {
+    if (typeof id === "number") return this.device(id, kind);
+    const r = this.route(id);
+    throw new Error(`${r.title} isn't active: select it first (that switches the card's profile)`);
+  }
+
   /** The current default output or input, from the model (so writes hit the node the page shows). */
   defaultOf(kind: MasterKind): Device {
     const d = defaultDevice(this.view, kind);
     if (!d) throw new Error(`There is no default ${kind} right now`);
     return d;
+  }
+
+  private cardName(id: number): string {
+    return this.view.cards.find((c) => c.id === id)?.description ?? `card ${id}`;
   }
 
   app(key: string): AppGroup {
@@ -205,7 +260,24 @@ export class AudioService {
   private registerActions(): void {
     const t = this.tool;
     t.action("setDefault", async (args) => {
-      const dev = this.device(argId(args));
+      const target = argTarget(args);
+      if (typeof target === "string") {
+        const opt = this.route(target);
+        const how = opt.profile !== undefined ? `switching ${this.cardName(opt.card)} to profile ${opt.profile}` : `switching the port`;
+        t.log.info(`selecting ${opt.title}: ${how}`, { card: opt.card, route: opt.routeName, profile: opt.profile ?? null });
+        const started = this.timers.now();
+        // One switch per card at a time; a second click while one runs replaces any queued one.
+        await this.writes.run(`select:${opt.card}`, async () => {
+          const deps = { ops: this.ops, waitView: <T>(pick: (v: AudioView) => T | undefined, ms: number) => this.waitView(pick, ms) };
+          const node = await selectRoute(opt, this.switchTimeoutMs === undefined ? deps : { ...deps, timeoutMs: this.switchTimeoutMs });
+          t.log.info(`default ${opt.kind === "sink" ? "output" : "input"}: ${node.title} (${opt.title}, ${this.timers.now() - started} ms)`, { id: node.id, name: node.name });
+          if (t.get(opt.kind === "sink" ? `sinks.${node.id}` : `sources.${node.id}`) !== undefined) {
+            t.set(opt.kind === "sink" ? "defaultSink" : "defaultSource", String(node.id));
+          }
+        });
+        return;
+      }
+      const dev = this.device(target);
       await this.ops.setDefault(dev);
       t.log.info(`default ${dev.kind === "sink" ? "output" : "input"}: ${dev.title}`, { id: dev.id, name: dev.name });
       // Show it now; the metadata change from pw-dump confirms it (or corrects it).
@@ -213,13 +285,13 @@ export class AudioService {
     });
 
     t.action("testOutput", async (args) => {
-      const dev = this.device(argId(args), "sink");
+      const dev = this.nodeFor(argTarget(args), "sink");
       t.log.info(`playing test sound on ${dev.title}`, { id: dev.id });
       await this.ops.testOutput(dev);
     });
 
     t.action("recordTest", async (args, ctx) => {
-      const dev = this.device(argId(args), "source");
+      const dev = this.nodeFor(argTarget(args), "source");
       t.log.info(`record test on ${dev.title}`, { id: dev.id });
       await this.ops.recordTest(dev, (text, fraction) => ctx.progress(text, fraction));
     });

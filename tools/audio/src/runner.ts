@@ -81,6 +81,7 @@ const HINTS: Record<string, string> = {
   "pw-dump": "is PipeWire installed?",
   "pw-play": "is pipewire-bin installed?",
   "pw-record": "is pipewire-bin installed?",
+  "pw-cli": "is pipewire-bin installed?",
 };
 
 /** Message for a spawn error (mostly ENOENT: the command isn't installed). */

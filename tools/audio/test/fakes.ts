@@ -11,6 +11,21 @@ export const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 
 export const dumpText = () => fs.readFileSync(path.join(fixtures, "pw-dump.json"), "utf8");
 /** A SteelSeries Arctis Pro Wireless alone: one USB card with Chat and Game PCMs (issue #5). */
 export const arctisText = () => fs.readFileSync(path.join(fixtures, "pw-dump-arctis.json"), "utf8");
+/**
+ * Captured on the machine (2026-10-30, PipeWire 1.0.5 / WirePlumber 0.4.17), machine-id and the
+ * Bluetooth address scrubbed: Starship/Matisse HDA (S/PDIF out active, Line Out not), GA102
+ * HDMI (2 of 4 ports available), HyperX QuadCast, C920 webcam, JBL Tune Flex 2 in A2DP.
+ */
+export const realText = () => fs.readFileSync(path.join(fixtures, "pw-dump-real.json"), "utf8");
+/** `pw-dump --monitor` batches right after `wpctl set-profile 148 261` on that graph (JBL → HFP). */
+export function realToHfpBatches(): unknown[][] {
+  return splitBatches(fs.readFileSync(path.join(fixtures, "pw-dump-real-to-hfp.txt"), "utf8"));
+}
+const splitBatches = (text: string) =>
+  text
+    .trim()
+    .split(/\n(?=\[)/)
+    .map((s) => JSON.parse(s) as unknown[]);
 export const monitorText = () => fs.readFileSync(path.join(fixtures, "pw-dump-monitor.txt"), "utf8");
 /** The monitor fixture as parsed batches: [0] is the initial full dump. */
 export function monitorBatches(): unknown[][] {

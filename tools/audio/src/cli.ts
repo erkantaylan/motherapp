@@ -1,6 +1,7 @@
 // Plain subcommands for terminals, keybindings and scripts. They work without the core: each
 // one reads the graph with a one-shot `pw-dump` and acts with the same commands serve mode uses.
 import type { Writable } from "node:stream";
+import { JsonStreamParser } from "./jsonStream.ts";
 import { AudioOps } from "./ops.ts";
 import type { OpsOptions } from "./ops.ts";
 import {
@@ -14,11 +15,13 @@ import {
   deviceVolume,
   findApp,
   findDevice,
+  findTarget,
   viewToState,
 } from "./pipewire.ts";
-import type { AudioView, Device, MasterKind } from "./pipewire.ts";
+import type { AudioView, Device, MasterKind, RouteOption } from "./pipewire.ts";
 import { runCommand } from "./runner.ts";
 import type { Runner } from "./runner.ts";
+import { selectRoute } from "./select.ts";
 
 export const USAGE = `usage: audioctl <command> [args]
 
@@ -26,7 +29,8 @@ export const USAGE = `usage: audioctl <command> [args]
   volume [--input] [N|N%|+N|-N]   the default output's (--input: mic's) volume, 0-${MAX_MASTER_VOLUME};
                                   +N stops at 100 unless already above. No value: print it
   mute [--input] [on|off|toggle]  mute the default output (--input: mic). No value: print on|off
-  set-default <id|name>           make an output or input the default
+  set-default <id|name>           make an output or input the default. For one marked
+                                  "(switches profile)" this switches the card first
   app-volume <app> <percent>      set an app's volume, 0-${MAX_APP_VOLUME} (same scale as wpctl);
                                   +N / -N change it relatively
   app-mute <app> on|off|toggle    mute or unmute all of an app's streams
@@ -42,20 +46,27 @@ export interface CliIO {
   stdout: Writable;
   stderr: Writable;
   ops?: Omit<OpsOptions, "runner">;
+  /** set-default on a route: how often to re-read pw-dump while waiting, and for how long. */
+  pollMs?: number;
+  switchTimeoutMs?: number;
 }
 
 export class UsageError extends Error {}
 
 export async function readView(runner: Runner): Promise<AudioView> {
   const res = await runCommand(runner, "pw-dump", [], { label: "pw-dump", timeoutMs: 10_000, env: { NO_COLOR: "1" } });
-  let dump: unknown;
-  try {
-    dump = JSON.parse(res.stdout.toString("utf8"));
-  } catch (e) {
-    throw new Error(`cannot parse pw-dump output: ${(e as Error).message}`);
-  }
+  // A one-shot pw-dump taken while the graph changes (a card switching profile) prints more
+  // than one array: the dump, then the updates it saw. Apply them all, in order.
+  const values = new JsonStreamParser().push(res.stdout.toString("utf8"));
+  if (values.length === 0) throw new Error("cannot parse pw-dump output: no JSON in it");
   const model = new PwModel();
-  model.apply(dump);
+  for (const v of values) {
+    try {
+      model.apply(JSON.parse(v));
+    } catch (e) {
+      throw new Error(`cannot parse pw-dump output: ${(e as Error).message}`);
+    }
+  }
   return buildView(model.objects.values());
 }
 
@@ -106,14 +117,31 @@ function need(args: string[], n: number, what: string): void {
 
 const line = (out: Writable, s = "") => out.write(s + "\n");
 
-function printDevices(out: Writable, title: string, list: Device[], defaultName: string | undefined): void {
+function printDevices(out: Writable, title: string, list: Device[], routes: RouteOption[], defaultName: string | undefined): void {
   line(out, title);
-  if (list.length === 0) line(out, "    (none)");
+  if (list.length === 0 && routes.length === 0) line(out, "    (none)");
+  const sub = (s: string, t: string) => (s && s !== t ? `  (${s})` : "");
   for (const d of list) {
     const mark = d.name === defaultName ? "*" : " ";
-    const sub = d.subtitle && d.subtitle !== d.title ? `  (${d.subtitle})` : "";
-    line(out, `  ${mark} ${String(d.id).padStart(4)}  ${d.title}${sub}`);
+    line(out, `  ${mark} ${String(d.id).padStart(4)}  ${d.title}${sub(d.subtitle, d.title)}`);
   }
+  // Routes with no node: selecting them switches the card's profile (or port).
+  for (const r of routes) {
+    const note = r.profile !== undefined ? "switches profile" : "switches port";
+    line(out, `    ${r.key}  ${r.title}${sub(r.subtitle, r.title)}  [${note}]`);
+  }
+}
+
+/** The CLI has no monitor: re-read pw-dump until the switched card's node shows up. */
+function pollView(runner: Runner, pollMs: number) {
+  return async <T>(pick: (v: AudioView) => T | undefined, timeoutMs: number): Promise<T | undefined> => {
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      const v = pick(await readView(runner));
+      if (v !== undefined || Date.now() >= end) return v;
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+  };
 }
 
 /** Runs one subcommand; returns the exit code. */
@@ -128,8 +156,8 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
           line(io.stdout, JSON.stringify(viewToState(view), null, 2));
           return 0;
         }
-        printDevices(io.stdout, "Outputs", view.sinks, view.defaultSinkName);
-        printDevices(io.stdout, "Inputs", view.sources, view.defaultSourceName);
+        printDevices(io.stdout, "Outputs", view.sinks, view.sinkRoutes, view.defaultSinkName);
+        printDevices(io.stdout, "Inputs", view.sources, view.sourceRoutes, view.defaultSourceName);
         line(io.stdout, "Apps");
         if (view.apps.length === 0) line(io.stdout, "    (none playing sound)");
         const w = Math.max(0, ...view.apps.map((a) => a.name.length));
@@ -165,7 +193,14 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       }
       case "set-default": {
         need(args, 1, "device id or name");
-        const dev = findDevice(await readView(io.runner), args[0]!);
+        const target = findTarget(await readView(io.runner), args[0]!);
+        if ("route" in target) {
+          const deps = { ops, waitView: pollView(io.runner, io.pollMs ?? 200) };
+          const node = await selectRoute(target.route, io.switchTimeoutMs === undefined ? deps : { ...deps, timeoutMs: io.switchTimeoutMs });
+          line(io.stdout, `default ${node.kind === "sink" ? "output" : "input"}: ${target.route.title} (now ${node.id}, ${node.title})`);
+          return 0;
+        }
+        const dev = target.device;
         await ops.setDefault(dev);
         line(io.stdout, `default ${dev.kind === "sink" ? "output" : "input"}: ${dev.title}`);
         return 0;
