@@ -3,6 +3,7 @@
 import { RpcError } from "@motherapp/tool-sdk";
 import type { JsonObject, JsonValue, Tool } from "@motherapp/tool-sdk";
 import { Coalescer } from "./coalescer.ts";
+import { desktopNameLookup } from "./desktop.ts";
 import { diffState } from "./diff.ts";
 import { PwMonitor, realTimers } from "./monitor.ts";
 import type { Timers } from "./monitor.ts";
@@ -34,6 +35,8 @@ export interface ServiceOptions {
   ownPidGraceMs?: number;
   /** How long selecting a route waits for its node after a profile switch. */
   switchTimeoutMs?: number;
+  /** Desktop entry Name= for a binary (default: read from the XDG dirs on first use). */
+  desktopName?: (binary: string) => string | undefined;
 }
 
 export const INITIAL_STATE: JsonObject = {
@@ -84,12 +87,14 @@ export class AudioService {
   private ownPids = new Map<number, unknown>();
   private graceMs: number;
   private switchTimeoutMs: number | undefined;
+  private desktopName: (binary: string) => string | undefined;
   /** Checked after every graph change; each returns true once it is done. */
   private viewWaiters = new Set<(view: AudioView) => boolean>();
 
   constructor(opts: ServiceOptions) {
     this.tool = opts.tool;
     this.switchTimeoutMs = opts.switchTimeoutMs;
+    this.desktopName = opts.desktopName ?? desktopNameLookup();
     this.timers = opts.timers ?? realTimers;
     this.graceMs = opts.ownPidGraceMs ?? 5000;
     this.ops = new AudioOps({ ...opts.ops, runner: opts.runner, ownPid: (pid, running) => this.trackOwnPid(pid, running) });
@@ -137,7 +142,7 @@ export class AudioService {
   }
 
   private refresh(full = false): void {
-    this.view = buildView(this.model.objects.values(), { isOwnPid: (pid) => this.ownPids.has(pid) });
+    this.view = buildView(this.model.objects.values(), { isOwnPid: (pid) => this.ownPids.has(pid), desktopName: this.desktopName });
     const next = viewToState(this.view);
     for (const key of DERIVED_KEYS) {
       if (full && this.tool.isStale(key)) {

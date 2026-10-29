@@ -145,11 +145,12 @@ test("app grouping falls back to the binary, then the node name; loudest stream,
     stream(3, { "node.name": "alsa_playback.speaker-test" }),
     stream(4, {}),
   ]);
-  assert.deepEqual(view.apps.map((a) => a.name), ["alsa_playback.speaker-test", "aplay", "Stream 4"]);
+  // no application.name: the binary, capitalised
+  assert.deepEqual(view.apps.map((a) => a.name), ["alsa_playback.speaker-test", "Aplay", "Stream 4"]);
   const s = viewToState(view).apps as Record<string, { volume: number; muted: boolean }>;
   // stream 2: average of 0.729 and 0.343 = 0.536 -> cbrt = 0.8122 -> 81
-  assert.equal(s.aplay!.volume, 81);
-  assert.equal(s.aplay!.muted, false);
+  assert.equal(s.Aplay!.volume, 81);
+  assert.equal(s.Aplay!.muted, false);
   // keys never contain "." (state paths)
   assert.equal(escapeKey("alsa_playback.speaker-test"), "alsa_5fplayback_2espeaker-test");
   assert.ok(Object.keys(s).every((k) => !k.includes(".")));

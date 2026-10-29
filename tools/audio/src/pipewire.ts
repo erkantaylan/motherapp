@@ -29,6 +29,7 @@ export interface PwObject {
 export const NODE = "PipeWire:Interface:Node";
 export const METADATA = "PipeWire:Interface:Metadata";
 export const DEVICE = "PipeWire:Interface:Device";
+export const CLIENT = "PipeWire:Interface:Client";
 
 const isDict = (v: unknown): v is Dict => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -222,6 +223,27 @@ export interface AudioView {
 export interface ViewOptions {
   /** Streams from these process ids are hidden (the tool's own test sounds). */
   isOwnPid?: (pid: number) => boolean;
+  /** The Name= of the desktop entry for a process binary, if one is known (see desktop.ts). */
+  desktopName?: (binary: string) => string | undefined;
+}
+
+/**
+ * application.name values that name a library, not the app: Discord's voice streams are
+ * "WEBRTC VoiceEngine" (GNOME shows that too), ALSA and Chromium-based apps send generic names.
+ */
+const GENERIC_APP_NAME = /^(WEBRTC VoiceEngine|ALSA plug-in \[.*\]|PipeWire ALSA \[.*\]|Chromium( input)?)$/i;
+
+export const isGenericAppName = (name: string | undefined): boolean => !name || GENERIC_APP_NAME.test(name.trim());
+
+/**
+ * An app row's name: the first application.name that isn't generic; else the desktop entry's
+ * Name= for the binary; else the binary, capitalised ("spotify" → "Spotify").
+ */
+export function appDisplayName(names: readonly string[], binary: string | undefined, desktopName?: (binary: string) => string | undefined): string | undefined {
+  const good = names.find((n) => !isGenericAppName(n));
+  if (good) return good;
+  if (binary) return desktopName?.(binary) ?? binary.charAt(0).toUpperCase() + binary.slice(1);
+  return names[0];
 }
 
 /** media.role values of short-lived streams that would make rows flicker (event sounds). */
@@ -413,7 +435,11 @@ export function routeNode(view: AudioView, opt: RouteOption): Device | undefined
 export function buildView(objects: Iterable<PwObject>, opts: ViewOptions = {}): AudioView {
   const view: AudioView = { sinks: [], sources: [], sinkRoutes: [], sourceRoutes: [], cards: [], apps: [] };
   const apps = new Map<string, AppGroup>();
-  for (const o of objects) {
+  const groups = new Map<string, { names: string[]; binary?: string; nodeName?: string; firstId?: number; streams: AppStream[] }>();
+  const all = [...objects];
+  const clients = new Map<number, Dict>();
+  for (const o of all) if (o.type === CLIENT && isDict(o.info) && isDict(o.info.props)) clients.set(o.id, o.info.props);
+  for (const o of all) {
     if (o.type === DEVICE) {
       const c = readCard(o);
       if (!c) continue;
@@ -452,24 +478,41 @@ export function buildView(objects: Iterable<PwObject>, opts: ViewOptions = {}): 
     } else if (cls === "Stream/Output/Audio") {
       const role = str(p["media.role"]);
       if (role && SKIPPED_ROLES.has(role.toLowerCase())) continue;
-      const pid = Number(p["application.process.id"]);
+      // A stream node may lack the application.* props its client has (Spotify's does).
+      const client = clients.get(Number(p["client.id"]));
+      const prop = (k: string) => str(p[k]) ?? str(client?.[k]);
+      const pid = Number(p["application.process.id"] ?? client?.["application.process.id"]);
       if (Number.isInteger(pid) && opts.isOwnPid?.(pid)) continue;
-      const binary = str(p["application.process.binary"]);
-      const name = str(p["application.name"]) ?? binary ?? str(p["node.name"]) ?? `Stream ${o.id}`;
-      const key = escapeKey(name);
-      let app = apps.get(key);
-      if (!app) {
-        app = { key, name, streams: [] };
-        if (binary) app.binary = binary;
-        apps.set(key, app);
+      const binary = prop("application.process.binary");
+      const appName = prop("application.name");
+      // Streams group by process binary when there is one, so Discord's "WEBRTC VoiceEngine"
+      // and any other stream it plays make one row; otherwise by name, as before.
+      const group = binary ? `bin:${binary.toLowerCase()}` : `name:${appName ?? str(p["node.name"]) ?? `Stream ${o.id}`}`;
+      let g = groups.get(group);
+      if (!g) {
+        g = { names: [], streams: [] };
+        if (binary) g.binary = binary;
+        const fallback = str(p["node.name"]);
+        if (fallback) g.nodeName = fallback;
+        g.firstId = o.id;
+        groups.set(group, g);
       }
+      if (appName) g.names.push(appName);
       const s: AppStream = { id: o.id, muted: nodeMuted(o) };
       const lin = nodeLinearVolume(o);
       if (lin !== undefined) s.linear = lin;
       const media = str(p["media.name"]);
       if (media) s.mediaName = media;
-      app.streams.push(s);
+      g.streams.push(s);
     }
+  }
+  for (const g of groups.values()) {
+    const name = appDisplayName(g.names, g.binary, opts.desktopName) ?? g.nodeName ?? `Stream ${g.firstId}`;
+    let key = escapeKey(name);
+    if (apps.has(key)) key = `${key}-${escapeKey(g.binary ?? String(g.firstId))}`;
+    const app: AppGroup = { key, name, streams: g.streams };
+    if (g.binary) app.binary = g.binary;
+    apps.set(key, app);
   }
   const byTitle = (a: Device, b: Device) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()) || a.id - b.id;
   view.sinks.sort(byTitle);

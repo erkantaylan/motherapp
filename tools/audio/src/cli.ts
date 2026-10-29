@@ -1,6 +1,7 @@
 // Plain subcommands for terminals, keybindings and scripts. They work without the core: each
 // one reads the graph with a one-shot `pw-dump` and acts with the same commands serve mode uses.
 import type { Writable } from "node:stream";
+import { desktopNameLookup } from "./desktop.ts";
 import { JsonStreamParser } from "./jsonStream.ts";
 import { AudioOps } from "./ops.ts";
 import type { OpsOptions } from "./ops.ts";
@@ -49,11 +50,15 @@ export interface CliIO {
   /** set-default on a route: how often to re-read pw-dump while waiting, and for how long. */
   pollMs?: number;
   switchTimeoutMs?: number;
+  /** Desktop entry Name= for a binary (default: read from the XDG dirs when first needed). */
+  desktopName?: (binary: string) => string | undefined;
 }
 
 export class UsageError extends Error {}
 
-export async function readView(runner: Runner): Promise<AudioView> {
+let defaultDesktopName: ((binary: string) => string | undefined) | undefined;
+
+export async function readView(runner: Runner, desktopName?: (binary: string) => string | undefined): Promise<AudioView> {
   const res = await runCommand(runner, "pw-dump", [], { label: "pw-dump", timeoutMs: 10_000, env: { NO_COLOR: "1" } });
   // A one-shot pw-dump taken while the graph changes (a card switching profile) prints more
   // than one array: the dump, then the updates it saw. Apply them all, in order.
@@ -67,7 +72,7 @@ export async function readView(runner: Runner): Promise<AudioView> {
       throw new Error(`cannot parse pw-dump output: ${(e as Error).message}`);
     }
   }
-  return buildView(model.objects.values());
+  return buildView(model.objects.values(), { desktopName: desktopName ?? (defaultDesktopName ??= desktopNameLookup()) });
 }
 
 /**
@@ -133,11 +138,11 @@ function printDevices(out: Writable, title: string, list: Device[], routes: Rout
 }
 
 /** The CLI has no monitor: re-read pw-dump until the switched card's node shows up. */
-function pollView(runner: Runner, pollMs: number) {
+function pollView(runner: Runner, pollMs: number, desktopName?: (binary: string) => string | undefined) {
   return async <T>(pick: (v: AudioView) => T | undefined, timeoutMs: number): Promise<T | undefined> => {
     const end = Date.now() + timeoutMs;
     for (;;) {
-      const v = pick(await readView(runner));
+      const v = pick(await readView(runner, desktopName));
       if (v !== undefined || Date.now() >= end) return v;
       await new Promise((r) => setTimeout(r, pollMs));
     }
@@ -151,7 +156,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
   try {
     switch (cmd) {
       case "list": {
-        const view = await readView(io.runner);
+        const view = await readView(io.runner, io.desktopName);
         if (args.includes("--json")) {
           line(io.stdout, JSON.stringify(viewToState(view), null, 2));
           return 0;
@@ -171,7 +176,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       case "volume": {
         const { kind, value } = parseMasterArgs(cmd, args);
         if (value !== undefined) parseMasterPercent(value, 0); // usage errors before touching PipeWire
-        const dev = masterDevice(await readView(io.runner), kind);
+        const dev = masterDevice(await readView(io.runner, io.desktopName), kind);
         const current = deviceVolume(dev);
         if (value === undefined) {
           line(io.stdout, String(current));
@@ -183,7 +188,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       case "mute": {
         const { kind, value } = parseMasterArgs(cmd, args);
         if (value !== undefined && !["on", "off", "toggle"].includes(value)) throw new UsageError(`mute takes on, off or toggle (got "${value}")`);
-        const dev = masterDevice(await readView(io.runner), kind);
+        const dev = masterDevice(await readView(io.runner, io.desktopName), kind);
         if (value === undefined) {
           line(io.stdout, dev.muted ? "on" : "off");
           return 0;
@@ -193,9 +198,9 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       }
       case "set-default": {
         need(args, 1, "device id or name");
-        const target = findTarget(await readView(io.runner), args[0]!);
+        const target = findTarget(await readView(io.runner, io.desktopName), args[0]!);
         if ("route" in target) {
-          const deps = { ops, waitView: pollView(io.runner, io.pollMs ?? 200) };
+          const deps = { ops, waitView: pollView(io.runner, io.pollMs ?? 200, io.desktopName) };
           const node = await selectRoute(target.route, io.switchTimeoutMs === undefined ? deps : { ...deps, timeoutMs: io.switchTimeoutMs });
           line(io.stdout, `default ${node.kind === "sink" ? "output" : "input"}: ${target.route.title} (now ${node.id}, ${node.title})`);
           return 0;
@@ -208,7 +213,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       case "app-volume": {
         need(args, 2, "app and volume");
         parsePercent(args[1]!, 0); // usage errors before touching PipeWire
-        const app = findApp(await readView(io.runner), args[0]!);
+        const app = findApp(await readView(io.runner, io.desktopName), args[0]!);
         const v = parsePercent(args[1]!, appVolume(app));
         await ops.setStreamsVolume(app.streams, v);
         line(io.stdout, `${app.name}: ${v}%`);
@@ -218,7 +223,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         need(args, 2, "app and on|off|toggle");
         const mode = args[1]!;
         if (!["on", "off", "toggle"].includes(mode)) throw new UsageError(`app-mute takes on, off or toggle (got "${mode}")`);
-        const app = findApp(await readView(io.runner), args[0]!);
+        const app = findApp(await readView(io.runner, io.desktopName), args[0]!);
         const muted = mode === "toggle" ? !appMuted(app) : mode === "on";
         await ops.setStreamsMute(app.streams, muted);
         line(io.stdout, `${app.name}: ${muted ? "muted" : "unmuted"}`);
@@ -226,14 +231,14 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       }
       case "test-output": {
         need(args, 1, "output id or name");
-        const dev = findDevice(await readView(io.runner), args[0]!, "sink");
+        const dev = findDevice(await readView(io.runner, io.desktopName), args[0]!, "sink");
         line(io.stdout, `playing left/right test sound on ${dev.title}`);
         await ops.testOutput(dev);
         return 0;
       }
       case "record-test": {
         need(args, 1, "input id or name");
-        const dev = findDevice(await readView(io.runner), args[0]!, "source");
+        const dev = findDevice(await readView(io.runner, io.desktopName), args[0]!, "source");
         await ops.recordTest(dev, (text) => line(io.stdout, text));
         return 0;
       }
