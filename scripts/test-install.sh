@@ -20,6 +20,9 @@ REAL_NODE="$(command -v node)" || { echo "Bail out! needs node on PATH"; exit 1;
 V="$(<"$REPO/VERSION")"
 
 PASSED=0 FAILED=0 CASE="" C="" OUT="" CODE=0
+# The installer's prompts (install and --doctor) read stdin: no answer unless a case gives one
+# (run_installer <<<"y"), whatever stdin these tests were started with.
+exec </dev/null
 
 # git for the test's own repos: no system or user config, a fixed identity.
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
@@ -70,7 +73,8 @@ new_case() {
   cp "$REPO/install.sh" "$REPO/VERSION" "$REPO/.gitignore" "$R/"
   cp "$REPO/scripts/build-info.sh" "$REPO/scripts/motherapp.sh" "$R/scripts/"
   cp "$REPO/packaging/motherapp.service" "$REPO/packaging/motherapp-cpu-access.service" "$REPO/packaging/motherapp-cpu-access.sh" \
-    "$REPO/packaging/motherapp-cpu-voltage.sh" "$REPO/packaging/motherapp-cpu-voltage.sudoers" "$R/packaging/"
+    "$REPO/packaging/motherapp-cpu-voltage.sh" "$REPO/packaging/motherapp-cpu-voltage.sudoers" \
+    "$REPO/packaging/motherapp-energy.rules" "$REPO/packaging/motherapp-energy-access.sh" "$R/packaging/"
   local t
   for t in "$REPO"/tools/*/manifest.json; do   # the real manifests (audio declares "bin")
     t="${t%/manifest.json}"
@@ -204,6 +208,7 @@ case $url in
   http://127.0.0.1:*) [[ -f $FAKE/http_up ]] || exit 7 ;;
 esac'
   stub journalctl 'echo "journalctl $*" >>"$FAKE/calls"; echo "fake journal line"'
+  stub udevadm 'echo "udevadm $*" >>"$FAKE/calls"; exit 0'
 }
 
 # run_installer [args...]  (stdin is passed through; default </dev/null)
@@ -289,18 +294,18 @@ check "re-run: exit 0" exit_is 0
 check "re-run: unit unchanged" out_has '^OK +unit +.* unchanged'
 check "re-run: restart instead of enable" calls_has "systemctl --user restart motherapp.service"
 check "re-run: same unit" cmp -s "$(UNIT)" "$C/unit.first"
-run_installer --check
-check "--check after install: exit 0" exit_is 0
-check "--check: unit up to date" out_has '^OK +unit +.*up to date'
-check "--check: service active" out_has '^OK +service +active \(enabled\)'
-check "--check: wrapper up to date" out_has '^OK +audioctl +.*/\.local/bin/audioctl up to date'
-check "--check: motherapp wrapper up to date" out_has '^OK +motherapp +.*/\.local/bin/motherapp up to date'
+run_installer --doctor
+check "--doctor after install: exit 0" exit_is 0
+check "--doctor: unit up to date" out_has '^OK +unit +.*up to date'
+check "--doctor: service active" out_has '^OK +service +active \(enabled\)'
+check "--doctor: wrapper up to date" out_has '^OK +audioctl +.*/\.local/bin/audioctl up to date'
+check "--doctor: motherapp wrapper up to date" out_has '^OK +motherapp +.*/\.local/bin/motherapp up to date'
 
 new_case node22
 NODE_PATH_DIR="$C/node22/bin"
 make_node "$NODE_PATH_DIR" v22.23.2
-run_installer --check
-check "--check: exit 1" exit_is 1
+run_installer --doctor
+check "--doctor: exit 1" exit_is 1
 check "node MISSING with found version" out_has '^MISSING +node +need Node >= 24; found v22\.23\.2 at '"$NODE_PATH_DIR/node"
 check "origin reported" out_has 'not from a dpkg package'
 check "NodeSource fix offered" out_has 'deb\.nodesource\.com/node_24\.x nodistro main'
@@ -423,8 +428,8 @@ check "no NodeSource" calls_lacks 'nodejs'
 new_case libddcutil-missing
 rm "$FAKE/dpkg/libddcutil4" "$ROOT/usr/lib/x86_64-linux-gnu/libddcutil.so.4"
 echo 2.1.4-1 >"$FAKE/apt/libddcutil5"   # a newer soname in the archive must not win over ddcutil's own
-run_installer --check
-check "--check: exit 1" exit_is 1
+run_installer --doctor
+check "--doctor: exit 1" exit_is 1
 check "MISSING libddcutil4" out_has '^MISSING +libddcutil +shared library not installed \(package: libddcutil4\)'
 check "fix names the apt candidate" out_has 'sudo apt-get install libddcutil4 +\(apt candidate 1\.4\.1-1build2\)'
 run_installer --yes
@@ -434,15 +439,15 @@ check "--yes: OK after install" out_has '^OK +libddcutil +libddcutil4 1\.4\.1-1b
 
 new_case libddcutil-unknown
 rm "$FAKE/dpkg/libddcutil4" "$ROOT/usr/lib/x86_64-linux-gnu/libddcutil.so.4" "$FAKE/apt/libddcutil4"
-run_installer --check
+run_installer --doctor
 check "no apt candidate: MISSING with explanation" out_has '^MISSING +libddcutil +.*apt knows none of: libddcutil5 libddcutil4 libddcutil0'
 
 new_case cpu-limits-intel
 mkdir -p "$ROOT/proc" "$ROOT/sys/devices/system/cpu/intel_pstate"
 printf 'processor\t: 0\nvendor_id\t: GenuineIntel\n' >"$ROOT/proc/cpuinfo"
-run_installer --check
-check "intel --check: cpu-limits WARN" out_has '^WARN +cpu-limits +the CPU tool can.t change clock caps'
-check "intel --check: no sudo" calls_lacks '^sudo'
+run_installer --doctor
+check "intel --doctor: cpu-limits WARN" out_has '^WARN +cpu-limits +the CPU tool can.t change clock caps'
+check "intel --doctor: no sudo" calls_lacks '^sudo'
 run_installer <<<"n"
 check "intel answer no: asked" out_has 'Install motherapp-cpu-access\.service and /usr/local/lib/motherapp/cpu-access, enable and run it now \(sudo\) \[y/N\]'
 check "intel answer no: nothing installed" calls_lacks '^sudo install'
@@ -469,10 +474,10 @@ check "intel uninstall: voltage OK" out_has '^OK +cpu-undervolt +removed the vol
 new_case cpu-undervolt
 mkdir -p "$ROOT/proc" "$ROOT/sys/devices/system/cpu/intel_pstate"
 printf 'processor\t: 0\nvendor_id\t: GenuineIntel\n' >"$ROOT/proc/cpuinfo"
-run_installer --check
-check "undervolt --check: WARN" out_has '^WARN +cpu-undervolt +the CPU tool can.t set an undervolt without its voltage helper'
-check "undervolt --check: msr-tools missing" out_has '^WARN +msr-tools +not installed'
-check "undervolt --check: no sudo" calls_lacks '^sudo'
+run_installer --doctor
+check "undervolt --doctor: WARN" out_has '^WARN +cpu-undervolt +the CPU tool can.t set an undervolt without its voltage helper'
+check "undervolt --doctor: msr-tools missing" out_has '^WARN +msr-tools +not installed'
+check "undervolt --doctor: no sudo" calls_lacks '^sudo'
 touch "$FAKE/visudo_bad"
 run_installer --yes
 check "undervolt --yes: msr-tools installed" calls_match "^sudo apt-get install -y .*msr-tools"
@@ -495,26 +500,160 @@ new_case cpu-limits-thermald
 mkdir -p "$ROOT/proc" "$ROOT/sys/devices/system/cpu/intel_pstate" "$FAKE/sys_active"
 printf 'processor\t: 0\nvendor_id\t: GenuineIntel\n' >"$ROOT/proc/cpuinfo"
 touch "$FAKE/sys_active/thermald"
-run_installer --check
-check "thermald --check: WARN" out_has '^WARN +thermald +running: it rewrites PL1'
+run_installer --doctor
+check "thermald --doctor: WARN" out_has '^WARN +thermald +running: it rewrites PL1'
 run_installer <<<$'y\nn'
 check "thermald answer no: asked" out_has 'Stop and disable thermald \(sudo systemctl disable --now thermald'
 check "thermald answer no: still running" test -f "$FAKE/sys_active/thermald"
 run_installer --yes
 check "thermald --yes: disabled" calls_has "sudo systemctl disable --now thermald"
 check "thermald --yes: stopped" test ! -f "$FAKE/sys_active/thermald"
-run_installer --check
+run_installer --doctor
 check "thermald off: no WARN" out_lacks '^WARN +thermald'
 
 new_case cpu-limits-not-intel
-run_installer --check
-check "no cpuinfo: nothing to set up" out_has '^OK +cpu-limits +not an Intel CPU'
+run_installer --doctor
+check "no cpuinfo: nothing to set up" out_has '^OK +cpu-limits +neither an Intel CPU .* nor an AMD one'
+mkdir -p "$ROOT/proc"
+printf 'processor\t: 0\nvendor_id\t: AuthenticAMD\n' >"$ROOT/proc/cpuinfo"
+run_installer --doctor
+check "AMD without a RAPL zone: nothing to set up" out_has '^OK +cpu-limits +neither an Intel CPU'
+check "AMD without a RAPL zone: no energy row" out_lacks 'cpu-energy'
+
+# AMD (the Ryzen 9 3900X): a package zone with energy_uj, a core subzone, no constraint_* files.
+amd_rapl() {
+  local z
+  mkdir -p "$ROOT/proc"
+  printf 'processor\t: 0\nvendor_id\t: AuthenticAMD\n' >"$ROOT/proc/cpuinfo"
+  for z in intel-rapl:0 intel-rapl:0:0; do mkdir -p "$ROOT/sys/class/powercap/$z"; echo 123456 >"$ROOT/sys/class/powercap/$z/energy_uj"; done
+  echo package-0 >"$ROOT/sys/class/powercap/intel-rapl:0/name"
+  echo core >"$ROOT/sys/class/powercap/intel-rapl:0:0/name"
+}
+ENERGY_RULE_F() { printf '%s' "$ROOT/etc/udev/rules.d/70-motherapp-energy.rules"; }
+ENERGY_HELPER_F() { printf '%s' "$ROOT/usr/local/lib/motherapp/energy-access"; }
+
+new_case amd-energy
+amd_rapl
+mkdir -p "$FAKE/sys_active"
+touch "$FAKE/sys_active/thermald"   # irrelevant on AMD: nothing writes PL1 there
+run_installer --doctor
+check "amd doctor: WARN instead of nothing to set up" out_has '^WARN +cpu-energy +AMD: the CPU page.s package power needs read access to the RAPL energy counter'
+check "amd doctor: no 'nothing to set up'" out_lacks 'nothing to set up'
+check "amd doctor: offers the udev rule" out_has 'Install /etc/udev/rules\.d/70-motherapp-energy\.rules and /usr/local/lib/motherapp/energy-access, and apply it now \(sudo\) \[y/N\]'
+check "amd doctor, stdin closed: counted as no" out_has 'treating it as no'
+check "amd doctor, stdin closed: no sudo" calls_lacks '^sudo'
+check "amd doctor: no Intel steps" out_lacks 'motherapp-cpu-access|CPU limits access|thermald|cpu-undervolt'
+check "amd doctor: a warning, not a required item" out_lacks '^(MISSING|FAIL) +cpu-energy'
+run_installer --doctor <<<"n"
+check "amd doctor, answer no: skipped" out_has 'skipped; without it the CPU page has no package power'
+check "amd doctor, answer no: nothing installed" test ! -e "$(ENERGY_RULE_F)" -a ! -e "$(ENERGY_HELPER_F)"
+: >"$FAKE/calls"
+run_installer --doctor --yes
+check "amd doctor --yes: helper installed" cmp -s "$REPO/packaging/motherapp-energy-access.sh" "$(ENERGY_HELPER_F)"
+check "amd doctor --yes: helper installed 0755 by sudo" calls_has "sudo install -D -m 0755 $R/packaging/motherapp-energy-access.sh $(ENERGY_HELPER_F)"
+check "amd doctor --yes: rule for group tester" file_has "$(ENERGY_RULE_F)" 'RUN+="/usr/local/lib/motherapp/energy-access tester %k"'
+check "amd doctor --yes: rule matches powercap adds" file_has "$(ENERGY_RULE_F)" 'ACTION=="add", SUBSYSTEM=="powercap", KERNEL=="intel-rapl:[0-9]*|intel-rapl-mmio:[0-9]*"'
+check "amd doctor --yes: template comments dropped" file_lacks "$(ENERGY_RULE_F)" '#@'
+check "amd doctor --yes: udev reloaded" calls_has "sudo udevadm control --reload"
+check "amd doctor --yes: applied now, without a reboot" calls_has "sudo udevadm trigger --settle --subsystem-match=powercap --action=add"
+check "amd doctor --yes: OK after the re-check" out_has '^OK +cpu-energy +AMD: /etc/udev/rules\.d/70-motherapp-energy\.rules installed, group tester may read the package energy counter \(read only\)'
+check "amd doctor --yes: no Intel unit" test ! -e "$ROOT/etc/systemd/system/motherapp-cpu-access.service"
+check "amd doctor --yes: thermald left alone" calls_lacks 'thermald'
+check "amd doctor --yes: no build, no unit rewrite" calls_lacks '^npm|systemctl --user (daemon-reload|restart|enable)'
+: >"$FAKE/calls"
+run_installer --doctor --yes
+check "amd doctor again: nothing to fix, no sudo" calls_lacks '^sudo'
+check "amd doctor again: nothing to fix, no prompts" out_lacks '\[y/N\]'
+echo "# changed" >>"$(ENERGY_HELPER_F)"
+run_installer --doctor
+check "amd doctor: a changed helper is out of date" out_has '^WARN +cpu-energy +AMD: /etc/udev/rules\.d/70-motherapp-energy\.rules or /usr/local/lib/motherapp/energy-access is missing or out of date'
+cp "$REPO/packaging/motherapp-energy-access.sh" "$(ENERGY_HELPER_F)"
+sed -i 's/ tester / other /' "$(ENERGY_RULE_F)"
+run_installer --doctor
+check "amd doctor: a rule for another group is out of date" out_has '^WARN +cpu-energy +.*missing or out of date'
+run_installer --doctor --yes
+check "amd doctor --yes: rule rewritten" file_has "$(ENERGY_RULE_F)" 'energy-access tester %k'
+if [[ $(id -u) != 0 ]]; then   # root reads anything
+  chmod 000 "$ROOT/sys/class/powercap/intel-rapl:0/energy_uj"
+  run_installer --doctor
+  check "amd doctor: rule in place but unreadable: WARN" out_has "^WARN +cpu-energy +AMD: /etc/udev/rules\\.d/70-motherapp-energy\\.rules is installed, but you can't read /sys/class/powercap/intel-rapl:0/energy_uj yet"
+  check "amd doctor: the subzone isn't required" out_lacks 'intel-rapl:0:0/energy_uj'
+  chmod 644 "$ROOT/sys/class/powercap/intel-rapl:0/energy_uj"
+fi
+run_installer --uninstall <<<"n"
+check "amd uninstall, no: rule kept" test -f "$(ENERGY_RULE_F)"
+check "amd uninstall, no: says how" out_has '^WARN +cpu-energy +kept the energy counter udev rule'
+: >"$FAKE/calls"
+run_installer --uninstall --yes
+check "amd uninstall: rule removed" test ! -e "$(ENERGY_RULE_F)"
+check "amd uninstall: helper removed" test ! -e "$(ENERGY_HELPER_F)"
+check "amd uninstall: udev reloaded" calls_has "sudo udevadm control --reload"
+check "amd uninstall: OK" out_has '^OK +cpu-energy +removed the energy counter udev rule'
+
+# `motherapp install` runs ./install.sh --yes: that sets the rule up too.
+new_case amd-energy-install
+amd_rapl
+run_installer --yes
+check "amd install --yes: exit 0" exit_is 0
+check "amd install --yes: rule installed" file_has "$(ENERGY_RULE_F)" 'energy-access tester %k'
+check "amd install --yes: applied" calls_has "sudo udevadm trigger --settle --subsystem-match=powercap --action=add"
+check "amd install --yes: OK" out_has '^OK +cpu-energy +AMD: '
+check "amd install --yes: built as usual" calls_has "npm run build"
+
+# Readable already (a manual chmod), no rule: it only lasts until the next reboot.
+new_case amd-energy-manual
+amd_rapl
+run_installer --doctor
+check "amd manual chmod: WARN, until the next reboot" out_has '^WARN +cpu-energy +.*\(readable now, but only until the next reboot\)'
+
+# The helper itself (what udev runs as root), against a fake tree, with this user's real group.
+new_case energy-helper
+H_ROOT="$C/hroot" HG="$(id -gn)"
+PC="$H_ROOT/sys/class/powercap"
+for z in intel-rapl:0 intel-rapl:0:0 intel-rapl:1 intel-rapl-mmio:0 intel-rapl:2; do mkdir -p "$PC/$z"; done
+echo package-0 >"$PC/intel-rapl:0/name"; echo core >"$PC/intel-rapl:0:0/name"; echo psys >"$PC/intel-rapl:1/name"
+echo package-0 >"$PC/intel-rapl-mmio:0/name"; echo package-1 >"$PC/intel-rapl:2/name"
+for z in intel-rapl:0 intel-rapl:0:0 intel-rapl:1 intel-rapl-mmio:0; do echo 1 >"$PC/$z/energy_uj"; chmod 0400 "$PC/$z/energy_uj"; done
+echo 1 >"$C/elsewhere"; chmod 0400 "$C/elsewhere"
+ln -s "$C/elsewhere" "$PC/intel-rapl:2/energy_uj"
+helper() {
+  OUT="$C/out.$(date +%s%N)"
+  "$ENV_BIN" -i PATH=/usr/bin:/bin MOTHERAPP_ENERGY_ACCESS_ROOT="$H_ROOT" bash "$REPO/packaging/motherapp-energy-access.sh" "$@" >"$OUT" 2>&1
+  CODE=$?
+}
+mode_of() { stat -c %a "$1"; }
+helper "$HG" intel-rapl:0
+check "helper: package zone: exit 0" exit_is 0
+check "helper: package zone: group read only (0440)" test "$(mode_of "$PC/intel-rapl:0/energy_uj")" = 440
+check "helper: package zone: group set" test "$(stat -c %G "$PC/intel-rapl:0/energy_uj")" = "$HG"
+helper "$HG" intel-rapl-mmio:0
+check "helper: mmio package zone: 0440" test "$(mode_of "$PC/intel-rapl-mmio:0/energy_uj")" = 440
+helper "$HG" intel-rapl:0:0
+check "helper: subzone refused: exit 2" exit_is 2
+check "helper: subzone untouched" test "$(mode_of "$PC/intel-rapl:0:0/energy_uj")" = 400
+helper "$HG" intel-rapl:1
+check "helper: psys zone (not a package): exit 0, untouched" bash -c '[[ $1 == 0 && $(stat -c %a "$2") == 400 ]]' _ "$CODE" "$PC/intel-rapl:1/energy_uj"
+helper "$HG" intel-rapl:2
+check "helper: a symlinked energy_uj isn't followed" test "$(mode_of "$C/elsewhere")" = 400
+helper "$HG" ../../etc
+check "helper: a path as the zone: exit 2" exit_is 2
+helper 'Bad;Group' intel-rapl:0
+check "helper: a bad group name: exit 2" exit_is 2
+helper nosuchgroup-motherapp intel-rapl:0
+check "helper: an unknown group: exit 2" exit_is 2
+helper "$HG"
+check "helper: no zone: exit 2" exit_is 2
+check "helper: no energy_uj writable or world-readable" test -z "$(find "$H_ROOT" "$C/elsewhere" -type f \( -name energy_uj -o -name elsewhere \) -perm /0026)"
+if udevadm verify --help >/dev/null 2>&1; then
+  sed -e '/^#@/d' -e 's/@GROUP@/tester/' "$REPO/packaging/motherapp-energy.rules" >"$C/70-motherapp-energy.rules"
+  check "the rendered rule passes udevadm verify" udevadm verify --no-style "$C/70-motherapp-energy.rules"
+fi
 
 new_case not-in-i2c-group
 echo "tester adm" >"$FAKE/user_groups"
 echo "tester adm" >"$FAKE/proc_groups"
-run_installer --check
-check "--check: exit 1" exit_is 1
+run_installer --doctor
+check "--doctor: exit 1" exit_is 1
 check "MISSING i2c-group" out_has '^MISSING +i2c-group +tester is not in group i2c'
 check "usermod offered" out_has 'sudo usermod -aG i2c tester'
 run_installer --yes
@@ -524,9 +663,9 @@ check "--yes: exit 0 (re-login is a warning)" exit_is 0
 
 new_case i2c-module
 rm -r "$ROOT/sys/module/i2c_dev" "$ROOT/etc/modules-load.d/i2c-dev.conf" "$ROOT"/dev/i2c-*
-run_installer --check
-check "--check: module MISSING" out_has '^MISSING +i2c-dev +kernel module not loaded'
-check "--check: devices MISSING" out_has '^MISSING +i2c-devices'
+run_installer --doctor
+check "--doctor: module MISSING" out_has '^MISSING +i2c-dev +kernel module not loaded'
+check "--doctor: devices MISSING" out_has '^MISSING +i2c-devices'
 run_installer --yes
 check "--yes: modprobe" calls_has "sudo modprobe i2c-dev"
 check "--yes: modules-load.d file" file_has "$ROOT/etc/modules-load.d/i2c-dev.conf" "i2c-dev"
@@ -573,7 +712,7 @@ check "loaded but not at boot: still exit 0" exit_is 0
 new_case audio-missing
 rm "$STUB"/pw-* "$STUB/wpctl" "$ROOT"/usr/share/sounds/freedesktop/stereo/*.oga
 rm "$FAKE/active/pipewire-pulse"
-run_installer --check
+run_installer --doctor
 check "pw-dump MISSING -> pipewire-bin" out_has '^MISSING +pw-dump +not on PATH \(Ubuntu package: pipewire-bin\)'
 check "wpctl MISSING -> wireplumber" out_has '^MISSING +wpctl +not on PATH \(Ubuntu package: wireplumber\)'
 check "sound theme MISSING" out_has '^MISSING +sound-theme +missing .*audio-channel-front-left\.oga'
@@ -582,7 +721,7 @@ run_installer --yes
 check "--yes: one apt-get call for all packages" calls_has "sudo apt-get install -y pipewire-bin wireplumber sound-theme-freedesktop"
 check "--yes: exit 0" exit_is 0
 
-new_case check-changes-nothing
+new_case doctor-stdin-closed-changes-nothing
 NODE_PATH_DIR="$C/node22/bin"
 make_node "$NODE_PATH_DIR" v22.23.2
 rm "$FAKE/dpkg/libddcutil4" "$ROOT/usr/lib/x86_64-linux-gnu/libddcutil.so.4" "$ROOT/etc/modules-load.d/i2c-dev.conf"
@@ -590,12 +729,13 @@ rm -r "$ROOT/sys/module/i2c_dev"
 echo "tester adm" >"$FAKE/user_groups"
 snapshot() { (cd "$C" && find home root "repo dir" -printf '%p %s %T@\n' | sort; cat fake/user_groups); }
 snapshot >"$C/before"
-run_installer --check
+run_installer --doctor
 snapshot >"$C/after"
 check "exit 1" exit_is 1
 check "file tree unchanged" cmp -s "$C/before" "$C/after"
 check "no sudo/apt/npm/enable/reload" calls_lacks '^(sudo|apt-get|npm|usermod|modprobe|gpg)|systemctl --user (enable|restart|daemon-reload|disable)'
-check "no prompts" out_lacks '\[y/N\]'
+check "stdin closed: the fixes are offered and counted as no" out_has 'treating it as no'
+check "stdin closed: no Re-checking (nothing applied)" out_lacks 'Re-checking'
 
 new_case uninstall
 run_installer --yes
@@ -653,7 +793,7 @@ check "exit 1" exit_is 1
 
 new_case no-user-bus
 touch "$FAKE/no_user_bus"
-run_installer --check
+run_installer --doctor
 check "systemd-user MISSING" out_has '^MISSING +systemd-user'
 check "exit 1" exit_is 1
 
@@ -664,12 +804,15 @@ run_installer --purge
 check "--purge alone: exit 2" exit_is 2
 run_installer --help
 check "--help: exit 0" exit_is 0
-check "--help: mentions --check" out_has '[-][-]check'
+check "--help: mentions --doctor" out_has '[-][-]doctor'
+check "--help: no --check any more" out_lacks '[-][-]check'
+run_installer --check
+check "--check is gone: exit 2" exit_is 2
 check "--help: documents --allow-removals" out_has '^  [-][-]allow-removals'
 
 new_case root-refused
 stub id '[[ $1 == -u ]] && echo 0; exit 0'
-run_installer --check
+run_installer --doctor
 check "running as root: exit 2" exit_is 2
 
 new_case bin-wrappers
@@ -702,31 +845,31 @@ run_installer --yes
 check "re-run: wrapper unchanged" out_has '^OK +audioctl +.*/\.local/bin/audioctl unchanged'
 check "re-run: same wrapper" cmp -s "$(WRAP)" "$C/wrap.first"
 EXTRA_PATH="$HOME_/.local/bin"
-run_installer --check
+run_installer --doctor
 check "on PATH: bin-path OK" out_has '^OK +bin-path +.*/\.local/bin is on PATH'
 check "on PATH: no bin-path WARN" out_lacks '^WARN +bin-path'
 EXTRA_PATH=""
-# A wrapper that a moved Node would leave behind: --check reports it and leaves it alone.
+# A wrapper that a moved Node would leave behind: --doctor reports it and leaves it alone.
 sed -i 's|^exec .*|exec /old/node "$@"|' "$(WRAP)"
 cp "$(WRAP)" "$C/wrap.old"
 cp "$(WRAP)" "$(WRAP oldctl)"   # a wrapper for a command no manifest declares any more
 tree() { (cd "$C" && find home root "repo dir" -printf '%p %s %T@\n' | sort); }
 tree >"$C/before"
 : >"$FAKE/calls"
-run_installer --check
+run_installer --doctor
 tree >"$C/after"
-check "--check: changed wrapper is a WARN" out_has '^WARN +audioctl +.*differs from what the installer would write'
-check "--check: stale wrapper is a WARN" out_has '^WARN +oldctl +.*no tool declares it'
-check "--check: file tree unchanged" cmp -s "$C/before" "$C/after"
-check "--check: exit 0" exit_is 0
+check "--doctor: changed wrapper is a WARN" out_has '^WARN +audioctl +.*differs from what the installer would write'
+check "--doctor: stale wrapper is a WARN" out_has '^WARN +oldctl +.*no tool declares it'
+check "--doctor: file tree unchanged" cmp -s "$C/before" "$C/after"
+check "--doctor: exit 0" exit_is 0
 run_installer --yes
 check "update: rewritten" out_has '^OK +audioctl +updated '
 check "update: back to the current wrapper" cmp -s "$(WRAP)" "$C/wrap.first"
 check "update: stale wrapper removed" test ! -e "$(WRAP oldctl)"
 rm "$(WRAP)"
-run_installer --check
-check "--check: missing wrapper is MISSING" out_has '^MISSING +audioctl +.*/\.local/bin/audioctl not installed'
-check "--check: missing wrapper fails the check" exit_is 1
+run_installer --doctor
+check "--doctor: missing wrapper is MISSING" out_has '^MISSING +audioctl +.*/\.local/bin/audioctl not installed'
+check "--doctor: missing wrapper fails the check" exit_is 1
 
 new_case bin-foreign
 mkdir -p "$HOME_/.local/bin"
@@ -736,8 +879,8 @@ run_installer --yes
 check "foreign file: WARN" out_has "^WARN +audioctl +$HOME_/\\.local/bin/audioctl exists and wasn't written by install\\.sh; left alone"
 check "foreign file: untouched" cmp -s "$(WRAP)" "$C/foreign"
 check "foreign file: still exit 0" exit_is 0
-run_installer --check
-check "--check: foreign file is a WARN" out_has "^WARN +audioctl +.*wasn't written by install\\.sh"
+run_installer --doctor
+check "--doctor: foreign file is a WARN" out_has "^WARN +audioctl +.*wasn't written by install\\.sh"
 rm "$(WRAP)"
 ln -s "$R/tools/audio/audioctl.ts" "$(WRAP)"   # a symlink the user made by hand
 run_installer --yes
@@ -763,9 +906,9 @@ check "the bin directory itself is kept" test -d "$HOME_/.local/bin"
 new_case bin-no-node
 NODE_PATH_DIR="$C/node22/bin"
 make_node "$NODE_PATH_DIR" v22.23.2
-run_installer --check
-check "--check without Node 24: commands SKIP" out_has '^SKIP +commands +can.t check the wrappers'
-check "--check without Node 24: SKIP counted as skipped, not as a warning" \
+run_installer --doctor
+check "--doctor without Node 24: commands SKIP" out_has '^SKIP +commands +can.t check the wrappers'
+check "--doctor without Node 24: SKIP counted as skipped, not as a warning" \
   out_has '^RESULT: FAIL \([0-9]+ required item\(s\) missing or failed, 0 warning\(s\), 1 skipped\)$'
 run_installer <<<"n"
 check "install without Node 24: commands SKIP" out_has '^SKIP +commands +Node >= 24 missing; wrappers not written'
@@ -782,9 +925,9 @@ run_installer --yes
 check "install: no null-byte warning" out_lacks 'null byte'
 check "install: exit 0" exit_is 0
 check "install: binary with the marker on line 2 kept" cmp -s "$(WRAP ffmpeg)" "$C/ffmpeg"
-run_installer --check
-check "--check: no null-byte warning" out_lacks 'null byte'
-check "--check: binaries aren't reported" out_lacks '^WARN +(uv|ffmpeg) '
+run_installer --doctor
+check "--doctor: no null-byte warning" out_lacks 'null byte'
+check "--doctor: binaries aren't reported" out_lacks '^WARN +(uv|ffmpeg) '
 run_installer --uninstall
 check "uninstall: no null-byte warning" out_lacks 'null byte'
 check "uninstall: binaries kept" test -f "$(WRAP uv)" -a -f "$(WRAP ffmpeg)"
@@ -861,10 +1004,10 @@ new_case shortcuts-none
 sc_stubs
 sc_machine
 sc_list "${MACHINE_SEGS[@]}"
-run_installer --check
-check "--check: no motherapp shortcuts, the others counted" out_has '^OK +shortcuts +no motherapp keyboard shortcuts \(8 other custom shortcut\(s\) left alone\)'
-check "--check: gsettings run with a UTF-8 locale" calls_has "gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings (LC_ALL=C.UTF-8)"
-check "--check: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
+run_installer --doctor
+check "--doctor: no motherapp shortcuts, the others counted" out_has '^OK +shortcuts +no motherapp keyboard shortcuts \(8 other custom shortcut\(s\) left alone\)'
+check "--doctor: gsettings run with a UTF-8 locale" calls_has "gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings (LC_ALL=C.UTF-8)"
+check "--doctor: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
 run_installer --uninstall
 check "uninstall without motherapp shortcuts: OK, no prompt" out_has '^OK +shortcuts +no motherapp keyboard shortcuts'
 check "uninstall without motherapp shortcuts: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
@@ -879,12 +1022,12 @@ sc_entry motherapp-gone "Gone" "sh -c '$HOME_/.local/bin/missingctl x && true'" 
 sc_list custom0 dc-map-toggle motherapp-mute-firefox dc-map-opacity dc-map-zoomout dc-map-zoomin dc-map-fit motherapp-gone dc-map-follow dc-map-clicks
 cp "$FAKE/gs/list" "$C/list.before"
 : >"$FAKE/calls"
-run_installer --check
-check "--check: counts ours, names the missing wrapper" \
+run_installer --doctor
+check "--doctor: counts ours, names the missing wrapper" \
   out_has "^WARN +shortcuts +2 motherapp keyboard shortcut\\(s\\), 1 run a missing wrapper: 'Gone' -> $HOME_/\\.local/bin/missingctl"
-check "--check: fix suggests reinstalling or removing" out_has 'fix: \./install\.sh writes the wrappers again'
-check "--check: still exit 0" exit_is 0
-check "--check: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
+check "--doctor: fix suggests reinstalling or removing" out_has 'fix: \./install\.sh writes the wrappers again'
+check "--doctor: still exit 0" exit_is 0
+check "--doctor: nothing written" calls_lacks '^gsettings (set|reset)|^dconf'
 sc_entries >"$C/entries.before"
 run_installer --uninstall   # stdin closed: the answer is no
 check "uninstall: asks, default no" out_has "Remove the 2 GNOME keyboard shortcut\\(s\\) motherapp made \\('Mute Firefox', 'Gone'\\)\\? .*\\[y/N\\]"
@@ -931,7 +1074,7 @@ check "a write that doesn't stick: exit 1" exit_is 1
 new_case shortcuts-unavailable
 sc_stubs
 touch "$FAKE/gs_broken"
-run_installer --check
+run_installer --doctor
 check "no schema: an info line, no record" out_has 'GNOME keyboard shortcuts: gsettings or GNOME.s media-keys schema isn.t available here'
 check "no schema: no shortcuts row" out_lacks '^[A-Z]+ +shortcuts '
 rm -f "$FAKE/gs_broken"
@@ -940,7 +1083,7 @@ run_installer --uninstall --yes
 check "unparsable list: WARN, nothing written" out_has "^WARN +shortcuts +can't read the custom-keybindings list safely"
 check "unparsable list: list untouched" file_has "$FAKE/gs/list" "['/odd\"path/']"
 printf '%s\n' "['/back\\\\slash/', '$SC_DIR/motherapp-x/']" >"$FAKE/gs/list"
-run_installer --check
+run_installer --doctor
 check "a backslash in a path: WARN, not misread" out_has "^WARN +shortcuts +can't read the custom-keybindings list safely"
 
 # ------------------------------------------------------------------ version (v<N>-<hash>[-dirty])
@@ -973,8 +1116,8 @@ check "build-info.json: dirty false" test "$(json_field "$R/build-info.json" dir
 check "build-info.json: builtAt is ISO 8601 UTC" is_iso_utc "$(json_field "$R/build-info.json" builtAt)"
 check "build-info.json: nothing else" test "$("$REAL_NODE" -e 'console.log(Object.keys(JSON.parse(require("fs").readFileSync(process.argv[1]))).join())' "$R/build-info.json")" = "version,hash,dirty,builtAt"
 check "the build leaves the tree clean (build output is gitignored)" test -z "$(git -C "$R" status --porcelain)"
-run_installer --check
-check "--check: built = checkout" out_has "^OK +version +built v${V}-$H, checkout at v${V}-$H\$"
+run_installer --doctor
+check "--doctor: built = checkout" out_has "^OK +version +built v${V}-$H, checkout at v${V}-$H\$"
 echo "local edit" >>"$R/README.md"
 check "build-info.sh: a local edit gives -dirty" test "$(bash "$R/scripts/build-info.sh")" = "v${V}-$H-dirty"
 run_installer --yes
@@ -982,9 +1125,9 @@ check "dirty: OK version v${V}-<hash>-dirty" out_has "^OK +version +v${V}-$H-dir
 check "dirty: build-info.json dirty true" test "$(json_field "$R/build-info.json" dirty)" = true
 git_commit_all "$R" "second"
 H2="$(git -C "$R" rev-parse --short=7 HEAD)"
-run_installer --check
-check "--check: checkout moved on: WARN" out_has "^WARN +version +built v${V}-$H-dirty, checkout is at v${V}-$H2\$"
-check "--check: points at motherapp install" out_has 'fix: motherapp install'
+run_installer --doctor
+check "--doctor: checkout moved on: WARN" out_has "^WARN +version +built v${V}-$H-dirty, checkout is at v${V}-$H2\$"
+check "--doctor: points at motherapp install" out_has 'fix: motherapp install'
 echo 7 >"$R/VERSION"
 check "build-info.sh: the number comes from VERSION" test "$(bash "$R/scripts/build-info.sh")" = "v7-$H2-dirty"
 echo "x.y" >"$R/VERSION"
@@ -1164,13 +1307,22 @@ check "version without a build: exit 0" exit_is 0
 run_motherapp help
 check "help: exit 0" exit_is 0
 check "help: lists install/update" out_has '^  install, update '
-check "help: no doctor" out_lacks doctor
+check "help: lists doctor" out_has '^  doctor '
+check "help: no check" out_lacks '^  check '
 run_motherapp
 check "no command: help" out_has '^Usage: motherapp <command>'
 run_motherapp bogus
 check "unknown command: exit 2" exit_is 2
+run_motherapp doctor
+check "doctor runs install.sh --doctor" calls_has "install.sh --doctor"
+run_motherapp doctor -y --allow-removals
+check "doctor passes -y / --allow-removals on" calls_has "install.sh --doctor -y --allow-removals"
+: >"$FAKE/calls"
+run_motherapp doctor --uninstall
+check "doctor takes no other options: exit 2" exit_is 2
+check "doctor with a bad option: install.sh not run" calls_lacks '^install\.sh'
 run_motherapp check
-check "check runs install.sh --check" calls_has "install.sh --check"
+check "check is gone (no alias): exit 2" exit_is 2
 run_motherapp uninstall --purge
 check "uninstall passes options on" calls_has "install.sh --uninstall --purge"
 run_motherapp logs

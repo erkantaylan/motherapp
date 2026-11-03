@@ -1,7 +1,9 @@
 // Package power from RAPL: the change of the package zone's energy counter (energy_uj, µJ)
 // between two reads, over the time between them. The kernel makes energy_uj root-only (a power
-// side channel, CVE-2020-8694); motherapp-cpu-access.service gives the user's group read access
-// to the package zones' counters, as it does write access to the limits.
+// side channel, CVE-2020-8694). On Intel motherapp-cpu-access.service gives the user's group read
+// access to the package zones' counters, as it does write access to the limits; on AMD a udev
+// rule does (packaging/motherapp-energy.rules, read only). Both come from install.sh and
+// `motherapp doctor`, so the hint names doctor and no vendor-specific step.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SysReader } from "./sysfs.ts";
@@ -9,7 +11,7 @@ import { SysReader } from "./sysfs.ts";
 const POWERCAP_DIR = "sys/class/powercap";
 
 export const NO_ENERGY_ACCESS =
-  "Package power needs read access to the RAPL energy counter: run `motherapp install` and allow the \"CPU limits\" step.";
+  "Package power needs read access to the RAPL energy counter, which is root-only by default: run `motherapp doctor` in a terminal and allow the step it offers for it (it asks for sudo once).";
 
 /** The first package zone with an energy counter (intel-rapl:0 before intel-rapl-mmio:0). */
 export function energyZone(r: SysReader): string | undefined {

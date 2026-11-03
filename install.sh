@@ -10,7 +10,9 @@
 #
 #   ./install.sh               interactive: asks y/N before each sudo/apt step and before
 #                              enabling the service
-#   ./install.sh --check       report only, change nothing
+#   ./install.sh --doctor      report, then offer the fixes it found (asks before each; the
+#                              same sudo/apt steps as an install, but no npm ci, build or unit
+#                              rewrite); add --yes to accept them. `motherapp doctor` runs it
 #   ./install.sh --yes         accept every prompt, except an apt install that would remove
 #                              packages (add --allow-removals to accept that too)
 #   ./install.sh --uninstall   stop + disable the service, remove the unit file and the
@@ -51,6 +53,12 @@ CPU_VOLTAGE_TEMPLATE="$REPO_DIR/packaging/motherapp-cpu-voltage.sudoers"
 CPU_VOLTAGE_PATH="/usr/local/lib/motherapp/cpu-voltage"   # as the sudoers rule names it
 CPU_VOLTAGE="$ROOT$CPU_VOLTAGE_PATH"
 CPU_SUDOERS="$ROOT/etc/sudoers.d/motherapp-cpu-voltage"   # no dot: sudo skips names with one
+ENERGY_RULE_TEMPLATE="$REPO_DIR/packaging/motherapp-energy.rules"
+ENERGY_HELPER_SRC="$REPO_DIR/packaging/motherapp-energy-access.sh"
+ENERGY_RULE_PATH="/etc/udev/rules.d/70-motherapp-energy.rules"
+ENERGY_RULE="$ROOT$ENERGY_RULE_PATH"
+ENERGY_HELPER_PATH="/usr/local/lib/motherapp/energy-access"   # as the rule names it
+ENERGY_HELPER="$ROOT$ENERGY_HELPER_PATH"
 SOUND_DIR="$ROOT/usr/share/sounds/freedesktop/stereo"
 TEST_SOUNDS=("$SOUND_DIR/audio-channel-front-left.oga" "$SOUND_DIR/audio-channel-front-right.oga")
 NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
@@ -83,7 +91,7 @@ ALLOW_REMOVALS=0
 
 usage() {
   cat <<'EOF'
-Usage: ./install.sh [--check | --uninstall [--purge]] [--yes [--allow-removals]]
+Usage: ./install.sh [--doctor | --uninstall [--purge]] [--yes [--allow-removals]]
 
   (no option)   Check dependencies, offer to install missing ones (asks before every
                 sudo/apt step), run npm ci + npm run build, write the systemd user unit,
@@ -93,10 +101,14 @@ Usage: ./install.sh [--check | --uninstall [--purge]] [--yes [--allow-removals]]
                 this; motherapp help lists the rest).
                 Node 24: offers nvm/fnm first when you have one (no sudo), then the
                 NodeSource apt repo, showing first what that install would remove.
-  --check       Only report status. Changes nothing, asks nothing.
-  --yes, -y     Answer yes to every prompt, except an apt install that would remove
-                packages (e.g. NodeSource nodejs replacing Ubuntu's nodejs removes npm
-                and the node-* packages): --yes stops there.
+  --doctor      Report status, then offer the fixes it found, asking before each (missing
+                packages, Node, i2c, the CPU access steps, thermald), like an install
+                does, but without npm ci, the build or rewriting the unit and wrappers.
+                Nothing to fix: it only reports. No answer (stdin closed) counts as no.
+                `motherapp doctor` runs this.
+  --yes, -y     Answer yes to every prompt (install or --doctor), except an apt install
+                that would remove packages (e.g. NodeSource nodejs replacing Ubuntu's
+                nodejs removes npm and the node-* packages): --yes stops there.
   --allow-removals
                 With --yes: also accept an install that removes packages.
   --uninstall   Stop and disable the service, remove ~/.config/systemd/user/motherapp.service
@@ -116,7 +128,7 @@ EOF
 
 for arg in "$@"; do
   case "$arg" in
-    --check) MODE=check ;;
+    --doctor) MODE=doctor ;;
     --uninstall) MODE=uninstall ;;
     --purge) PURGE=1 ;;
     --yes | -y) YES=1 ;;
@@ -515,8 +527,9 @@ check_systemd_user() {
 # The CPU tool sets clock caps, turbo, governor/EPP and PL1/PL2 through sysfs files that only
 # root may write. motherapp-cpu-access.service (a system unit, so sudo) gives the user's
 # primary group write access to exactly those files at every boot and resume
-# (packaging/motherapp-cpu-access.sh). Only offered on Intel: AMD needs the SMU, a later step.
-NEED_CPU_ACCESS=0 NEED_THERMALD_OFF=0
+# (packaging/motherapp-cpu-access.sh). Only offered on Intel: AMD needs the SMU, a later step,
+# and stays read-only; AMD gets the energy counter read access below instead.
+NEED_CPU_ACCESS=0 NEED_THERMALD_OFF=0 NEED_ENERGY_ACCESS=0
 
 cpu_is_intel() {
   grep -q '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' "$ROOT/proc/cpuinfo" 2>/dev/null &&
@@ -524,6 +537,21 @@ cpu_is_intel() {
 }
 
 cpu_group() { id -gn 2>/dev/null; }
+
+# The package RAPL zones that have an energy counter (intel-rapl:N, intel-rapl-mmio:N, never
+# subzones), one energy_uj path per line.
+package_energy_files() {
+  local z
+  for z in "$ROOT"/sys/class/powercap/intel-rapl:* "$ROOT"/sys/class/powercap/intel-rapl-mmio:*; do
+    [[ ${z##*/} =~ ^intel-rapl(-mmio)?:[0-9]+$ && -f $z/energy_uj ]] || continue
+    [[ "$(cat "$z/name" 2>/dev/null)" == package* ]] && printf '%s\n' "$z/energy_uj"
+  done
+}
+
+cpu_is_amd_rapl() {
+  grep -q '^vendor_id[[:space:]]*:[[:space:]]*AuthenticAMD' "$ROOT/proc/cpuinfo" 2>/dev/null &&
+    [[ -n "$(package_energy_files)" ]]
+}
 
 render_cpu_unit() {
   local g
@@ -539,7 +567,8 @@ cpu_access_current() {
 
 check_cpu_access() {
   if ! cpu_is_intel; then
-    record OK cpu-limits "not an Intel CPU with intel_pstate/RAPL: nothing to set up"
+    if cpu_is_amd_rapl; then check_energy_access; return; fi
+    record OK cpu-limits "neither an Intel CPU with intel_pstate/RAPL nor an AMD one with a RAPL package zone: nothing to set up"
     return
   fi
   local g
@@ -551,18 +580,18 @@ check_cpu_access() {
   if cpu_access_current && systemctl is-enabled --quiet "$CPU_UNIT_NAME" 2>/dev/null; then
     record OK cpu-limits "$CPU_UNIT_NAME installed and enabled (group $g may set clock caps, turbo, EPP, PL1/PL2)"
   elif [[ -f $CPU_UNIT_FILE ]]; then
-    record WARN cpu-limits "$CPU_UNIT_NAME is installed but out of date or not enabled" "./install.sh (asks before using sudo)" 0
+    record WARN cpu-limits "$CPU_UNIT_NAME is installed but out of date or not enabled" "motherapp doctor (asks before using sudo)" 0
     NEED_CPU_ACCESS=1
   else
     record WARN cpu-limits "the CPU tool can't change clock caps, turbo, EPP or power limits (PL1/PL2) without it" \
-      "./install.sh (asks before using sudo; installs $CPU_UNIT_NAME)" 0
+      "motherapp doctor (asks before using sudo; installs $CPU_UNIT_NAME)" 0
     NEED_CPU_ACCESS=1
   fi
   # thermald's adaptive mode rewrites PL1 every few seconds (measured 2026-10-23 on the
   # 13900K: 125 W -> 99.5 W -> 253 W within 25 s), so a PL1 from the CPU tool doesn't stick.
   if have systemctl && systemctl is-active --quiet thermald 2>/dev/null; then
     record WARN thermald "running: it rewrites PL1 every few seconds, so the CPU tool's PL1 doesn't stick" \
-      "sudo systemctl disable --now thermald   (./install.sh offers it)" 0
+      "sudo systemctl disable --now thermald   (motherapp doctor offers it)" 0
     NEED_THERMALD_OFF=1
   fi
 }
@@ -623,6 +652,109 @@ uninstall_cpu_access() {
   fi
 }
 
+# ---------------------------------------------------------------- CPU energy counter (AMD)
+#
+# The CPU page's package power comes from the package RAPL zone's energy_uj, which the kernel
+# makes root-only. On Intel, motherapp-cpu-access.service grants read on it along with the
+# limits. AMD stays read-only, so instead of that unit (which also grants write on cpufreq files
+# that exist under amd_pstate too) a udev rule runs a root-owned helper
+# (packaging/motherapp-energy-access.sh) for each package zone as it appears: chgrp + g+r on
+# its energy_uj, nothing else. udev replays every device's "add" at boot, and the zone isn't
+# removed over suspend/resume, so it holds without a service.
+
+render_energy_rule() {
+  local g
+  g="$(cpu_group)" || return 1
+  [[ $g =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
+  sed -e '/^#@/d' -e "s|@GROUP@|$g|g" "$ENERGY_RULE_TEMPLATE"
+}
+
+energy_access_current() {
+  [[ -f $ENERGY_RULE && -f $ENERGY_HELPER ]] &&
+    cmp -s "$ENERGY_HELPER_SRC" "$ENERGY_HELPER" &&
+    [[ "$(<"$ENERGY_RULE")" == "$(render_energy_rule)" ]]
+}
+
+# The package energy_uj files this user can't read, space-separated (empty: all readable).
+energy_unreadable() {
+  local f out=""
+  while IFS= read -r f; do
+    [[ -n $f && ! -r $f ]] && out+="${out:+ }${f#"$ROOT"}"
+  done < <(package_energy_files)
+  printf '%s' "$out"
+}
+
+check_energy_access() {
+  local g unreadable
+  g="$(cpu_group)"
+  if [[ ! $g =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    record WARN cpu-energy "can't tell your primary group (id -gn said \"$g\"); the CPU page shows no package power" "" 0
+    return
+  fi
+  unreadable="$(energy_unreadable)"
+  if energy_access_current; then
+    if [[ -z $unreadable ]]; then
+      record OK cpu-energy "AMD: $ENERGY_RULE_PATH installed, group $g may read the package energy counter (read only)"
+    else
+      record WARN cpu-energy "AMD: $ENERGY_RULE_PATH is installed, but you can't read $unreadable yet" \
+        "motherapp doctor (asks before using sudo; re-applies the rule with udevadm trigger)" 0
+      NEED_ENERGY_ACCESS=1
+    fi
+  elif [[ -f $ENERGY_RULE || -f $ENERGY_HELPER ]]; then
+    record WARN cpu-energy "AMD: $ENERGY_RULE_PATH or $ENERGY_HELPER_PATH is missing or out of date" \
+      "motherapp doctor (asks before using sudo)" 0
+    NEED_ENERGY_ACCESS=1
+  else
+    local now="you can't read it"
+    [[ -z $unreadable ]] && now="readable now, but only until the next reboot"
+    record WARN cpu-energy "AMD: the CPU page's package power needs read access to the RAPL energy counter ($now)" \
+      "motherapp doctor (asks before using sudo; installs $ENERGY_RULE_PATH and $ENERGY_HELPER_PATH)" 0
+    NEED_ENERGY_ACCESS=1
+  fi
+}
+
+offer_energy_access() {
+  local g rule ok=1
+  g="$(cpu_group)"
+  section "CPU energy counter access"
+  info "For the CPU page's package power (AMD): lets group $g read the package RAPL energy counter"
+  info "(energy_uj), which the kernel keeps root-only. Read only: nothing becomes writable."
+  info "A udev rule re-applies it at every boot; ./install.sh --uninstall removes it."
+  if ! ask "Install $ENERGY_RULE_PATH and $ENERGY_HELPER_PATH, and apply it now (sudo)"; then
+    info "skipped; without it the CPU page has no package power (a manual chmod lasts until the next reboot)"
+    return
+  fi
+  rule="$(render_energy_rule)" || { info "can't tell your primary group (id -gn); skipped"; return; }
+  run_sudo install -D -m 0755 "$ENERGY_HELPER_SRC" "$ENERGY_HELPER" || ok=0
+  if (( ok )); then
+    cmdline "sudo tee $ENERGY_RULE_PATH"
+    { sudo install -d -m 0755 "${ENERGY_RULE%/*}" && printf '%s\n' "$rule" | sudo tee "$ENERGY_RULE" >/dev/null; } || ok=0
+  fi
+  (( ok )) && { run_sudo udevadm control --reload || ok=0; }
+  # --settle: wait until udev has run the helper, so the re-check below sees the result
+  (( ok )) && { run_sudo udevadm trigger --settle --subsystem-match=powercap --action=add || ok=0; }
+  if (( ok )); then APPLIED_FIX=1; else info "setting up the energy counter access failed (see above)"; fi
+}
+
+uninstall_energy_access() {
+  if [[ ! -f $ENERGY_RULE && ! -f $ENERGY_HELPER ]]; then
+    record OK cpu-energy "energy counter udev rule not installed"
+    return
+  fi
+  if ! ask "Remove $ENERGY_RULE_PATH and $ENERGY_HELPER_PATH (sudo)? The energy counter stays readable for your group until the next reboot"; then
+    record WARN cpu-energy "kept the energy counter udev rule (you said no)" "sudo rm $ENERGY_RULE_PATH $ENERGY_HELPER_PATH && sudo udevadm control --reload" 0
+    return
+  fi
+  local ok=1
+  run_sudo rm -f "$ENERGY_RULE" "$ENERGY_HELPER" || ok=0
+  run_sudo udevadm control --reload || ok=0
+  if (( ok )); then
+    record OK cpu-energy "removed the energy counter udev rule (still readable until the next reboot)"
+  else
+    record FAIL cpu-energy "couldn't remove the energy counter udev rule" "sudo rm $ENERGY_RULE_PATH $ENERGY_HELPER_PATH && sudo udevadm control --reload"
+  fi
+}
+
 # ---------------------------------------------------------------- CPU undervolt (Intel)
 #
 # The CPU tool's undervolt (a negative core/cache voltage offset) goes through MSR 0x150, which
@@ -652,11 +784,11 @@ check_cpu_voltage() {
   if [[ -f $CPU_VOLTAGE ]] && cmp -s "$CPU_VOLTAGE_SRC" "$CPU_VOLTAGE" && cpu_sudoers_ok; then
     record OK cpu-undervolt "$CPU_VOLTAGE_PATH installed, sudo runs it without a password"
   elif [[ -f $CPU_VOLTAGE ]]; then
-    record WARN cpu-undervolt "$CPU_VOLTAGE_PATH is out of date or its sudoers rule is missing" "./install.sh (asks before using sudo)" 0
+    record WARN cpu-undervolt "$CPU_VOLTAGE_PATH is out of date or its sudoers rule is missing" "motherapp doctor (asks before using sudo)" 0
     NEED_CPU_VOLTAGE=1
   else
     record WARN cpu-undervolt "the CPU tool can't set an undervolt without its voltage helper" \
-      "./install.sh (asks before using sudo; installs $CPU_VOLTAGE_PATH and /etc/sudoers.d/motherapp-cpu-voltage)" 0
+      "motherapp doctor (asks before using sudo; installs $CPU_VOLTAGE_PATH and /etc/sudoers.d/motherapp-cpu-voltage)" 0
     NEED_CPU_VOLTAGE=1
   fi
 }
@@ -712,6 +844,7 @@ check_misc_tools() {
 
 run_checks() {
   NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0 NEED_CPU_ACCESS=0 NEED_THERMALD_OFF=0 NEED_CPU_VOLTAGE=0
+  NEED_ENERGY_ACCESS=0
   section "Runtime"
   check_node
   check_misc_tools
@@ -723,7 +856,7 @@ run_checks() {
   check_ddcutil
   check_libddcutil
   check_i2c
-  section "CPU limits"
+  section "CPU access"
   check_cpu_access
   check_cpu_voltage
   section "Service manager"
@@ -943,6 +1076,9 @@ offer_fixes() {
   if (( NEED_CPU_ACCESS )); then
     if (( can_apt )); then offer_cpu_access; else info "sudo not available; the CPU tool stays read-only"; fi
   fi
+  if (( NEED_ENERGY_ACCESS )); then
+    if (( can_apt )); then offer_energy_access; else info "sudo not available; the CPU page shows no package power"; fi
+  fi
   if (( NEED_CPU_VOLTAGE )); then
     if (( can_apt )); then offer_cpu_voltage; else info "sudo not available; the CPU tool can't undervolt"; fi
   fi
@@ -1115,7 +1251,7 @@ write_version() {
   fi
 }
 
-# --check: what was built vs where the checkout is now.
+# --doctor: what was built vs where the checkout is now.
 version_status() {
   local built now
   declare -F mbi_built >/dev/null || return 0
@@ -1130,7 +1266,7 @@ version_status() {
   fi
 }
 
-# Read-only version of app_setup for --check.
+# Read-only version of app_setup for --doctor (it never builds or rewrites the unit).
 app_status() {
   section "App"
   if [[ -f $REPO_DIR/node_modules/.package-lock.json ]]; then
@@ -1271,7 +1407,7 @@ write_wrapper() { # command content fix-hint
   fi
 }
 
-# --check for one wrapper.
+# --doctor for one wrapper.
 wrapper_status() { # command content
   local f="$BIN_DIR/$1"
   if [[ ! -e $f && ! -L $f ]]; then
@@ -1322,7 +1458,7 @@ bin_setup() {
   check_bin_path
 }
 
-# Read-only version of bin_setup for --check.
+# Read-only version of bin_setup for --doctor.
 bin_status() {
   section "Tool commands ($BIN_DIR)"
   if [[ -z $NODE_BIN ]]; then
@@ -1406,7 +1542,7 @@ sc_names() { # the names of SC_OURS as gsettings prints them, comma-separated, f
   printf '%s' "$out"
 }
 
-# Status for --check (and after an install): how many motherapp shortcuts exist and whether
+# Status for --doctor (and after an install): how many motherapp shortcuts exist and whether
 # the wrappers they run exist.
 shortcuts_status() {
   local rc=0
@@ -1520,7 +1656,7 @@ summary() {
     return 1
   fi
   local tail=""
-  [[ $MODE == install || $MODE == check ]] && tail=" - open http://127.0.0.1:$PORT/"
+  [[ $MODE == install || $MODE == doctor ]] && tail=" - open http://127.0.0.1:$PORT/"
   printf '%sRESULT: OK%s (%s)%s\n' "$C_GREEN" "$C_RESET" "$counts" "$tail"
   return 0
 }
@@ -1555,6 +1691,7 @@ uninstall() {
   uninstall_shortcuts
   uninstall_bins
   uninstall_cpu_access
+  uninstall_energy_access
   uninstall_cpu_voltage
   local d
   for d in "$APP_CONFIG_DIR" "$APP_STATE_DIR"; do
@@ -1590,8 +1727,16 @@ case "$MODE" in
     summary
     exit $?
     ;;
-  check)
+  doctor)
+    # Like install up to the fixes (each one asked; --yes accepts them, closed stdin declines
+    # them), then only reports on the app: no npm ci, build, unit or wrapper rewrite.
     run_checks
+    offer_fixes
+    if (( APPLIED_FIX )); then
+      section "Re-checking after the changes above"
+      reset_records
+      run_checks
+    fi
     resolve_port
     app_status
     bin_status

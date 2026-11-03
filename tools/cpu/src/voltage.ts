@@ -24,7 +24,7 @@ export const UNDERVOLT_STEP = 5;
 export const TRIAL_MS = 10 * 60_000;
 
 export const NO_VOLTAGE =
-  "Undervolting needs the voltage helper: run `motherapp install` in a terminal and allow the \"CPU undervolt\" step (it asks for sudo once).";
+  "Undervolting needs the voltage helper: run `motherapp doctor` in a terminal and allow the \"CPU undervolt\" step (it asks for sudo once).";
 
 export interface RunResult {
   status: number | null;

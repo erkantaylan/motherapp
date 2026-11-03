@@ -86,7 +86,7 @@ Or from a clone of this repo:
 
 ```sh
 ./install.sh               # or: make install
-./install.sh --check       # or: make check / motherapp check - report only, changes nothing
+./install.sh --doctor      # or: make doctor / motherapp doctor - report, then offer each fix (asks first)
 ./install.sh --uninstall   # or: make uninstall - stop + remove the user service (keeps config/state)
 ```
 
@@ -96,7 +96,11 @@ prints the old → new version, the new commits and the HTTP check. It refuses w
 has local changes, isn't on `main` or has diverged (it never stashes, resets or merges), and
 says "already up to date" when there is nothing new. `motherapp status` shows the service, the
 running vs checkout version and each tool's state; `motherapp help` lists the rest (`version`,
-`check`, `logs`, `open`, `uninstall`). Versions look like `v2-abc1234`: the number in `VERSION`
+`doctor`, `logs`, `open`, `uninstall`). **`motherapp doctor`** reports what is missing or out of
+date and then offers the fixes it found, asking before each one (the same sudo/apt steps an
+install offers, such as the CPU access steps), without rebuilding; `motherapp doctor --yes`
+accepts them. Use it when a page says some access is missing: `motherapp install` does nothing
+when the checkout is already up to date. Versions look like `v2-abc1234`: the number in `VERSION`
 (bumped by hand), the short git hash, and `-dirty` for a build with uncommitted changes. The
 sidebar footer and Settings show the running version.
 

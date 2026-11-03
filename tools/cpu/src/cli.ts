@@ -159,7 +159,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
 }
 
 const INTEL_ONLY = "limits and use are for Intel CPUs only so far (AMD Ryzen profiles need the SMU, a later step)";
-const NO_WRITE = "Some limits can't be written: run `motherapp install` in a terminal and allow the \"CPU limits\" step.";
+const NO_WRITE = "Some limits can't be written: run `motherapp doctor` in a terminal and allow the \"CPU limits access\" step.";
 
 function intelProfiles(io: CliIO, json: boolean): number {
   const loaded = loadIntelSettings(io.settingsFile, { create: true });

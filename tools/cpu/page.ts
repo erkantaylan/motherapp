@@ -379,7 +379,7 @@ function note(text: string): HTMLParagraphElement {
   return p;
 }
 
-/** Like put, with `backticked` parts as <code> ("run `motherapp install`"). */
+/** Like put, with `backticked` parts as <code> ("run `motherapp doctor`"). */
 function setCodeText(node: HTMLElement, text: string): void {
   if (node.dataset.text === text) return;
   node.dataset.text = text;

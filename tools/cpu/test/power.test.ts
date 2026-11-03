@@ -42,3 +42,8 @@ test("no RAPL zone, or no read access, is a problem worded for the page", (t) =>
   fs.chmodSync(path.join(root, E), 0o000);
   assert.deepEqual(new PowerMeter(root).read(0), { problem: NO_ENERGY_ACCESS });
 });
+
+test("the no-access hint fits both vendors: names motherapp doctor, not the Intel-only step", () => {
+  assert.match(NO_ENERGY_ACCESS, /`motherapp doctor`/);
+  assert.doesNotMatch(NO_ENERGY_ACCESS, /CPU limits|motherapp check/);
+});

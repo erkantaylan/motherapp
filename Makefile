@@ -1,11 +1,11 @@
 # Thin wrapper over install.sh and the npm scripts; the real logic lives there.
-# Needs Node >= 24 on PATH for everything except install/check/uninstall.
+# Needs Node >= 24 on PATH for everything except install/doctor/uninstall.
 
 SERVICE := motherapp
 URL     := http://127.0.0.1:$(or $(MOTHERAPP_PORT),7323)/
 
 .DEFAULT_GOAL := help
-.PHONY: help install check uninstall purge deps build test typecheck verify \
+.PHONY: help install doctor uninstall purge deps build test typecheck verify \
         dev start status restart stop logs open clean
 
 help: ## List targets
@@ -16,8 +16,8 @@ help: ## List targets
 install: ## Check deps, install missing ones (asks first), build, set up the service
 	./install.sh
 
-check: ## Report dependency and service status, change nothing
-	./install.sh --check
+doctor: ## Report status, then offer the fixes it found (asks before each)
+	./install.sh --doctor
 
 uninstall: ## Stop and remove the service, keep config and state
 	./install.sh --uninstall

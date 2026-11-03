@@ -4,8 +4,8 @@
 // sysfs is the undervolt (undervoltMV), set through a root helper (src/voltage.ts).
 //
 // Writing needs access to the sysfs files, which motherapp-cpu-access.service grants the
-// user's group at boot (packaging/, offered by install.sh). Without it every write fails with
-// EACCES and the page says how to get access.
+// user's group at boot (packaging/, offered by install.sh and `motherapp doctor`). Without it
+// every write fails with EACCES and the page says how to get access.
 //
 // Stock = the values before motherapp first changed anything this boot, snapshotted to
 // $XDG_STATE_HOME/motherapp/cpu-stock.json (keyed by the kernel's boot_id) right before the
@@ -55,7 +55,7 @@ export const MHZ_RANGE: [number, number] = [400, 7000];
 export const PL_RANGE: [number, number] = [10, 4095];
 
 export const THERMALD =
-  "thermald is running: in its adaptive mode it rewrites PL1 every few seconds, so a PL1 set here doesn't stick. Run `motherapp install` and allow it to turn thermald off (`sudo systemctl disable --now thermald`).";
+  "thermald is running: in its adaptive mode it rewrites PL1 every few seconds, so a PL1 set here doesn't stick. Run `motherapp doctor` in a terminal and allow it to turn thermald off (`sudo systemctl disable --now thermald`).";
 
 /** thermald is running (found by its /proc/<pid>/comm). It manages PL1 itself. */
 export function thermaldRunning(root = DEFAULT_ROOT): boolean {
@@ -67,7 +67,7 @@ export function thermaldRunning(root = DEFAULT_ROOT): boolean {
 }
 
 export const NO_ACCESS =
-  "motherapp can't change the CPU limits yet: run `motherapp install` in a terminal and allow the \"CPU limits\" step (it asks for sudo once).";
+  "motherapp can't change the CPU limits yet: run `motherapp doctor` in a terminal and allow the \"CPU limits access\" step (it asks for sudo once).";
 
 const CPU_DIR = "sys/devices/system/cpu";
 const POWERCAP_DIR = "sys/class/powercap";

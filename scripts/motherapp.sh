@@ -48,7 +48,10 @@ Usage: motherapp <command>
                     says so, and re-runs ./install.sh only if the build is missing or stale.
   status            service state, running vs checkout version, each tool's state
   version           the version that was built (also: --version, -V)
-  check             ./install.sh --check (report only, changes nothing)
+  doctor [--yes]    ./install.sh --doctor: report, then offer each fix it found
+                    (sudo/apt steps, the CPU access steps, thermald), asking first;
+                    --yes / -y accepts them (an apt install that would remove packages
+                    still needs --allow-removals too). No npm ci, build or unit rewrite.
   logs              follow the service log (journalctl --user -u motherapp -f -o cat)
   open              open the UI in the browser
   uninstall         ./install.sh --uninstall (extra options are passed on, e.g. --purge)
@@ -301,7 +304,16 @@ main() {
     install | update) (( $# == 0 )) || die "usage: motherapp $cmd (no options)" 2; cmd_install ;;
     status) cmd_status ;;
     version | --version | -V) cmd_version ;;
-    check) exec bash "$REPO_DIR/install.sh" --check "$@" ;;
+    doctor)
+      local a
+      for a in "$@"; do
+        case $a in
+          --yes | -y | --allow-removals) ;;
+          *) die "usage: motherapp doctor [--yes|-y] [--allow-removals]" 2 ;;
+        esac
+      done
+      exec bash "$REPO_DIR/install.sh" --doctor "$@"
+      ;;
     logs) exec journalctl --user -u motherapp -f -o cat ;;
     open) cmd_open ;;
     uninstall) exec bash "$REPO_DIR/install.sh" --uninstall "$@" ;;

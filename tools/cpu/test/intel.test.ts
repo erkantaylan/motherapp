@@ -126,7 +126,7 @@ test("applyLimits: no write access is one message naming the settings, and how t
   const r = applyLimits(root, { pl1W: 125, pl2W: 188, turbo: false });
   assert.deepEqual(r.changed, ["Turbo on → off"]);
   assert.equal(r.problems.length, 1);
-  assert.match(r.problems[0]!, /^Not allowed to change PL1 \(long-term power\), PL2 \(short-term power\)\. .*`motherapp install`.*"CPU limits"/);
+  assert.match(r.problems[0]!, /^Not allowed to change PL1 \(long-term power\), PL2 \(short-term power\)\. .*`motherapp doctor`.*"CPU limits access"/);
   assert.equal(readFile(root, PL1), "241000000");
 });
 
