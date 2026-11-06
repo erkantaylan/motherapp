@@ -30,6 +30,7 @@ tools/<id>/
 | `page` | Optional custom page module (see § 6). |
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
 | `wide` | Optional, default `false`. The page may grow to 1600 px on a wide screen instead of the usual 960 px column (the CPU page uses it for its live column). Lay the page out so it still works at 960 px and on a phone. |
+| `localActions` | Optional array of action names only this computer may call, even while the "Local network" switch is on. The core refuses them for any other connection with `-32004` before the tool hears of them; the test is the one for changing network settings (a loopback source under a localhost name). For what must not leave this machine (DESIGN.md § 3 "Network switch scope"). A page can read the code from the rejected `ctx.action` and adapt, as `tools/tmux/page.ts` does. |
 | `order` | Optional number, a default sidebar position hint: lower comes first, and tools without one follow alphabetically by id. It applies only until the user re-orders the tools on the Settings page; after that their saved order rules, and a newly installed tool is appended at the end (alphabetically among other new ones), hint or not. Audio has `"order": 1` so it comes first out of the box. |
 | `bin` | Optional. `{ "<command>": "<script relative to the tool dir>" }`, e.g. `{"audioctl": "audioctl.ts"}`. For each entry `install.sh` writes `~/.local/bin/<command>`, a bash wrapper that runs the script with the installer's Node 24 by absolute path (so an older `node` on PATH or a keyboard shortcut's minimal PATH doesn't matter), and `--uninstall` removes it. The script must be a Node script; the command name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and must be unique across tools. The core ignores this field. |
 
@@ -77,7 +78,7 @@ crash). Only then is the tool `running`. Actions time out after 30 s. Error mess
 shown to the user on the failed dot, so write them for humans. Codes: `-32000` action failed
 (the SDK's default for a thrown `Error`), `-32602` invalid params, `-32601` unknown
 action/method; the core itself uses `-32001` timeout, `-32002` tool unavailable,
-`-32003` unknown tool.
+`-32003` unknown tool, `-32004` a `localActions` action from another machine.
 
 ### State, paths and deltas
 
@@ -119,7 +120,8 @@ files older than a minute (`sweepTmpFiles`), left by a save that was killed anyw
 - **An action's result goes only to the caller.** The core forwards it to the one client that
   sent the action and neither logs nor caches it. That makes it the place for a value shown
   once, like the inbox tool's new link (`create` returns it; the page and `inboxctl new` show
-  it, and only a hash is kept).
+  it, and only a hash is kept), or for text that may hold secrets, like the tmux tool's screen
+  preview (`view`, which is also in `localActions`).
 - **A tool may run its own listener** on `127.0.0.1` and a port of its own (the core doesn't
   know or proxy it). The inbox tool does (default 7324), so that cloudflared can expose that
   port and nothing of the core. Such a tool owns the port's security entirely: bind to
@@ -178,7 +180,9 @@ if (process.argv[2] === "serve") {
 | `readPersistedState(id)` | For plain CLI subcommands that want the last known state. |
 | `exitOnBrokenPipe(...streams)` | Plain CLI subcommands only, never `serve`: an EPIPE on stdout/stderr (default) or the given streams exits 0 quietly; other errors still throw. |
 
-**Poll only while watched.** Nothing should run every N seconds while nobody looks. The core
+**Poll only while watched.** Nothing should run every N seconds while nobody looks (the tmux
+tool is the one decided exception, DESIGN.md § 3 "Polling": its notifications must work with no
+page open, so it polls all the time, one `tmux` call a tick, and ignores `watch`). The core
 counts viewers per tool: a browser tab that has the tool's page open **and** visible (Page
 Visibility API; a hidden tab, another page or a closed socket doesn't count). On 0→1 it sends
 the tool `watch {watching: true}` at once; on 1→0 it waits 5 s (so a quick tab switch doesn't
@@ -209,9 +213,11 @@ tool.onWatch((watching) => {
 });
 ```
 
-`tools/demo/` does exactly this; `tools/tmux/`, `tools/shortcuts/`, `tools/brightness/` and
+`tools/demo/` does exactly this; `tools/shortcuts/`, `tools/brightness/` and
 `tools/inbox/` (its pane list) do it with injectable timers so their tests can assert that no
-`tmux`/`gsettings`/`getvcp` call happens while unwatched.
+`tmux`/`gsettings`/`getvcp` call happens while unwatched. A page that needs something costly only
+while it is shown can also ask for it itself, while `document.visibilityState` is `visible`, as
+the tmux page does for its preview.
 
 **Persistence.** On construction the SDK loads `$XDG_STATE_HOME/motherapp/<id>.json`
 (default `~/.local/state/motherapp/`) over `initialState` and **marks every loaded top-level key
@@ -297,7 +303,7 @@ shell-quoted command) belongs in a state field, e.g. `copy: { bind: "sessions.{k
   "confirm": "Kill tmux session '{name}'?{attachedNote}" }
 ```
 
-`tools/demo/` uses all three forms; `tools/tmux/` uses `copy: { bind }` and `confirm`.
+`tools/demo/` uses all three forms; `tools/tmux/page.ts` uses `copy: { bind }` and `confirm` through `ctx.render`.
 
 **Status dots** come for free: *setting* while the request is out, *set* on success (shown for
 ~2 s, then it fades out), *failed* on error (message on hover; it stays until the next
@@ -362,7 +368,8 @@ contain `{word}` placeholders (that page inserts a zero-width space after each `
 page and the tool share (`src/accel.ts`, `src/command.ts`, `src/groups.ts`) imports nothing, so the browser can
 load it through relative `./src/….ts` imports. `tools/inbox/page.ts` is another one: a form,
 a one-time secret display with `copy` buttons from `ctx.render`, and text from strangers shown
-with `textContent` only.
+with `textContent` only. `tools/tmux/page.ts` is a third: two columns by container query, rows
+updated in place, and terminal colours applied as style properties on `textContent` spans.
 
 ## 7. Checklist for a new tool
 

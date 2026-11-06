@@ -3,6 +3,8 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { Proc, Runner } from "../src/runner.ts";
+import type { ClaudeDetails, ClaudeSource, ClaudeStatus } from "../src/claude.ts";
+import type { Notifier } from "../src/notify.ts";
 import type { Timers } from "../src/service.ts";
 import type { Session } from "../src/tmux.ts";
 
@@ -28,7 +30,7 @@ export class FakeProc extends EventEmitter implements Proc {
   }
 }
 
-/** What `tmux list-sessions` sees: sessions, or one of the no-server / failure answers. */
+/** What `tmux list-panes` sees: sessions, or one of the no-server / failure answers. */
 export type FakeServer =
   | { sessions: Session[] }
   | { noServer: "stale-socket" | "no-socket" | "no-dir" }
@@ -39,6 +41,8 @@ export class FakeTmux implements Runner {
   calls: string[][] = [];
   server: FakeServer = { sessions: [] };
   socket = "/tmp/tmux-1000/default";
+  /** What `capture-pane` prints. */
+  screen = "\x1b[31mhello\x1b[39m\n";
 
   spawn(cmd: string, args: string[]): Proc {
     if (cmd !== "tmux") throw new Error(`unexpected command ${cmd}`);
@@ -66,9 +70,25 @@ export class FakeTmux implements Runner {
       return p.finish(1, "", `error connecting to ${this.socket} (No such file or directory)\n`);
     }
     const cmd = args.find((a) => !a.startsWith("-"));
-    if (cmd === "list-sessions") {
-      const out = s.sessions.map((x) => [x.id, x.name, x.windows, x.created, x.attached, x.activity, x.command, x.path].join("\t") + "\n").join("");
-      return p.finish(0, out);
+    if (cmd === "list-panes") return p.finish(0, paneLines(s.sessions));
+    if (cmd === "capture-pane") {
+      const t = args[args.indexOf("-t") + 1]!;
+      if (!s.sessions.some((x) => `${x.id}:` === t)) return p.finish(1, "", `can't find session: ${t}\n`);
+      return p.finish(0, this.screen);
+    }
+    if (cmd === "rename-session") {
+      const t = args[args.indexOf("-t") + 1]!;
+      const x = s.sessions.find((y) => y.id === t);
+      if (!x) return p.finish(1, "", `can't find session: ${t}\n`);
+      const name = args.at(-1)!.replaceAll("##", "#").replace(/[:.]/g, "_");
+      if (s.sessions.some((y) => y !== x && y.name === name)) return p.finish(1, "", `duplicate session: ${name}\n`);
+      x.name = name;
+      return p.finish(0);
+    }
+    if (cmd === "display-message") {
+      const t = args[args.indexOf("-t") + 1]!;
+      const x = s.sessions.find((y) => y.id === t);
+      return x ? p.finish(0, `${x.name}\n`) : p.finish(1, "", `can't find session: ${t}\n`);
     }
     if (cmd === "kill-session") {
       const t = args[args.indexOf("-t") + 1]!;
@@ -82,7 +102,53 @@ export class FakeTmux implements Runner {
 }
 
 export function session(id: number, name: string, more: Partial<Session> = {}): Session {
-  return { id: `$${id}`, name, windows: 1, created: 1_700_000_000, attached: 0, activity: 1_700_000_000, command: "bash", path: "/home/u", ...more };
+  const command = more.command ?? "bash";
+  const path = more.path ?? "/home/u";
+  return {
+    id: `$${id}`,
+    name,
+    windows: 1,
+    created: 1_700_000_000,
+    attached: 0,
+    activity: 1_700_000_000,
+    input: 1_700_000_000,
+    command,
+    path,
+    panes: [{ id: `%${id}`, pid: 1000 + id, active: true, width: 80, height: 24, command, path }],
+    ...more,
+  };
+}
+
+/** `list-panes -a -F FORMAT` output for these sessions. */
+export function paneLines(sessions: Session[]): string {
+  return sessions
+    .flatMap((x) =>
+      x.panes.map((p) => [x.id, x.name, x.windows, x.created, x.attached, x.input, x.activity, 1, p.active ? 1 : 0, p.id, p.pid, p.width, p.height, p.command, p.path].join("\t") + "\n"),
+    )
+    .join("");
+}
+
+/** Claude's files, as a test sets them. */
+export class FakeClaude implements ClaudeSource {
+  panes = new Map<number, ClaudeStatus>();
+  transcripts = new Map<string, ClaudeDetails>();
+  agents: number | undefined = 0;
+  forPanes(panePids: ReadonlySet<number>): Map<number, ClaudeStatus> {
+    return new Map([...this.panes].filter(([pid]) => panePids.has(pid)));
+  }
+  details(sessionId: string): ClaudeDetails | undefined {
+    return this.transcripts.get(sessionId);
+  }
+  runningAgents(): number | undefined {
+    return this.agents;
+  }
+}
+
+export class FakeNotifier implements Notifier {
+  sent: string[] = [];
+  send(name: string, word: string): void {
+    this.sent.push(`${name}: ${word}`);
+  }
 }
 
 export class FakeTimers implements Timers {

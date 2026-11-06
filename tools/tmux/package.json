@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "tmux tool: list tmux sessions, copy the attach command, kill sessions.",
+  "description": "tmux tool: a dashboard of tmux sessions with state, preview and notifications.",
   "bin": {
     "tmuxctl": "./tmuxctl.ts"
   },

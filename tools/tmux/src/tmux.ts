@@ -1,6 +1,6 @@
-// Talking to tmux 3.4: list sessions, kill one, and the shell command that attaches to one.
+// Talking to tmux: list sessions, kill or rename one, capture a pane, and the commands that attach.
 //
-// Facts checked against real tmux 3.4 (see test/real-tmux.test.ts):
+// Facts checked against real tmux 3.4 and 3.6a (see test/real-tmux.test.ts):
 // - Without a UTF-8 client, tmux replaces every non-printable or non-ASCII byte in -F output
 //   with "_", including the tab separators. `-u` (force UTF-8) keeps tabs and unicode, so every
 //   call passes it; the systemd service's locale doesn't matter then.
@@ -9,10 +9,28 @@
 //   The listed name is exactly the string `-t '=<name>'` matches.
 // - No server: exit 1 with "no server running on <socket>" (socket file left behind), or
 //   "error connecting to <socket> (No such file or directory)" (no socket, or no socket dir).
+// - `session_activity` is not output: it moves on client input and lagged real pane output by
+//   hours. `window_activity` is output; a session's is the max across its windows.
+// - `rename-session` expands formats in the new name: "#S" and "#{...}" are replaced, "##" is a
+//   literal "#". `#(...)` isn't run, it becomes empty.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { run } from "./runner.ts";
 import type { Runner } from "./runner.ts";
+
+export interface Pane {
+  /** tmux pane id, "%3". */
+  id: string;
+  /** The pane's main process. */
+  pid: number;
+  /** The active pane of the session's current window. */
+  active: boolean;
+  width: number;
+  height: number;
+  /** Foreground command. */
+  command: string;
+  path: string;
+}
 
 export interface Session {
   /** tmux session id, "$3". Stable across renames; reset when the server restarts. */
@@ -23,11 +41,14 @@ export interface Session {
   created: number;
   /** Number of attached clients. */
   attached: number;
-  /** Unix seconds of the last activity. */
+  /** Unix seconds of the last output in any window (`window_activity`, the max). */
   activity: number;
+  /** Unix seconds of the last client input (`session_activity`). Not output: see above. */
+  input: number;
   /** Active pane of the current window. */
   command: string;
   path: string;
+  panes: Pane[];
 }
 
 export const FIELDS = [
@@ -37,6 +58,13 @@ export const FIELDS = [
   "session_created",
   "session_attached",
   "session_activity",
+  "window_activity",
+  "window_active",
+  "pane_active",
+  "pane_id",
+  "pane_pid",
+  "pane_width",
+  "pane_height",
   "pane_current_command",
   "pane_current_path", // last, so a tab in a path can't shift the other fields
 ] as const;
@@ -47,25 +75,35 @@ const int = (s: string | undefined): number => {
   return Number.isFinite(n) ? Math.trunc(n) : 0;
 };
 
-/** Parses `list-sessions -F FORMAT` output. Lines that don't look like a session are skipped. */
+/** Parses `list-panes -a -F FORMAT` output into sessions. Lines that don't look like a pane are skipped. */
 export function parseSessions(out: string): Session[] {
-  const sessions: Session[] = [];
+  const sessions = new Map<string, Session>();
   for (const line of out.split("\n")) {
     if (line === "") continue;
     const f = line.split("\t");
     if (f.length < FIELDS.length || !/^\$\d+$/.test(f[0]!)) continue;
-    sessions.push({
-      id: f[0]!,
-      name: f[1]!,
-      windows: int(f[2]),
-      created: int(f[3]),
-      attached: int(f[4]),
-      activity: int(f[5]),
-      command: f[6]!,
-      path: f.slice(7).join("\t"),
-    });
+    const pane: Pane = {
+      id: f[9]!,
+      pid: int(f[10]),
+      active: f[7] === "1" && f[8] === "1",
+      width: int(f[11]),
+      height: int(f[12]),
+      command: f[13]!,
+      path: f.slice(14).join("\t"),
+    };
+    let s = sessions.get(f[0]!);
+    if (!s) {
+      s = { id: f[0]!, name: f[1]!, windows: int(f[2]), created: int(f[3]), attached: int(f[4]), activity: 0, input: int(f[5]), command: pane.command, path: pane.path, panes: [] };
+      sessions.set(s.id, s);
+    }
+    s.activity = Math.max(s.activity, int(f[6]));
+    s.panes.push(pane);
+    if (pane.active) {
+      s.command = pane.command;
+      s.path = pane.path;
+    }
   }
-  return sessions;
+  return [...sessions.values()];
 }
 
 /** POSIX shell single quoting: 'it'\''s' — safe for any string without NUL. */
@@ -101,6 +139,8 @@ export interface TmuxOptions {
   exists?: (p: string) => boolean;
 }
 
+export const SESSION_GONE = "That session doesn't exist anymore.";
+
 function firstLine(s: string): string {
   return s.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
 }
@@ -124,7 +164,8 @@ export class Tmux {
 
   /** Lists sessions. "No server" in any of its forms is `{ kind: "none" }`, not an error. */
   async list(): Promise<ListResult> {
-    const res = await run(this.runner, "tmux", this.args("list-sessions", "-F", FORMAT)).catch((e: Error) => {
+    // list-panes, not list-sessions: one call gives every window's activity and every pane's pid.
+    const res = await run(this.runner, "tmux", this.args("list-panes", "-a", "-F", FORMAT)).catch((e: Error) => {
       throw new TmuxError(e.message);
     });
     if (res.code === 0) return { kind: "ok", sessions: parseSessions(res.stdout) };
@@ -144,7 +185,20 @@ export class Tmux {
       throw new TmuxError(`Can't connect to the tmux server at ${sock}: ${why}`);
     }
     if (!this.exists(dir)) return { kind: "none", reason: `No tmux server has run for this user yet (${dir} doesn't exist).` };
-    throw new TmuxError(`tmux list-sessions failed: ${msg || `exit code ${res.code}`}`);
+    throw new TmuxError(`tmux list-panes failed: ${msg || `exit code ${res.code}`}`);
+  }
+
+  /** Runs tmux; "that session is gone" in any form is one message. */
+  private async session(what: string, ...args: string[]): Promise<string> {
+    const res = await run(this.runner, "tmux", this.args(...args)).catch((e: Error) => {
+      throw new TmuxError(e.message);
+    });
+    if (res.code === 0) return res.stdout;
+    const msg = firstLine(res.stderr);
+    if (/^can't find (session|pane|window)/.test(msg) || /^no server running/.test(msg) || /^error connecting to .*No such file/i.test(msg)) {
+      throw new TmuxError(SESSION_GONE);
+    }
+    throw new TmuxError(`tmux ${what} failed: ${msg || `exit code ${res.code}`}`);
   }
 
   /**
@@ -152,15 +206,41 @@ export class Tmux {
    * exactly, so "foo" never kills "foo2".
    */
   async kill(target: string): Promise<void> {
-    const res = await run(this.runner, "tmux", this.args("kill-session", "-t", target)).catch((e: Error) => {
+    await this.session("kill-session", "kill-session", "-t", target);
+  }
+
+  /**
+   * Renames the session with this id and returns the name it really got: tmux turns ":" and "."
+   * into "_". The id stays, so rows and an open page follow the session.
+   */
+  async rename(id: string, name: string): Promise<string> {
+    const wanted = name.trim();
+    if (wanted === "") throw new TmuxError("The name can't be empty.");
+    const literal = wanted.replaceAll("#", "##"); // rename-session expands formats
+    const res = await run(this.runner, "tmux", this.args("rename-session", "-t", id, "--", literal)).catch((e: Error) => {
       throw new TmuxError(e.message);
     });
-    if (res.code === 0) return;
     const msg = firstLine(res.stderr);
-    if (/^can't find session/.test(msg) || /^no server running/.test(msg) || /^error connecting to .*No such file/i.test(msg)) {
-      throw new TmuxError("That session doesn't exist anymore.");
+    if (res.code !== 0) {
+      const dup = /^duplicate session: (.*)$/.exec(msg);
+      if (dup) throw new TmuxError(`There is already a session named '${dup[1]}'.`);
+      if (/^can't find session/.test(msg) || /^no server running/.test(msg) || /^error connecting to .*No such file/i.test(msg)) throw new TmuxError(SESSION_GONE);
+      throw new TmuxError(`tmux rename-session failed: ${msg || `exit code ${res.code}`}`);
     }
-    throw new TmuxError(`tmux kill-session failed: ${msg || `exit code ${res.code}`}`);
+    return (await this.session("display-message", "display-message", "-p", "-t", id, "#{session_name}")).replace(/\n$/, "");
+  }
+
+  /**
+   * The visible screen of a session's active pane, with colours as SGR escapes (`-e`). Screen
+   * contents can hold secrets: never publish this in state or log it.
+   */
+  capture(id: string): Promise<string> {
+    return this.session("capture-pane", "capture-pane", "-p", "-e", "-t", `${id}:`);
+  }
+
+  /** Argv of a tmux client attached to a session by exact name. For a terminal to run. */
+  attachArgv(name: string): string[] {
+    return ["tmux", ...this.args("attach-session", "-t", `=${name}`)];
   }
 }
 
@@ -189,7 +269,7 @@ export function tildify(p: string, home: string | undefined): string {
 }
 
 export interface SessionRow {
-  [k: string]: string | number;
+  [k: string]: string | number | boolean;
   id: string;
   name: string;
   windows: number;
@@ -197,6 +277,8 @@ export interface SessionRow {
   created: number;
   /** Second line: windows, attached/detached, created, last activity, active pane. */
   detail: string;
+  /** "claude · ~/project": the active pane, for the session list. */
+  where: string;
   /** Appended to the kill confirm text: "" or " It is attached (2 clients)." */
   attachedNote: string;
   attachCommand: string;
@@ -206,8 +288,9 @@ export interface SessionRow {
 export const sessionKey = (id: string): string => id.replace(/^\$/, "");
 
 export function sessionRow(s: Session, nowMs: number, home: string | undefined): SessionRow {
+  const where = [s.command, s.path && tildify(s.path, home)].filter(Boolean);
   const parts = [plural(s.windows, "window"), attachedText(s.attached), `created ${ago(s.created, nowMs)}`, `active ${ago(s.activity, nowMs)}`];
-  if (s.command || s.path) parts.push([s.command, s.path && tildify(s.path, home)].filter(Boolean).join(" in "));
+  if (where.length) parts.push(where.join(" in "));
   return {
     id: s.id,
     name: s.name,
@@ -217,13 +300,8 @@ export function sessionRow(s: Session, nowMs: number, home: string | undefined):
     // No raw activity time: it changes on every keystroke. The coarse "active … ago" in
     // `detail` changes at most once a minute, so a busy session isn't a delta every poll.
     detail: parts.join(" · "),
+    where: where.join(" · "),
     attachedNote: s.attached > 0 ? ` It is attached (${plural(s.attached, "client")}).` : "",
     attachCommand: attachCommand(s.name),
   };
-}
-
-export function sessionsToState(sessions: Session[], nowMs: number, home: string | undefined): Record<string, SessionRow> {
-  const out: Record<string, SessionRow> = {};
-  for (const s of sessions) out[sessionKey(s.id)] = sessionRow(s, nowMs, home);
-  return out;
 }

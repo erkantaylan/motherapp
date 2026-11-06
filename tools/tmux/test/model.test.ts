@@ -3,30 +3,41 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { diffState } from "../src/diff.ts";
-import { FORMAT, Tmux, ago, attachCommand, defaultSocketPath, parseSessions, sessionRow, sessionsToState, shellQuote, tildify } from "../src/tmux.ts";
+import { FORMAT, Tmux, ago, attachCommand, defaultSocketPath, parseSessions, sessionRow, shellQuote, tildify } from "../src/tmux.ts";
+import type { Pane } from "../src/tmux.ts";
 import { FakeTmux, session } from "./fakes.ts";
 
 test("FORMAT asks for the fields in order, tab-separated, path last", () => {
   assert.equal(
     FORMAT,
-    "#{session_id}\t#{session_name}\t#{session_windows}\t#{session_created}\t#{session_attached}\t#{session_activity}\t#{pane_current_command}\t#{pane_current_path}",
+    "#{session_id}\t#{session_name}\t#{session_windows}\t#{session_created}\t#{session_attached}\t#{session_activity}\t#{window_activity}\t#{window_active}\t#{pane_active}\t#{pane_id}\t#{pane_pid}\t#{pane_width}\t#{pane_height}\t#{pane_current_command}\t#{pane_current_path}",
   );
 });
 
-test("parseSessions: names with spaces, quotes and unicode; a tab in the path; junk skipped", () => {
+const pane = (over: Partial<Pane>): Pane => ({ id: "%0", pid: 10, active: true, width: 80, height: 24, command: "bash", path: "/", ...over });
+
+test("parseSessions: one session from its panes; names with spaces, quotes and unicode; a tab in the path; junk skipped", () => {
   const out = [
-    "$0\tmy project\t3\t1700000000\t2\t1700000100\tvim\t/home/u/src",
-    `$12\tit's a "test" é🚀 \\t\t1\t1700000001\t0\t1700000002\tbash\t/tmp/a\tb`,
-    "$3\tback\\\\slash\t1\t1\t0\t1\t\t",
+    "$0\tmy project\t2\t1700000000\t2\t1700000100\t1700000300\t0\t1\t%0\t10\t80\t24\tmake\t/home/u/build",
+    "$0\tmy project\t2\t1700000000\t2\t1700000100\t1700000200\t1\t1\t%1\t11\t100\t30\tvim\t/home/u/src",
+    `$12\tit's a "test" é🚀 \\t\t1\t1700000001\t0\t1700000002\t1700000002\t1\t1\t%2\t12\t80\t24\tbash\t/tmp/a\tb`,
     "garbage line",
-    "x1\ta\t1\t1\t0\t1\tbash\t/",
+    "x1\ta\t1\t1\t0\t1\t1\t1\t1\t%3\t13\t80\t24\tbash\t/",
     "$4\ttoo\tfew",
     "",
   ].join("\n");
   assert.deepEqual(parseSessions(out), [
-    { id: "$0", name: "my project", windows: 3, created: 1700000000, attached: 2, activity: 1700000100, command: "vim", path: "/home/u/src" },
-    { id: "$12", name: `it's a "test" é🚀 \\t`, windows: 1, created: 1700000001, attached: 0, activity: 1700000002, command: "bash", path: "/tmp/a\tb" },
-    { id: "$3", name: "back\\\\slash", windows: 1, created: 1, attached: 0, activity: 1, command: "", path: "" },
+    {
+      id: "$0", name: "my project", windows: 2, created: 1700000000, attached: 2,
+      activity: 1700000300, // the max across windows, not session_activity
+      input: 1700000100,
+      command: "vim", path: "/home/u/src", // the active window's active pane
+      panes: [pane({ id: "%0", pid: 10, active: false, command: "make", path: "/home/u/build" }), pane({ id: "%1", pid: 11, width: 100, height: 30, command: "vim", path: "/home/u/src" })],
+    },
+    {
+      id: "$12", name: `it's a "test" é🚀 \\t`, windows: 1, created: 1700000001, attached: 0, activity: 1700000002, input: 1700000002, command: "bash", path: "/tmp/a\tb",
+      panes: [pane({ id: "%2", pid: 12, path: "/tmp/a\tb" })],
+    },
   ]);
   assert.deepEqual(parseSessions(""), []);
 });
@@ -86,9 +97,9 @@ test("list: always -u (else tmux turns tabs and unicode into _); -S only for a g
   fake.server = { sessions: [session(1, "a b")] };
   const r = await tmuxWith(fake).list();
   assert.deepEqual(r, { kind: "ok", sessions: [session(1, "a b")] });
-  assert.deepEqual(fake.calls[0], ["-u", "list-sessions", "-F", FORMAT]);
+  assert.deepEqual(fake.calls[0], ["-u", "list-panes", "-a", "-F", FORMAT]);
   await new Tmux({ runner: fake, socket: "/x/sock" }).list();
-  assert.deepEqual(fake.calls[1], ["-u", "-S", "/x/sock", "list-sessions", "-F", FORMAT]);
+  assert.deepEqual(fake.calls[1], ["-u", "-S", "/x/sock", "list-panes", "-a", "-F", FORMAT]);
 });
 
 test("list: no server in each of its forms is an empty list with a reason, not an error", async () => {
@@ -106,7 +117,7 @@ test("list: other connection errors and a missing tmux are errors", async () => 
   fake.server = { fail: "error connecting to /tmp/tmux-1000/default (Permission denied)" };
   await assert.rejects(tmuxWith(fake).list(), { message: "Can't connect to the tmux server at /tmp/tmux-1000/default: Permission denied" });
   fake.server = { fail: "something odd" };
-  await assert.rejects(tmuxWith(fake).list(), { message: "tmux list-sessions failed: something odd" });
+  await assert.rejects(tmuxWith(fake).list(), { message: "tmux list-panes failed: something odd" });
   fake.server = { missing: true };
   await assert.rejects(tmuxWith(fake).list(), { message: "tmux not found (is tmux installed?)" });
 });
@@ -141,13 +152,13 @@ test("rows: relative times, attached text, ~ paths, kill note, attach command", 
     attached: 2,
     created: 1_700_000_000 - 7200,
     detail: "2 windows · attached (2 clients) · created 2 h ago · active 1 min ago · vim in ~/src",
+    where: "vim · ~/src",
     attachedNote: " It is attached (2 clients).",
     attachCommand: "tmux attach -t '=it'\\''s'",
   });
   const d = sessionRow(session(5, "x", { attached: 0, command: "", path: "" }), now, undefined);
   assert.equal(d.detail, "1 window · detached · created just now · active just now");
   assert.equal(d.attachedNote, "");
-  assert.deepEqual(Object.keys(sessionsToState([session(7, "a"), session(10, "b")], now, undefined)), ["7", "10"]);
 });
 
 test("diffState: per-field changes, deletions, whole new rows", () => {

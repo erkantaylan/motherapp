@@ -49,7 +49,7 @@ API only; the inbox tool's tunnel listener is separate and has its own token aut
 
 Target: **Ubuntu 24.04, GNOME, Wayland**. `./install.sh` checks the Node, audio and brightness
 rows and offers to install what's missing (asking before every `sudo`/apt step). `tmux`,
-`gsettings`/`dconf` and `cloudflared` aren't checked by the installer: a tool whose command is
+`terminator`, `gsettings`/`dconf` and `cloudflared` aren't checked by the installer: a tool whose command is
 missing says so on its page.
 
 | Needed for | Dependency | Ubuntu package / source |
@@ -59,7 +59,7 @@ missing says so on its page.
 | Audio | `pw-dump`, `pw-play`, `pw-record`, `pw-metadata`, `wpctl`; PipeWire, WirePlumber and pipewire-pulse user services | `pipewire-bin`, `wireplumber` |
 | Audio (L/R test) | freedesktop test sounds | `sound-theme-freedesktop` |
 | Brightness | `ddcutil`, `libddcutil`, the `i2c-dev` module, `/dev/i2c-*`, membership of the `i2c` group | `ddcutil`, `libddcutil4` |
-| tmux tool | `tmux` | `tmux` |
+| tmux tool | `tmux`; for Open, `terminator`; for notifications, `notify-send` or `gdbus` | `tmux`, `terminator`, `libnotify-bin` or `libglib2.0-bin` |
 | Shortcuts tool | `gsettings`, `dconf` (GNOME) | `libglib2.0-bin`, `dconf-cli` |
 | Inbox tool | `cloudflared` (quick tunnels, no account) | Cloudflare's package |
 

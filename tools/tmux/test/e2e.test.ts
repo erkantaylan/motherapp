@@ -76,6 +76,8 @@ test("core + tmux tool with a fake tmux: live list, rename in place, kill", asyn
       XDG_STATE_HOME: path.join(tmp, "state"),
       MOTHERAPP_TOOLS_DIR: path.join(repo, "tools"),
       MOTHERAPP_WEB_DIR: path.join(tmp, "noweb"),
+      MOTHERAPP_TMUX_NOTIFY: "off",
+      CLAUDE_CONFIG_DIR: path.join(tmp, "claude"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -99,21 +101,24 @@ test("core + tmux tool with a fake tmux: live list, rename in place, kill", asyn
   await c.open();
   await waitFor(() => c.notes("tools").some((p) => p.tools.find((x: any) => x.id === "tmux")?.status === "running"), "tmux running", 15_000);
   const info = c.notes("tools").at(-1).tools.find((x: any) => x.id === "tmux");
-  assert.equal(info.page, "declarative");
+  assert.equal(info.page, "custom");
   assert.equal(info.title, "tmux");
-  // Nobody has the page open yet: no tmux call at all, over more than one 2 s poll interval.
-  await new Promise((r) => setTimeout(r, 2500));
-  assert.deepEqual(calls(), [], "no polling while unwatched");
-  // The tab shows the tmux page: an immediate list, then every 2 s.
-  assert.equal((await c.call("tool.watch", { tool: "tmux" })).error, undefined);
-  // the first poll lands in the snapshot or as a delta
+  assert.equal(info.wide, true);
+  // Nobody has the page open, and it polls anyway: state and notifications need that.
+  // The first poll lands in the snapshot or as a delta.
   const hasRow = (key: string, name: string) =>
     c.notes("snapshot").some((s) => s.tool === "tmux" && s.state.sessions?.[key]?.name === name) ||
     c.changes().some((x) => (x.path === "sessions" && x.value?.[key]?.name === name) || (x.path === `sessions.${key}` && x.value?.name === name));
   await waitFor(() => hasRow("0", "work") && hasRow("1", "foo2"), "first list", 10_000);
-  assert.ok(calls().every((l) => l.startsWith("-u list-sessions -F ")));
+  assert.ok(calls().every((l) => l.startsWith("-u list-panes -a -F ")));
 
-  // a new session, a rename and an attach show up on the next 2 s poll, as small deltas
+  // The screen reaches the caller of `view` only: not in any state or log the core keeps.
+  const view = await c.call("action", { tool: "tmux", name: "view", args: { id: "0" } });
+  assert.equal(view.result.selected.text, "screen secret\n");
+  assert.ok(!JSON.stringify(c.msgs.filter((m) => m.method)).includes("screen secret"));
+  assert.ok(!lines.some((l) => JSON.stringify(l).includes("screen secret")));
+
+  // a new session, a rename and an attach show up on the next poll, as small deltas
   server([
     session(0, "renamed work", { created: now, activity: now, attached: 1 }),
     session(1, "foo2", { created: now, activity: now }),

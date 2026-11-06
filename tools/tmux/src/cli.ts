@@ -1,5 +1,7 @@
 // Plain subcommands for terminals and scripts; they work without the core.
 import type { Writable } from "node:stream";
+import { launch, openArgv, openEnv } from "./open.ts";
+import type { Launcher } from "./open.ts";
 import { Tmux, TmuxError, ago, attachCommand, attachedText } from "./tmux.ts";
 import type { Session, TmuxOptions } from "./tmux.ts";
 
@@ -8,6 +10,9 @@ export const USAGE = `usage: tmuxctl <command> [args]
   list [--json]        tmux sessions: name, windows, attached/detached, created, last activity
   attach-cmd <name>    print the shell command that attaches to the session
   kill <name>          kill the session with exactly this name
+  rename <name> <new>  rename the session with exactly this name; prints the name it really got
+                       (tmux turns ":" and "." into "_")
+  open <name>          open the session in a new Terminator window
   serve                JSON-RPC serve mode (started by the motherapp core)
 
 Exit codes: 0 ok, 1 tmux failed or no such session, 2 usage error.
@@ -18,6 +23,7 @@ export interface CliIO {
   stdout: Writable;
   stderr: Writable;
   now?: () => number;
+  launcher?: Launcher;
 }
 
 class UsageError extends Error {}
@@ -73,6 +79,19 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         const name = one(args, "session name");
         await tmux.kill(`=${name}`);
         line(io.stdout, `killed '${name}'`);
+        return 0;
+      }
+      case "rename": {
+        if (args.length !== 2) throw new UsageError("expected a session name and a new name (quote names with spaces)");
+        const s = await find(tmux, args[0]!);
+        const name = await tmux.rename(s.id, args[1]!);
+        line(io.stdout, `renamed '${s.name}' to '${name}'`);
+        return 0;
+      }
+      case "open": {
+        const s = await find(tmux, one(args, "session name"));
+        await (io.launcher ?? launch)(openArgv(tmux.attachArgv(s.name), process.env), openEnv(process.env));
+        line(io.stdout, `opened '${s.name}'`);
         return 0;
       }
       case undefined:

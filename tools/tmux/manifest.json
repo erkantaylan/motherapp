@@ -3,11 +3,14 @@
   "title": "tmux",
   "icon": "🖥️",
   "serve": ["node", "tmuxctl.ts", "serve"],
+  "page": "page.ts",
   "bin": { "tmuxctl": "tmuxctl.ts" },
   "commands": {
     "tmuxctl": [
       { "title": "Kill the tmux session 'scratch'", "args": ["kill", "scratch"] }
     ]
   },
-  "defaultEnabled": true
+  "defaultEnabled": true,
+  "wide": true,
+  "localActions": ["open", "view"]
 }
