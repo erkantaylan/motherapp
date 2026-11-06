@@ -56,4 +56,6 @@ export const ErrorCode = {
   ToolUnavailable: -32002,
   /** No such tool id. */
   UnknownTool: -32003,
+  /** The action is in the tool's `localActions` and this connection isn't from this computer. */
+  LocalOnly: -32004,
 } as const;

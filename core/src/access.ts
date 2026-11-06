@@ -8,7 +8,8 @@
 //                         its hostname and <hostname>.local. Every other name is refused, which
 //                         is what stops DNS rebinding.
 //   Source addresses      loopback, and while open private/link-local ranges only.
-//   Changing settings     only from a loopback connection that uses a localhost name.
+//   Changing settings     only from a loopback connection that uses a localhost name. A tool's
+//                         `localActions` (manifest) use the same test.
 import * as net from "node:net";
 import type * as os from "node:os";
 

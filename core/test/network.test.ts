@@ -9,6 +9,7 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { WebSocket } from "ws";
+import { ErrorCode } from "@motherapp/protocol";
 import type { NetworkInfo } from "@motherapp/protocol";
 import { canChangeSettings, classifySource, isAllowedOrigin, isAllowedSource, isLocalhostName, machineNames, refusal, RejectLog } from "../src/access.ts";
 import type { HostContext } from "../src/access.ts";
@@ -200,10 +201,11 @@ function fakeMonitor() {
   return { monitor, started, watchers, fire: () => watchers.forEach((w) => w("eth0: connection changed")) };
 }
 
-async function setup(t: { after(fn: () => unknown): void }, opts: { config?: unknown; net?: ReturnType<typeof fakeNet>; allowSource?: (a: string | undefined) => boolean; interfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]> } = {}) {
+async function setup(t: { after(fn: () => unknown): void }, opts: { config?: unknown; net?: ReturnType<typeof fakeNet>; allowSource?: (a: string | undefined) => boolean; interfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>; addTools?: (toolsDir: string) => void } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-net-"));
   const toolsDir = path.join(tmp, "tools");
   fs.mkdirSync(toolsDir);
+  opts.addTools?.(toolsDir);
   const webDir = path.join(tmp, "web");
   fs.mkdirSync(webDir);
   fs.writeFileSync(path.join(webDir, "index.html"), "<!doctype html><title>t</title>");
@@ -370,6 +372,55 @@ test("switch on + trusted network: listener up, LAN names accepted, live off aga
   assert.equal(file.lan.extra, "x");
   assert.equal(file.lan.enabled, false);
   c.ws.close();
+});
+
+// A tool without the SDK (the temp dir can't resolve packages): it notes every action it hears.
+const NOTING_TOOL = `
+import * as fs from "node:fs";
+import * as readline from "node:readline";
+for await (const line of readline.createInterface({ input: process.stdin })) {
+  const m = JSON.parse(line);
+  if (m.id === undefined) continue;
+  if (m.method === "action") fs.appendFileSync("heard.log", m.params.name + "\\n");
+  const result = m.method === "describe" ? { title: "Noting", page: "custom" } : m.method === "state.get" ? { state: {} } : "ran";
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+}
+`;
+
+test("localActions: run from this computer, refused for a LAN client before the tool hears of them", async (t) => {
+  let heard = "";
+  const s = await setup(t, {
+    config: { port: 0, tools: {}, ...TRUSTED_HOME },
+    addTools: (toolsDir) => {
+      const dir = path.join(toolsDir, "noting");
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, "t.mjs"), NOTING_TOOL);
+      fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ id: "noting", title: "Noting", serve: ["node", "t.mjs"], localActions: ["secret"] }));
+      heard = path.join(dir, "heard.log");
+    },
+  });
+  t.after(() => s.manager.shutdown());
+  await waitFor(() => s.manager.host("noting").status === "running", "tool running");
+  const local = new Ws(`ws://127.0.0.1:${s.port}/ws`);
+  assert.equal(await local.open(), "open");
+  await local.call("network.get", { refresh: true });
+  await waitFor(() => s.lines.some((l) => l.msg === "network: LAN opened (Home)"), "LAN open");
+  const lan = new Ws(`ws://127.0.0.2:${s.port}/ws`, { host: `kappa.local:${s.port}`, origin: `http://kappa.local:${s.port}` });
+  assert.equal(await lan.open(), "open");
+  // A loopback source relaying under a LAN name is no better.
+  const relayed = new Ws(`ws://127.0.0.1:${s.port}/ws`, { host: `kappa:${s.port}` });
+  assert.equal(await relayed.open(), "open");
+
+  const params = { tool: "noting", name: "secret" };
+  assert.equal((await local.call("action", params)).result, "ran");
+  for (const c of [lan, relayed]) {
+    const { error } = await c.call("action", params);
+    assert.equal(error.code, ErrorCode.LocalOnly);
+    assert.match(error.message, /Only from this computer/);
+  }
+  assert.equal((await lan.call("action", { tool: "noting", name: "other" })).result, "ran");
+  assert.deepEqual(fs.readFileSync(heard, "utf8").trim().split("\n"), ["secret", "other"]);
+  for (const c of [local, lan, relayed]) c.ws.close();
 });
 
 test("a network change opens and closes the listener; transitions are logged once", async (t) => {

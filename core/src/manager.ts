@@ -228,6 +228,11 @@ export class Manager extends EventEmitter<ManagerEvents> {
     host.restart();
   }
 
+  /** Is this action one only this computer may call (the manifest's `localActions`)? */
+  isLocalAction(id: string, name: string): boolean {
+    return this.host(id).manifest.localActions?.includes(name) === true;
+  }
+
   action(id: string, name: string, args: JsonObject | undefined, onProgress?: (p: ProgressParams) => void): Promise<JsonValue> {
     return this.host(id).action(name, args, onProgress);
   }

@@ -305,7 +305,7 @@ class Client {
     return this.streams.has(`${tool}\0${name}`);
   }
 
-  /** Only a loopback connection under a localhost name may change network settings. */
+  /** Only a loopback connection under a localhost name may change network settings or call a tool's `localActions`. */
   canChange(): boolean {
     return canChangeSettings(this.conn.remoteAddress, this.conn, this.lan.hostContext().subdomains);
   }
@@ -339,8 +339,12 @@ class Client {
     switch (method as keyof UiRequests) {
       case "action": {
         const tool = str("tool");
+        const name = str("name");
+        // The same test as network settings, so the tool itself never hears of a LAN client's
+        // attempt (DESIGN.md § 3 "Network switch scope").
+        if (this.manager.isLocalAction(tool, name) && !this.canChange()) throw new RpcError(ErrorCode.LocalOnly, "Only from this computer: open motherapp at http://localhost for this");
         const args = typeof p.args === "object" && p.args !== null ? (p.args as JsonObject) : undefined;
-        return this.manager.action(tool, str("name"), args, (pr) => {
+        return this.manager.action(tool, name, args, (pr) => {
           const n: UiNotifications["progress"] = { tool, id, text: pr.text };
           if (pr.fraction !== undefined) n.fraction = pr.fraction;
           this.notify("progress", n);

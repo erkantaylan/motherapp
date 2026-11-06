@@ -19,6 +19,11 @@ export interface ToolManifest {
   /** The page may use the full width of a wide screen instead of the usual 960 px column. */
   wide?: boolean;
   /**
+   * Actions only this computer may call, even while the "Local network" switch is on. The core
+   * refuses them for any other connection (`ErrorCode.LocalOnly`) before the tool hears of them.
+   */
+  localActions?: string[];
+  /**
    * Default sidebar position hint (lower first), used until the user re-orders the tools on
    * the Settings page. Tools without one follow, alphabetically.
    */
