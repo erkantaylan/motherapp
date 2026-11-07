@@ -295,6 +295,9 @@ export interface SessionRow {
   detail: string;
   /** "claude · ~/project": the active pane, for the session list. */
   where: string;
+  /** The active pane's program and folder, on their own. */
+  command: string;
+  path: string;
   /** Appended to the kill confirm text: "" or " It is attached (2 clients)." */
   attachedNote: string;
   attachCommand: string;
@@ -317,6 +320,8 @@ export function sessionRow(s: Session, nowMs: number, home: string | undefined):
     // `detail` changes at most once a minute, so a busy session isn't a delta every poll.
     detail: parts.join(" · "),
     where: where.join(" · "),
+    command: s.command,
+    path: s.path && tildify(s.path, home),
     attachedNote: s.attached > 0 ? ` It is attached (${plural(s.attached, "client")}).` : "",
     attachCommand: attachCommand(s.name),
   };

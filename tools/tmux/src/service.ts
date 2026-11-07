@@ -256,6 +256,7 @@ export class TmuxService {
           ? {
               claude: {
                 ...(d as JsonObject | undefined),
+                ...(d?.cwd ? { cwd: tildify(d.cwd, this.home) } : {}),
                 ...(s.claude.name ? { name: s.claude.name } : {}),
                 ...(s.claude.waitingFor ? { waitingFor: s.claude.waitingFor } : {}),
                 agents: (this.claude.agentList(s.claude) ?? []) as unknown as JsonValue,

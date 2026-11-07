@@ -153,6 +153,8 @@ test("rows: relative times, attached text, ~ paths, kill note, attach command", 
     created: 1_700_000_000 - 7200,
     detail: "2 windows · attached (2 clients) · created 2 h ago · active 1 min ago · vim in ~/src",
     where: "vim · ~/src",
+    command: "vim",
+    path: "~/src",
     attachedNote: " It is attached (2 clients).",
     attachCommand: "tmux attach -t '=it'\\''s'",
   });

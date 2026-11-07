@@ -23,6 +23,8 @@ interface Row {
   created: number;
   detail: string;
   where: string;
+  command: string;
+  path: string;
   attachedNote: string;
   state: string;
   claude: boolean;
@@ -52,6 +54,8 @@ interface AgentView {
 interface ClaudeView extends ListExtra {
   lastPrompt?: string;
   lastMessage?: string;
+  /** The folder Claude works in, which can differ from the pane's. */
+  cwd?: string;
   model?: string;
   name?: string;
   waitingFor?: string;
@@ -111,7 +115,7 @@ const STYLE = `
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .mtx-row:hover { border-color: var(--accent); }
 .mtx-row:focus-visible, .mtx-btn:focus-visible, .mtx-rename input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-.mtx-row[aria-current="true"] { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.mtx-row[aria-current="true"] { border-color: var(--accent); }
 .mtx-top, .mtx-mid { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .mtx-name { font-weight: 600; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mtx-state { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 0.8125rem; color: var(--muted); }
@@ -123,6 +127,14 @@ const STYLE = `
 [data-state="idle"] .mtx-dot { background: var(--muted); }
 .mtx-sub { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 0.8125rem; }
 .mtx-chip { flex: none; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mtx-ai, .mtx-agents { flex: none; display: inline-flex; align-items: center; align-self: center; }
+.mtx-agents { gap: 3px; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mtx-ai[hidden], .mtx-agents[hidden], .mtx-path[hidden] { display: none; }
+/* rtl moves the ellipsis to the start, so a long path keeps its end; the bdi keeps the text in order. */
+.mtx-path { direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.mtx-tip { position: relative; }
+.mtx-top .mtx-state { padding: 4px; margin: -4px; align-self: center; }
+.mtx-tip:hover::after { content: attr(data-tip); position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); z-index: 2; padding: 2px 8px; border-radius: 6px; background: var(--fg); color: var(--bg); font-size: 0.75rem; font-weight: 400; white-space: nowrap; pointer-events: none; }
 .mtx-stale { flex: none; padding: 0 6px; font-size: 0.75rem; color: var(--muted); border: 1px dashed var(--muted); border-radius: 999px; white-space: nowrap; }
 .mtx-stale[hidden] { display: none; }
 .mtx-row[data-stale="true"] .mtx-name { color: var(--muted); }
@@ -215,7 +227,9 @@ function timeline(): { root: SVGSVGElement; update(encoded: string): void } {
 const asRows = (v: JsonValue | undefined): Record<string, Row> => (v && typeof v === "object" && !Array.isArray(v) ? (v as unknown as Record<string, Row>) : {});
 /** A confirm outside a list has no row to fill in, so `{word}` in a name must stay as it is. */
 const noPlaceholders = (s: string) => s.replace(/\{/g, "{​");
-const agentsText = (n: number) => `${n} sub-agent${n === 1 ? "" : "s"}`;
+const agentsText = (n: number) => `${n} sub-agent${n === 1 ? "" : "s"} running`;
+const CLAUDE_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#d97757" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4M7.5 3.9l9 16.2M16.5 3.9l-9 16.2M3.9 7.5l16.2 9M20.1 7.5 3.9 16.5"/></svg>`;
+const ROBOT_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v4"/><circle cx="12" cy="3" r="1"/><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M9 12v1.5M15 12v1.5M9.5 16h5M2 12v3M22 12v3"/></svg>`;
 
 /** The session the user last clicked, as `<id>@<created>`: tmux reuses ids after a server restart. */
 function readPicked(): string | undefined {
@@ -250,7 +264,12 @@ function fillList(dl: HTMLElement, rows: [string, string][]): void {
 interface RowEls {
   root: HTMLButtonElement;
   name: HTMLElement;
-  stateWord: HTMLElement;
+  state: HTMLElement;
+  claudeIcon: HTMLElement;
+  agents: HTMLElement;
+  agentCount: HTMLElement;
+  path: HTMLElement;
+  pathText: HTMLElement;
   sub: HTMLElement;
   chip: HTMLElement;
   stale: HTMLElement;
@@ -479,16 +498,24 @@ export default class TmuxPage extends HTMLElement {
 
   private makeRow(id: string): RowEls {
     const name = el("span", { class: "mtx-name" });
-    const stateWord = el("span");
     const dot = el("span", { class: "mtx-dot" });
+    const state = el("span", { class: "mtx-state mtx-tip" }, dot);
+    const claudeIcon = el("span", { class: "mtx-ai" });
+    claudeIcon.innerHTML = CLAUDE_ICON;
+    const robot = el("span", { class: "mtx-ai" });
+    robot.innerHTML = ROBOT_ICON;
+    const agentCount = el("span");
+    const agents = el("span", { class: "mtx-agents mtx-tip" }, robot, agentCount);
+    const pathText = el("bdi");
+    const path = el("span", { class: "mtx-path" }, pathText);
     const sub = el("span", { class: "mtx-sub" });
     const chip = el("span", { class: "mtx-chip" });
     const stale = el("span", { class: "mtx-stale" });
     const tl = timeline();
-    const root = el("button", { class: "mtx-row" }, el("span", { class: "mtx-top" }, name, stale, el("span", { class: "mtx-state" }, dot, stateWord)), el("span", { class: "mtx-mid" }, sub, chip), tl.root);
+    const root = el("button", { class: "mtx-row" }, el("span", { class: "mtx-top" }, claudeIcon, name, stale, state), el("span", { class: "mtx-mid" }, sub, agents, chip), path, tl.root);
     root.type = "button";
     root.addEventListener("click", () => this.select(id, true));
-    return { root, name, stateWord, sub, chip, stale, update: tl.update };
+    return { root, name, state, claudeIcon, agents, agentCount, path, pathText, sub, chip, stale, update: tl.update };
   }
 
   private updateRow(id: string): void {
@@ -506,13 +533,18 @@ export default class TmuxPage extends HTMLElement {
     r.root.setAttribute("aria-current", String(id === this.selected));
     r.name.textContent = s.name;
     r.name.title = s.name;
-    r.stateWord.textContent = s.state;
-    r.sub.textContent = (s.claude && extra?.title) || s.where;
+    r.state.dataset.tip = s.state;
+    r.state.setAttribute("aria-label", s.state);
+    r.claudeIcon.hidden = !s.claude;
+    r.sub.textContent = (s.claude && extra?.title) || s.command || s.where;
     r.sub.title = r.sub.textContent;
-    const chips = [];
-    if (s.agents) chips.push(agentsText(s.agents));
-    if (s.claude && extra?.contextTokens) chips.push(formatTokens(extra.contextTokens));
-    r.chip.textContent = chips.join(" · ");
+    r.agents.hidden = !s.agents;
+    r.agentCount.textContent = String(s.agents ?? "");
+    r.agents.dataset.tip = s.agents ? agentsText(s.agents) : "";
+    r.chip.textContent = s.claude && extra?.contextTokens ? formatTokens(extra.contextTokens) : "";
+    r.path.hidden = !s.path;
+    r.pathText.textContent = s.path;
+    r.path.title = s.path;
     r.update(s.timeline ?? "");
   }
 
@@ -582,16 +614,19 @@ export default class TmuxPage extends HTMLElement {
     const c = this.claudeView;
     const agents = s?.agents ?? 0;
     const named = c?.agents?.length ? c.agents.map((a) => `${a.description || "(no description)"} · ${a.type} · ${formatElapsed(Date.now() - a.startedAt)}`).join("\n") : undefined;
+    const panePath: [string, string | undefined] = ["Pane path", s?.path];
     const rows: [string, string | undefined][] = [
       ["Title", c?.title],
       ["Session", c?.name],
+      panePath,
+      ["Claude folder", c?.cwd],
       ["Waiting for", c?.waitingFor],
       ["Sub-agents", named ?? (agents > 0 ? `${agents} running` : undefined)],
       ["Context", c?.contextTokens ? `${formatTokens(c.contextTokens)} tokens${c.model ? ` · ${c.model}` : ""}` : undefined],
       ["Last prompt", c?.lastPrompt],
       ["Last message", c?.lastMessage],
     ];
-    const shown = s?.claude ? rows.filter((r): r is [string, string] => !!r[1]) : [];
+    const shown = (s?.claude ? rows : [panePath]).filter((r): r is [string, string] => !!r[1]);
     this.claude.hidden = shown.length === 0;
     fillList(this.claudeList, shown);
   }

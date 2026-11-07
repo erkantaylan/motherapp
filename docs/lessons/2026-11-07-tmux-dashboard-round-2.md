@@ -6,8 +6,8 @@ private tmux server with a real Claude.
 
 ## Lessons
 
-- [local] Check the real data before designing. `alternet/planets`, where 4 of the 7 sessions sit,
-  isn't a repo; their transcripts' latest `cwd` says they work in `Alternet.Mercury`. Git on
+- [local] Check the real data before designing. a parent folder, where 4 of the 7 sessions sit,
+  isn't a repo; their transcripts' latest `cwd` says they work in a repo below it. Git on
   `pane_current_path` would have shown nothing for them. → A Claude's folder comes from its
   transcript, and a project is the git top level.
 - [local] All 7 real sessions have `history_size` 0 and `alternate_on` 1: Claude's TUI uses the
@@ -41,3 +41,11 @@ private tmux server with a real Claude.
   anything else follows the first row.
 - A Claude that moves to another repo moves to that group on the next poll, so rows can reorder.
   It hasn't been seen to happen often; if it's annoying, group by the first folder instead.
+
+## UI pass
+
+- [local] A long path should lose its start, not its end: `direction: rtl` on the box puts the
+  ellipsis first, and a `<bdi>` around the text keeps the path's own order. Without the `<bdi>`
+  the leading `~/` and `/` get reordered.
+- [local] A state dot is only 8 px, too small to hover reliably, so `.mtx-state` adds padding with
+  a matching negative margin. The tooltip opens to the left, so the list's `overflow-y` can't clip it.
