@@ -57,11 +57,3 @@ export function previewFontPx(widthPx: number, cols: number): number {
   const fit = widthPx / (cols * MONO_RATIO);
   return Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.floor(fit * 10) / 10));
 }
-
-export function summaryText(states: string[]): string {
-  const n = (s: string) => states.filter((x) => x === s).length;
-  const parts = [`${states.length} session${states.length === 1 ? "" : "s"}`];
-  if (n("waiting")) parts.push(`${n("waiting")} waiting on you`);
-  if (n("working")) parts.push(`${n("working")} working`);
-  return parts.join(" · ");
-}

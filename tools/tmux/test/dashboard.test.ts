@@ -16,7 +16,7 @@ import { openArgv, openEnv } from "../src/open.ts";
 import type { Proc, Runner } from "../src/runner.ts";
 import { claudeState, outputState, staleDays } from "../src/state.ts";
 import { BUCKET_MS, Timeline } from "../src/timeline.ts";
-import { formatElapsed, formatTokens, previewFontPx, summaryText, timelineBars, timelineText } from "../src/view.ts";
+import { formatElapsed, formatTokens, previewFontPx, timelineBars, timelineText } from "../src/view.ts";
 import { FakeProc, tick } from "./fakes.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-tmux-claude-"));
@@ -333,8 +333,6 @@ test("view helpers: timeline bars and text, tokens, preview font, summary", () =
   assert.equal(previewFontPx(1000, 100), 14, "room to spare: capped");
   assert.equal(previewFontPx(600, 100), 10);
   assert.equal(previewFontPx(300, 200), 8, "too wide: the box scrolls");
-  assert.equal(summaryText(["working", "idle", "waiting", "working"]), "4 sessions · 1 waiting on you · 2 working");
-  assert.equal(summaryText(["idle"]), "1 session");
 });
 
 test("scanTranscript: the working folder is the latest main-thread one", () => {

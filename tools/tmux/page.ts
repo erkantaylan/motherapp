@@ -15,7 +15,7 @@
 import type { JsonValue } from "@motherapp/protocol";
 import type { PageContext } from "@motherapp/protocol/page";
 import { DEFAULT_BG, DEFAULT_FG, parseAnsi } from "./src/ansi.ts";
-import { formatElapsed, formatTokens, previewFontPx, summaryText, timelineBars, timelineText } from "./src/view.ts";
+import { formatElapsed, formatTokens, previewFontPx, timelineBars, timelineText } from "./src/view.ts";
 
 interface Row {
   id: string;
@@ -88,6 +88,7 @@ const STYLE = `
 /* One line that never changes height: a strip that grew would push the list from under the pointer. */
 .mtx-bar { position: sticky; top: var(--page-header-h, 0px); z-index: 2; display: flex; align-items: center; gap: 10px; min-height: 36px; background: var(--bg); min-width: 0; }
 .mtx-summary { margin: 0; flex: none; color: var(--muted); font-size: 0.9rem; }
+.mtx-bar[hidden], .mtx-summary:empty { display: none; }
 .mtx-needs { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .mtx-needs[hidden] { display: none; }
 .mtx-needs-label { flex: none; font-size: 0.8125rem; font-weight: 600; }
@@ -101,6 +102,7 @@ const STYLE = `
   /* The page itself doesn't scroll here: the list and the selected session scroll on their own.
      76px is the header's margin, the bar, the gap under it and a little room at the bottom. */
   .mtx-grid { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: calc(100vh - var(--page-header-h, 0px) - 76px); margin-bottom: -24px; }
+  .mtx[data-bar="off"] .mtx-grid { height: calc(100vh - var(--page-header-h, 0px) - 28px); }
   .mtx-list, .mtx-main { min-height: 0; overflow-y: auto; padding-right: 4px; }
 }
 .mtx-list { display: grid; gap: 6px; min-width: 0; align-content: start; }
@@ -169,6 +171,7 @@ const STYLE = `
 .mtx-screen[hidden], .mtx-claude[hidden], .mtx-rename[hidden], .mtx-note[hidden], .mtx-main[hidden] { display: none; }
 .mtx-claude dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 0.875rem; }
 .mtx-claude dt { color: var(--muted); }
+.mtx-claude dd.mtx-full { max-height: none; overflow-y: visible; }
 .mtx-claude dd { margin: 0; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 12em; overflow-y: auto; }
 @media (max-width: 720px) { .mtx-claude dl { grid-template-columns: minmax(0, 1fr); } .mtx-claude dd { margin-bottom: 6px; } }
 `;
@@ -254,7 +257,7 @@ function savePicked(value: string): void {
 function fillList(dl: HTMLElement, rows: [string, string][]): void {
   const dts = [...dl.querySelectorAll("dt")];
   if (dts.length !== rows.length || rows.some(([k], i) => dts[i]!.textContent !== k)) {
-    dl.replaceChildren(...rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })]));
+    dl.replaceChildren(...rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v, ...(k === "Last message" ? { class: "mtx-full" } : {}) })]));
     return;
   }
   rows.forEach(([, v], i) => {
@@ -319,6 +322,7 @@ export default class TmuxPage extends HTMLElement {
   private root = el("div", { class: "mtx" });
   private summary = el("p", { class: "mtx-summary" });
   private needs = el("div", { class: "mtx-needs" });
+  private bar = el("div", { class: "mtx-bar" }, this.summary, this.needs);
   private list = el("div", { class: "mtx-list" });
   private main = el("div", { class: "mtx-main" });
   private heading = el("h3");
@@ -405,7 +409,8 @@ export default class TmuxPage extends HTMLElement {
     }, { passive: true });
     this.main.append(el("div", { class: "mtx-card" }, head, actions, this.renameForm, this.renameNote), this.screenBar, this.screen, this.screenNote, this.claude);
     this.needs.hidden = true;
-    this.root.append(el("div", { class: "mtx-bar" }, this.summary, this.needs), el("div", { class: "mtx-grid" }, this.list, this.main));
+    this.updateBar();
+    this.root.append(this.bar, el("div", { class: "mtx-grid" }, this.list, this.main));
   }
 
   // ---- list ----
@@ -485,6 +490,7 @@ export default class TmuxPage extends HTMLElement {
     if (key === this.needsKey) return;
     this.needsKey = key;
     this.needs.hidden = ids.length === 0;
+    this.updateBar();
     this.needs.replaceChildren(
       ...(ids.length ? [el("span", { class: "mtx-needs-label", text: "Needs you" })] : []),
       ...ids.map((id) => {
@@ -552,7 +558,14 @@ export default class TmuxPage extends HTMLElement {
 
   private renderSummary(): void {
     const status = this.ctx?.get("status");
-    this.summary.textContent = typeof status === "string" ? status : summaryText(Object.values(this.sessions).map((s) => s.state));
+    this.summary.textContent = typeof status === "string" ? status : "";
+    this.updateBar();
+  }
+
+  /** The bar only exists for a problem or the Needs you strip; empty, it takes no room. */
+  private updateBar(): void {
+    this.bar.hidden = !this.summary.textContent && this.needs.hidden;
+    this.root.dataset.bar = this.bar.hidden ? "off" : "on";
   }
 
   private select(id: string | undefined, byUser: boolean): void {
