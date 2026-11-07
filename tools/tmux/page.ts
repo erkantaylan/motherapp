@@ -84,6 +84,14 @@ const BOTTOM_PX = 24;
 const TRANSCRIPT_FONT_PX = 13;
 
 const STYLE = `
+/* Only this page drops the shell's width cap. Where the page doesn't scroll (the wide layout),
+   it also drops the right padding and the page scrollbar's gutter, so the details scrollbar
+   sits at the screen edge. */
+.content:has(.mtx) { max-width: none; }
+@media (min-width: 1100px) {
+  .content:has(.mtx) { padding-inline-end: 0; }
+  html:has(.mtx) { scrollbar-gutter: auto; overflow-y: hidden; }
+}
 .mtx { display: grid; gap: 12px; color: var(--fg); container-type: inline-size; min-width: 0; }
 /* One line that never changes height: a strip that grew would push the list from under the pointer. */
 .mtx-bar { position: sticky; top: var(--page-header-h, 0px); z-index: 2; display: flex; align-items: center; gap: 10px; min-height: 36px; background: var(--bg); min-width: 0; }
