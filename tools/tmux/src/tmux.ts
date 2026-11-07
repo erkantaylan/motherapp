@@ -11,6 +11,9 @@
 //   "error connecting to <socket> (No such file or directory)" (no socket, or no socket dir).
 // - `session_activity` is not output: it moves on client input and lagged real pane output by
 //   hours. `window_activity` is output; a session's is the max across its windows.
+// - Full-screen programs run on the alternate screen, which has no scrollback: `capture-pane -S`
+//   gives only the screen. `history_size` doesn't say so: it is 0 for a Claude that is the pane's
+//   own process, but counts the shell's lines for one started from a shell. `alternate_on` does.
 // - `rename-session` expands formats in the new name: "#S" and "#{...}" are replaced, "##" is a
 //   literal "#". `#(...)` isn't run, it becomes empty.
 import * as fs from "node:fs";
@@ -27,6 +30,10 @@ export interface Pane {
   active: boolean;
   width: number;
   height: number;
+  /** Lines of scrollback tmux holds. */
+  history: number;
+  /** On the alternate screen, where that scrollback can't be reached. */
+  alternate: boolean;
   /** Foreground command. */
   command: string;
   path: string;
@@ -65,6 +72,8 @@ export const FIELDS = [
   "pane_pid",
   "pane_width",
   "pane_height",
+  "history_size",
+  "alternate_on",
   "pane_current_command",
   "pane_current_path", // last, so a tab in a path can't shift the other fields
 ] as const;
@@ -88,8 +97,10 @@ export function parseSessions(out: string): Session[] {
       active: f[7] === "1" && f[8] === "1",
       width: int(f[11]),
       height: int(f[12]),
-      command: f[13]!,
-      path: f.slice(14).join("\t"),
+      history: int(f[13]),
+      alternate: f[14] === "1",
+      command: f[15]!,
+      path: f.slice(16).join("\t"),
     };
     let s = sessions.get(f[0]!);
     if (!s) {
@@ -236,6 +247,11 @@ export class Tmux {
    */
   capture(id: string): Promise<string> {
     return this.session("capture-pane", "capture-pane", "-p", "-e", "-t", `${id}:`);
+  }
+
+  /** The same, with up to `lines` lines of scrollback above the screen. */
+  captureHistory(id: string, lines: number): Promise<string> {
+    return this.session("capture-pane", "capture-pane", "-p", "-e", "-S", String(-lines), "-t", `${id}:`);
   }
 
   /** Argv of a tmux client attached to a session by exact name. For a terminal to run. */

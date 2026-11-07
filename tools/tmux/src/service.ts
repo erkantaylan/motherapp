@@ -14,13 +14,14 @@ import type { Observation } from "./alerts.ts";
 import { ClaudeFiles } from "./claude.ts";
 import type { ClaudeSource, ClaudeStatus } from "./claude.ts";
 import { diffState } from "./diff.ts";
+import type { GitSource } from "./git.ts";
 import type { Notifier } from "./notify.ts";
 import { launch, openArgv, openEnv } from "./open.ts";
 import type { Launcher } from "./open.ts";
-import { claudeState, outputState } from "./state.ts";
+import { claudeState, outputState, staleDays } from "./state.ts";
 import type { SessionState } from "./state.ts";
 import { Timeline } from "./timeline.ts";
-import { TmuxError, SESSION_GONE, sessionKey, sessionRow } from "./tmux.ts";
+import { TmuxError, SESSION_GONE, sessionKey, sessionRow, tildify } from "./tmux.ts";
 import type { Pane, Session, Tmux } from "./tmux.ts";
 
 export interface Timers {
@@ -38,12 +39,17 @@ export const realTimers: Timers = {
 export const POLL_MS = 1500;
 /** A preview bigger than this is cut: a pane is a few KB, so this is only a guard. */
 const MAX_PREVIEW = 512 * 1024;
+/** Scrollback asked of tmux, above the screen. */
+export const HISTORY_LINES = 3000;
+/** At most this much of it goes to the page, newest kept. */
+export const MAX_HISTORY = 2 << 20;
 export const INITIAL_STATE: JsonObject = { sessions: {} };
 
 export interface ServiceOptions {
   tool: Tool;
   tmux: Tmux;
   notifier: Notifier;
+  git: GitSource;
   timers?: Timers;
   intervalMs?: number;
   home?: string | undefined;
@@ -76,6 +82,7 @@ export class TmuxService {
   private tool: Tool;
   private tmux: Tmux;
   private notifier: Notifier;
+  private git: GitSource;
   private timers: Timers;
   private intervalMs: number;
   private home: string | undefined;
@@ -93,6 +100,7 @@ export class TmuxService {
     this.tool = opts.tool;
     this.tmux = opts.tmux;
     this.notifier = opts.notifier;
+    this.git = opts.git;
     this.timers = opts.timers ?? realTimers;
     this.intervalMs = opts.intervalMs ?? POLL_MS;
     this.home = "home" in opts ? opts.home : process.env.HOME;
@@ -148,6 +156,7 @@ export class TmuxService {
     const rows: Record<string, JsonObject> = {};
     const seen = new Map<string, Seen>();
     const observations: Observation[] = [];
+    const folders = new Set<string>();
     for (const s of sessions) {
       const claude = sessionClaude(s.panes, found);
       const state = (claude && claudeState(claude.status)) ?? outputState(s.activity, s.command, now);
@@ -157,13 +166,37 @@ export class TmuxService {
       seen.set(key, { session: s, state, claude });
       this.timeline.add(life, state, now);
       observations.push({ key: life, name: s.name, state, claude: claude !== undefined, activity: s.activity, input: s.input });
-      const agents = claude && this.claude.runningAgents(claude);
-      rows[key] = { ...sessionRow(s, now, this.home), state, claude: claude !== undefined, timeline: this.timeline.encode(life, now), ...(agents ? { agents } : {}) };
+      const agents = claude && this.claude.agentList(claude)?.length;
+      const stale = staleDays(s.activity, state, now);
+      // Claude's own folder if it moved: a pane can sit in a parent of the repo it works in.
+      const folder = (claude && this.claude.details(claude.sessionId)?.cwd) || s.path;
+      folders.add(folder);
+      rows[key] = {
+        ...sessionRow(s, now, this.home),
+        state,
+        claude: claude !== undefined,
+        timeline: this.timeline.encode(life, now),
+        ...(agents ? { agents } : {}),
+        ...(stale !== undefined ? { staleDays: stale } : {}),
+        ...this.project(folder),
+      };
     }
+    this.git.refresh(folders);
     this.seen = seen;
     this.timeline.keep(new Set(observations.map((o) => o.key)));
     for (const a of this.alerter.observe(observations, now)) this.notifier.send(a.name, a.word);
     return rows;
+  }
+
+  /** Sessions in one repo are one project, wherever in it they are; else the folder is. */
+  private project(folder: string): JsonObject {
+    const git = this.git.get(folder);
+    const root = git?.root ?? folder;
+    return {
+      project: root.split("/").filter(Boolean).at(-1) ?? root,
+      projectPath: tildify(root, this.home),
+      ...(git ? { branch: git.branch, changes: git.changes } : {}),
+    };
   }
 
   private publish(next: JsonValue): void {
@@ -225,11 +258,31 @@ export class TmuxService {
                 ...(d as JsonObject | undefined),
                 ...(s.claude.name ? { name: s.claude.name } : {}),
                 ...(s.claude.waitingFor ? { waitingFor: s.claude.waitingFor } : {}),
+                agents: (this.claude.agentList(s.claude) ?? []) as unknown as JsonValue,
               },
             }
           : {}),
       },
     };
+  }
+
+  /**
+   * What came before the screen, for one look: tmux's scrollback, bounded in lines and bytes, or
+   * for a Claude on the alternate screen, where tmux has none to give, the end of its conversation.
+   */
+  private async history(id: string): Promise<JsonValue> {
+    const s = this.seen.get(id);
+    if (!s) throw new TmuxError(SESSION_GONE);
+    const pane = s.session.panes.find((p) => p.active) ?? s.session.panes[0];
+    const conversation = s.claude && (pane?.alternate || !pane?.history) ? this.claude.conversation(s.claude.sessionId) : undefined;
+    if (conversation) return { source: "transcript", text: conversation.text, cut: conversation.cut, cols: 0 };
+    let text = await this.tmux.captureHistory(`$${id}`, HISTORY_LINES);
+    let cut = (pane?.history ?? 0) > HISTORY_LINES;
+    if (text.length > MAX_HISTORY) {
+      text = text.slice(text.indexOf("\n", text.length - MAX_HISTORY) + 1);
+      cut = true;
+    }
+    return { source: "tmux", text, cut, cols: pane?.width ?? 0 };
   }
 
   private idOf(args: JsonObject): string {
@@ -257,7 +310,7 @@ export class TmuxService {
       await this.poll();
       return { name };
     });
-    // Local only (manifest `localActions`): the core refuses both for anyone but this computer.
+    // Local only (manifest `localActions`): the core refuses these for anyone but this computer.
     this.tool.action("open", async (args) => {
       const id = this.idOf(args);
       // The name now, not the last poll's: a window attaches by name.
@@ -268,5 +321,6 @@ export class TmuxService {
       this.tool.log.info(`opened a terminal window on '${s.name}'`, { id: s.id });
     });
     this.tool.action("view", (args) => this.view(typeof args.id === "string" ? this.idOf(args) : undefined));
+    this.tool.action("history", (args) => this.history(this.idOf(args)));
   }
 }

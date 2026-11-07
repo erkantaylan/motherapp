@@ -12,5 +12,5 @@
   },
   "defaultEnabled": true,
   "wide": true,
-  "localActions": ["open", "view"]
+  "localActions": ["open", "view", "history"]
 }

@@ -18,7 +18,7 @@
 // after a resume the old meta still looks running: it predates the new process. TaskStop leaves
 // it unset too, and only the agent's transcript shows it, ending "[Request interrupted by user".
 // The status file settles the rest: it stays "busy" while any sub-agent runs, so "idle" and
-// "shell" mean none. `runningAgents` takes all of that together, and an unknown version is no answer.
+// "shell" mean none. `agentList` takes all of that together, and an unknown version is no answer.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -35,6 +35,8 @@ export interface ClaudeStatus {
 }
 
 export interface ClaudeDetails {
+  /** Where Claude is working now: it may have moved into a repo below the folder it started in. */
+  cwd?: string;
   title?: string;
   lastPrompt?: string;
   lastMessage?: string;
@@ -43,12 +45,29 @@ export interface ClaudeDetails {
   model?: string;
 }
 
+/** A sub-agent running now. `description` is Claude's text: keep it out of state and logs. */
+export interface RunningAgent {
+  description: string;
+  type: string;
+  /** Epoch ms this run began: a meta file is written at the launch and when SendMessage continues it. */
+  startedAt: number;
+}
+
+export interface Conversation {
+  /** With SGR escapes, like a pane capture. */
+  text: string;
+  /** Older parts weren't read. */
+  cut: boolean;
+}
+
 export interface ClaudeSource {
   /** Pane pid → the Claude in that pane: the pane's own process, or else its nearest descendant. */
   forPanes(panePids: ReadonlySet<number>): Map<number, ClaudeStatus>;
   details(sessionId: string): ClaudeDetails | undefined;
   /** Sub-agents running now, or undefined when that can't be told. */
-  runningAgents(status: ClaudeStatus): number | undefined;
+  agentList(status: ClaudeStatus): RunningAgent[] | undefined;
+  /** The end of the conversation, for a pane with no scrollback of its own. */
+  conversation(sessionId: string): Conversation | undefined;
 }
 
 export const TAIL_BYTES = 1 << 20;
@@ -63,6 +82,9 @@ const AGENT_META = /^agent-.+\.meta\.json$/;
 const FINISHED_SINCE = [2, 1, 301];
 const INTERRUPTED = "[Request interrupted by user";
 const AGENT_TAIL_BYTES = 64 * 1024;
+const CONVERSATION_TAIL_BYTES = 8 << 20;
+export const MAX_CONVERSATION = 1 << 20;
+const MAX_TURN = 20_000;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -142,6 +164,7 @@ export function scanTranscript(text: string, into: ClaudeDetails = {}): ClaudeDe
     else if (r.type === "last-prompt" && typeof r.lastPrompt === "string") into.lastPrompt = r.lastPrompt.slice(0, MAX_PROMPT);
     else if (r.type === "assistant" && r.isSidechain !== true && isObject(r.message)) {
       const m = r.message;
+      if (typeof r.cwd === "string") into.cwd = r.cwd;
       const said = messageText(m.content);
       if (said !== undefined) into.lastMessage = said.slice(-MAX_MESSAGE);
       if (isObject(m.usage)) {
@@ -155,6 +178,30 @@ export function scanTranscript(text: string, into: ClaudeDetails = {}): ClaudeDe
     }
   }
   return into;
+}
+
+/** Text a person typed: not a tool result, and not a harness wrapper like <task-notification>. */
+function typedText(content: unknown): string | undefined {
+  const text = typeof content === "string" ? content : messageText(content);
+  return text === undefined || /^\s*</.test(text) ? undefined : text;
+}
+
+/** One turn of a transcript as display text, or undefined for what isn't part of the conversation. */
+export function turnText(r: unknown): string | undefined {
+  if (!isObject(r) || r.isSidechain === true || r.isMeta === true || !isObject(r.message)) return undefined;
+  const content = r.message.content;
+  if (r.type === "user") {
+    const text = typedText(content);
+    return text === undefined ? undefined : `\x1b[1;36m❯ ${text.slice(0, MAX_TURN)}\x1b[0m\n`;
+  }
+  if (r.type !== "assistant" || !Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const c of content) {
+    if (!isObject(c)) continue;
+    if (c.type === "text" && typeof c.text === "string" && c.text.trim() !== "") parts.push(`${c.text.slice(0, MAX_TURN)}\n`);
+    else if (c.type === "tool_use" && typeof c.name === "string") parts.push(`\x1b[2m· ${c.name}\x1b[0m\n`);
+  }
+  return parts.length ? parts.join("") : undefined;
 }
 
 const complete = (d: ClaudeDetails) => d.title !== undefined && d.lastPrompt !== undefined && d.lastMessage !== undefined && d.contextTokens !== undefined;
@@ -174,7 +221,7 @@ export class ClaudeFiles implements ClaudeSource {
   private statusCache = new Map<string, { mtimeMs: number; size: number; status: ReturnType<typeof parseStatus> }>();
   private transcripts = new Map<string, Cached>();
   private located = new Map<string, string>();
-  private metas = new Map<string, { mtimeMs: number; size: number; ended: boolean }>();
+  private metas = new Map<string, { mtimeMs: number; size: number; ended: boolean; description: string; type: string }>();
 
   constructor(opts: { dir?: string; proc?: string } = {}) {
     this.dir = opts.dir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
@@ -265,39 +312,93 @@ export class ClaudeFiles implements ClaudeSource {
     return undefined;
   }
 
-  runningAgents(s: ClaudeStatus): number | undefined {
+  agentList(s: ClaudeStatus): RunningAgent[] | undefined {
     if (!SESSION_ID.test(s.sessionId) || !writesFinished(s.version) || s.startedAt === undefined) return undefined;
-    if (s.status === "idle" || s.status === "shell") return 0; // both mean no sub-agent is running
+    if (s.status === "idle" || s.status === "shell") return []; // both mean no sub-agent is running
     if (s.status !== "busy" && s.status !== "waiting") return undefined;
     try {
       const file = this.locate(s.sessionId);
-      if (!file) return 0; // no transcript yet: nothing has been launched
+      if (!file) return []; // no transcript yet: nothing has been launched
       const dir = path.join(file.slice(0, -".jsonl".length), "subagents");
       let names: string[];
       try {
         names = fs.readdirSync(dir);
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code === "ENOENT") return 0; // never had one
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") return []; // never had one
         throw e;
       }
-      let n = 0;
-      for (const name of names) if (AGENT_META.test(name) && this.isRunning(path.join(dir, name), s.startedAt)) n++;
-      return n;
+      const agents: RunningAgent[] = [];
+      for (const name of names) {
+        const a = AGENT_META.test(name) ? this.runningAgent(path.join(dir, name), s.startedAt) : undefined;
+        if (a) agents.push(a);
+      }
+      return agents.sort((x, y) => x.startedAt - y.startedAt);
     } catch {
       return undefined;
     }
   }
 
-  private isRunning(meta: string, startedAt: number): boolean {
+  private runningAgent(meta: string, startedAt: number): RunningAgent | undefined {
     const st = fs.statSync(meta);
-    if (st.mtimeMs < startedAt) return false; // from an earlier process, which took it with it
+    if (st.mtimeMs < startedAt) return undefined; // from an earlier process, which took it with it
     let c = this.metas.get(meta);
     if (!c || c.mtimeMs !== st.mtimeMs || c.size !== st.size) {
       const d: unknown = JSON.parse(fs.readFileSync(meta, "utf8"));
-      c = { mtimeMs: st.mtimeMs, size: st.size, ended: !isObject(d) || d.finished === true || d.stoppedByUser === true };
+      const o = isObject(d) ? d : {};
+      c = {
+        mtimeMs: st.mtimeMs,
+        size: st.size,
+        ended: !isObject(d) || d.finished === true || d.stoppedByUser === true,
+        description: typeof o.description === "string" ? o.description : "",
+        type: typeof o.agentType === "string" ? o.agentType : "",
+      };
       this.metas.set(meta, c);
     }
-    return !c.ended && !endsInterrupted(this.tail(meta.replace(/\.meta\.json$/, ".jsonl")));
+    if (c.ended || endsInterrupted(this.tail(meta.replace(/\.meta\.json$/, ".jsonl")))) return undefined;
+    return { description: c.description, type: c.type, startedAt: st.mtimeMs };
+  }
+
+  conversation(sessionId: string): Conversation | undefined {
+    if (!SESSION_ID.test(sessionId)) return undefined;
+    try {
+      const file = this.locate(sessionId);
+      if (!file) return undefined;
+      const fd = fs.openSync(file, "r");
+      let data: string;
+      let start: number;
+      try {
+        const size = fs.fstatSync(fd).size;
+        start = Math.max(0, size - CONVERSATION_TAIL_BYTES);
+        const buf = Buffer.alloc(size - start);
+        data = buf.toString("utf8", 0, fs.readSync(fd, buf, 0, buf.length, start));
+      } finally {
+        fs.closeSync(fd);
+      }
+      const lines = data.split("\n");
+      if (start > 0) lines.shift(); // cut mid-line
+      const turns: string[] = [];
+      let size = 0;
+      let cut = start > 0;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (!/"type":"(user|assistant)"/.test(lines[i]!)) continue;
+        let text: string | undefined;
+        try {
+          text = turnText(JSON.parse(lines[i]!));
+        } catch {
+          continue;
+        }
+        if (text === undefined) continue;
+        if (size + text.length > MAX_CONVERSATION) {
+          cut = true;
+          break;
+        }
+        size += text.length;
+        turns.push(text);
+      }
+      return { text: turns.reverse().join("\n"), cut };
+    } catch {
+      return undefined;
+    }
   }
 
   private tail(file: string): string {

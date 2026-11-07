@@ -10,19 +10,19 @@ import { FakeTmux, session } from "./fakes.ts";
 test("FORMAT asks for the fields in order, tab-separated, path last", () => {
   assert.equal(
     FORMAT,
-    "#{session_id}\t#{session_name}\t#{session_windows}\t#{session_created}\t#{session_attached}\t#{session_activity}\t#{window_activity}\t#{window_active}\t#{pane_active}\t#{pane_id}\t#{pane_pid}\t#{pane_width}\t#{pane_height}\t#{pane_current_command}\t#{pane_current_path}",
+    "#{session_id}\t#{session_name}\t#{session_windows}\t#{session_created}\t#{session_attached}\t#{session_activity}\t#{window_activity}\t#{window_active}\t#{pane_active}\t#{pane_id}\t#{pane_pid}\t#{pane_width}\t#{pane_height}\t#{history_size}\t#{alternate_on}\t#{pane_current_command}\t#{pane_current_path}",
   );
 });
 
-const pane = (over: Partial<Pane>): Pane => ({ id: "%0", pid: 10, active: true, width: 80, height: 24, command: "bash", path: "/", ...over });
+const pane = (over: Partial<Pane>): Pane => ({ id: "%0", pid: 10, active: true, width: 80, height: 24, history: 0, alternate: false, command: "bash", path: "/", ...over });
 
 test("parseSessions: one session from its panes; names with spaces, quotes and unicode; a tab in the path; junk skipped", () => {
   const out = [
-    "$0\tmy project\t2\t1700000000\t2\t1700000100\t1700000300\t0\t1\t%0\t10\t80\t24\tmake\t/home/u/build",
-    "$0\tmy project\t2\t1700000000\t2\t1700000100\t1700000200\t1\t1\t%1\t11\t100\t30\tvim\t/home/u/src",
-    `$12\tit's a "test" é🚀 \\t\t1\t1700000001\t0\t1700000002\t1700000002\t1\t1\t%2\t12\t80\t24\tbash\t/tmp/a\tb`,
+    "$0\tmy project\t2\t1700000000\t2\t1700000100\t1700000300\t0\t1\t%0\t10\t80\t24\t0\t0\tmake\t/home/u/build",
+    "$0\tmy project\t2\t1700000000\t2\t1700000100\t1700000200\t1\t1\t%1\t11\t100\t30\t77\t1\tvim\t/home/u/src",
+    `$12\tit's a "test" é🚀 \\t\t1\t1700000001\t0\t1700000002\t1700000002\t1\t1\t%2\t12\t80\t24\t0\t0\tbash\t/tmp/a\tb`,
     "garbage line",
-    "x1\ta\t1\t1\t0\t1\t1\t1\t1\t%3\t13\t80\t24\tbash\t/",
+    "x1\ta\t1\t1\t0\t1\t1\t1\t1\t%3\t13\t80\t24\t0\t0\tbash\t/",
     "$4\ttoo\tfew",
     "",
   ].join("\n");
@@ -32,7 +32,7 @@ test("parseSessions: one session from its panes; names with spaces, quotes and u
       activity: 1700000300, // the max across windows, not session_activity
       input: 1700000100,
       command: "vim", path: "/home/u/src", // the active window's active pane
-      panes: [pane({ id: "%0", pid: 10, active: false, command: "make", path: "/home/u/build" }), pane({ id: "%1", pid: 11, width: 100, height: 30, command: "vim", path: "/home/u/src" })],
+      panes: [pane({ id: "%0", pid: 10, active: false, command: "make", path: "/home/u/build" }), pane({ id: "%1", pid: 11, width: 100, height: 30, history: 77, alternate: true, command: "vim", path: "/home/u/src" })],
     },
     {
       id: "$12", name: `it's a "test" é🚀 \\t`, windows: 1, created: 1700000001, attached: 0, activity: 1700000002, input: 1700000002, command: "bash", path: "/tmp/a\tb",

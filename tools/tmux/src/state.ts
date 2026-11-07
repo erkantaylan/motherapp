@@ -27,3 +27,13 @@ export function claudeState(status: string): SessionState | undefined {
   if (status === "waiting") return "waiting";
   return undefined;
 }
+
+/** Untouched this long, a session is flagged. Longer than a weekend, so Monday isn't a sea of flags. */
+export const STALE_DAYS = 3;
+
+/** Whole days without output, from STALE_DAYS on, for a session at rest; otherwise undefined. */
+export function staleDays(activity: number, state: SessionState, nowMs: number): number | undefined {
+  if (state === "working" || state === "waiting") return undefined;
+  const days = Math.floor((nowMs / 1000 - activity) / 86400);
+  return days >= STALE_DAYS ? days : undefined;
+}

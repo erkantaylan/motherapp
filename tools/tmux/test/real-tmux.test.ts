@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import { parseAnsi } from "../src/ansi.ts";
 import { runCli } from "../src/cli.ts";
+import { GitCache } from "../src/git.ts";
 import { launch, openArgv, openEnv } from "../src/open.ts";
 import { RealRunner } from "../src/runner.ts";
 import { Tmux, attachCommand } from "../src/tmux.ts";
@@ -219,4 +220,97 @@ test("launch: the name reaches the program as one argument; a failure says why; 
   fs.writeFileSync(path.join(bin, "terminator"), "#!/bin/sh\nexit 3\n");
   await assert.rejects(launch(["terminator"], env), { message: "The terminal closed at once (exit code 3)." });
   await assert.rejects(launch(["no-such-terminal"], env), { message: "no-such-terminal isn't installed." });
+});
+
+test("real tmux: scrollback comes above the screen; bounded by the line count asked for", { skip }, async () => {
+  assert.equal(tmux("new-session", "-d", "-s", "hist", "-x", "60", "-y", "10", `seq 1 500; sleep 60`).code, 0);
+  let s = (await sessionNamed("hist"))!;
+  for (let i = 0; i < 300 && !s.panes[0]!.history; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    s = (await sessionNamed("hist"))!;
+  }
+  assert.ok(s.panes[0]!.history >= 490, `history_size is ${s.panes[0]!.history}`);
+  const lines = (await client().captureHistory(s.id, 100)).trimEnd().split("\n");
+  assert.equal(lines.at(-1), "500");
+  assert.ok(lines.length >= 100 && lines.length <= 110, `100 of scrollback plus the screen, got ${lines.length}`);
+  assert.ok(!lines.includes("1"), "no further back than asked");
+  const all = (await client().captureHistory(s.id, 3000)).split("\n");
+  assert.ok(all.includes("1") && all.includes("500"));
+  await assert.rejects(client().captureHistory("$9999", 10), { message: "That session doesn't exist anymore." });
+  tmux("kill-session", "-t", "=hist");
+});
+
+test("real tmux: a full-screen program has no scrollback, which is why Claude's history comes from its transcript", { skip }, async () => {
+  assert.equal(tmux("new-session", "-d", "-s", "alt", "-x", "60", "-y", "10", `printf '\\033[?1049h'; seq 1 500; sleep 60`).code, 0);
+  let text = "";
+  for (let i = 0; i < 300 && !text.includes("500"); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    text = tmux("capture-pane", "-p", "-t", "=alt:").out;
+  }
+  const s = (await sessionNamed("alt"))!;
+  assert.equal(s.panes[0]!.history, 0);
+  assert.equal(s.panes[0]!.alternate, true);
+  assert.ok((await client().captureHistory(s.id, 3000)).trimEnd().split("\n").length <= 10, "the screen and no more");
+  tmux("kill-session", "-t", "=alt");
+});
+
+const git = (cwd: string, ...args: string[]) => {
+  const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout;
+};
+
+async function gitState(g: GitCache, folder: string) {
+  g.refresh([folder]);
+  for (let i = 0; i < 200 && g.get(folder) === undefined; i++) await new Promise((r) => setTimeout(r, 10));
+  return g.get(folder);
+}
+
+test("real git: branch, changes, a subfolder, a detached HEAD; no index lock and no index write; nothing breaks on a non-repo", { skip }, async () => {
+  const repo = path.join(dir, "repo");
+  fs.mkdirSync(path.join(repo, "sub"), { recursive: true });
+  git(repo, "init", "-q", "-b", "trunk");
+  fs.writeFileSync(path.join(repo, "a"), "1\n");
+  git(repo, "add", "a");
+  git(repo, "commit", "-q", "-m", "one");
+  const fresh = () => new GitCache({ runner });
+  assert.deepEqual(await gitState(fresh(), repo), { root: repo, branch: "trunk", changes: 0 });
+  assert.deepEqual(await gitState(fresh(), path.join(repo, "sub")), { root: repo, branch: "trunk", changes: 0 });
+
+  fs.writeFileSync(path.join(repo, "a"), "2\n");
+  fs.writeFileSync(path.join(repo, "new"), "x\n");
+  // Touching a tracked file makes a plain `git status` want to rewrite the index.
+  const index = path.join(repo, ".git", "index");
+  const before = fs.statSync(index).mtimeMs;
+  const watcher = fs.watch(path.join(repo, ".git"));
+  const seen: string[] = [];
+  watcher.on("change", (_e, f) => seen.push(String(f)));
+  assert.deepEqual(await gitState(fresh(), repo), { root: repo, branch: "trunk", changes: 2 });
+  await new Promise((r) => setTimeout(r, 50));
+  watcher.close();
+  assert.equal(fs.statSync(index).mtimeMs, before, "the index isn't rewritten");
+  assert.deepEqual(seen.filter((f) => f.includes("lock")), [], "no index.lock, not even for a moment");
+
+  git(repo, "checkout", "-q", "--detach");
+  const head = git(repo, "rev-parse", "--short=7", "HEAD").trim();
+  assert.equal((await gitState(fresh(), repo))?.branch, head);
+
+  assert.equal(await gitState(fresh(), dir), null, "not a repo");
+  assert.equal(await gitState(fresh(), path.join(dir, "no-such-folder")), null);
+  const broken = path.join(dir, "broken");
+  fs.mkdirSync(path.join(broken, ".git"), { recursive: true });
+  fs.writeFileSync(path.join(broken, ".git", "HEAD"), "garbage\n");
+  assert.equal(await gitState(fresh(), broken), null, "a broken repo");
+});
+
+test("real git: a repo's fsmonitor hook isn't run", { skip }, async () => {
+  const repo = path.join(dir, "hook");
+  fs.mkdirSync(repo);
+  git(repo, "init", "-q");
+  const marker = path.join(dir, "ran");
+  const hook = path.join(dir, "hook.sh");
+  fs.writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
+  git(repo, "config", "core.fsmonitor", hook);
+  await gitState(new GitCache({ runner }), repo);
+  assert.equal(fs.existsSync(marker), false);
 });

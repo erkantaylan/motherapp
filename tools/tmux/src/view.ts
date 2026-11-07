@@ -37,6 +37,16 @@ export function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
+/** 12 s, 1 min, 1 h 5 min, 25 h. */
+export function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h >= 24 || m === 0 ? `${h} h` : `${h} h ${m} min`;
+}
+
 export const MONO_RATIO = 0.6;
 export const MIN_FONT_PX = 8;
 export const MAX_FONT_PX = 14;

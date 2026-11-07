@@ -5,6 +5,7 @@
 // subcommand works on its own from a terminal (`tmuxctl help`).
 import { createTool, exitOnBrokenPipe } from "@motherapp/tool-sdk";
 import { runCli } from "./src/cli.ts";
+import { GitCache } from "./src/git.ts";
 import { DesktopNotifier, silentNotifier } from "./src/notify.ts";
 import { RealRunner } from "./src/runner.ts";
 import { INITIAL_STATE, TmuxService } from "./src/service.ts";
@@ -17,7 +18,7 @@ if (process.argv[2] === "serve") {
   const tool = createTool({ id: "tmux", title: "tmux", icon: "🖥️", page: "custom", initialState: INITIAL_STATE, persist: false });
   const tmux = new Tmux({ runner });
   const notifier = process.env.MOTHERAPP_TMUX_NOTIFY === "off" ? silentNotifier : new DesktopNotifier(runner, tool.log);
-  const service = new TmuxService({ tool, tmux, notifier });
+  const service = new TmuxService({ tool, tmux, notifier, git: new GitCache({ runner }) });
   const serving = tool.serve();
   tool.log.info("tmux tool serving", { socket: tmux.socketPath, uid: process.getuid?.() ?? null });
   service.start();

@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { createTool } from "@motherapp/tool-sdk";
 import { LineDecoder } from "@motherapp/protocol";
-import { INITIAL_STATE, POLL_MS, TmuxService } from "../src/service.ts";
+import { HISTORY_LINES, INITIAL_STATE, MAX_HISTORY, POLL_MS, TmuxService } from "../src/service.ts";
 import { Tmux } from "../src/tmux.ts";
-import { FakeClaude, FakeNotifier, FakeTimers, FakeTmux, session, tick, waitFor } from "./fakes.ts";
+import { FakeClaude, FakeGit, FakeNotifier, FakeTimers, FakeTmux, session, tick, waitFor } from "./fakes.ts";
 
 type Msg = { id?: number; method?: string; params?: any; result?: any; error?: { code: number; message: string } };
 
@@ -18,9 +18,10 @@ function setup() {
   const timers = new FakeTimers();
   const claude = new FakeClaude();
   const notifier = new FakeNotifier();
+  const git = new FakeGit();
   const launched: { argv: string[]; env: NodeJS.ProcessEnv }[] = [];
   const launcher = async (argv: string[], env: NodeJS.ProcessEnv) => void launched.push({ argv, env });
-  const service = new TmuxService({ tool, tmux: new Tmux({ runner: fake, defaultSocket: fake.socket, exists: () => true }), timers, home: "/home/u", claude, notifier, launcher });
+  const service = new TmuxService({ tool, tmux: new Tmux({ runner: fake, defaultSocket: fake.socket, exists: () => true }), timers, home: "/home/u", claude, notifier, git, launcher });
   const received: Msg[] = [];
   const dec = new LineDecoder();
   output.setEncoding("utf8");
@@ -55,7 +56,7 @@ function setup() {
     input.end();
     await done;
   };
-  return { tool, fake, timers, service, claude, notifier, launched, received, action, changes, settle, nextPoll, end };
+  return { tool, fake, timers, service, claude, notifier, git, launched, received, action, changes, settle, nextPoll, end };
 }
 
 test("first poll publishes the whole map fresh, then only deltas; rename keeps the row", async () => {
@@ -228,7 +229,8 @@ test("sub-agents: published above 0 only, and gone again at 0; a plain session n
   const t = setup();
   t.fake.server = { sessions: [session(0, "a"), session(1, "plain")] };
   withClaude(t, "busy");
-  t.claude.agents = 2;
+  const agent = { description: "AGENT-SECRET", type: "general-purpose", startedAt: 1 };
+  t.claude.agents = [agent, agent];
   t.service.start();
   await t.settle();
   assert.equal(t.tool.get("sessions.0.agents"), 2);
@@ -236,9 +238,9 @@ test("sub-agents: published above 0 only, and gone again at 0; a plain session n
   t.claude.agents = undefined; // can't tell: nothing shown, not a guess
   await t.nextPoll();
   assert.equal(t.tool.get("sessions.0.agents"), undefined);
-  t.claude.agents = 1;
+  t.claude.agents = [agent];
   await t.nextPoll();
-  t.claude.agents = 0;
+  t.claude.agents = [];
   await t.nextPoll();
   assert.equal(t.tool.get("sessions.0.agents"), undefined);
   await t.end();
@@ -295,6 +297,7 @@ test("view: screen and Claude's text come back in the reply and never in state o
   t.fake.server = { sessions: [session(0, "a"), session(1, "plain")] };
   t.fake.screen = "SCREEN-SECRET\n";
   withClaude(t, "waiting", { waitingFor: "permission prompt", name: "probe" });
+  t.claude.agents = [{ description: "AGENT-SECRET", type: "fork", startedAt: 5 }];
   t.claude.transcripts.set("sid", { title: "TITLE-SECRET", lastPrompt: "PROMPT-SECRET", lastMessage: "MESSAGE-SECRET", contextTokens: 1234, model: "m" });
   t.service.start();
   await t.settle();
@@ -305,11 +308,13 @@ test("view: screen and Claude's text come back in the reply and never in state o
       id: "0",
       text: "SCREEN-SECRET\n",
       cols: 80,
-      claude: { title: "TITLE-SECRET", lastPrompt: "PROMPT-SECRET", lastMessage: "MESSAGE-SECRET", contextTokens: 1234, model: "m", name: "probe", waitingFor: "permission prompt" },
+      claude: { title: "TITLE-SECRET", lastPrompt: "PROMPT-SECRET", lastMessage: "MESSAGE-SECRET", contextTokens: 1234, model: "m", name: "probe", waitingFor: "permission prompt", agents: [{ description: "AGENT-SECRET", type: "fork", startedAt: 5 }] },
     },
   });
   const plain = await t.action("view", { id: "1" });
   assert.deepEqual(Object.keys((plain.result as any).selected), ["id", "text", "cols"], "no Claude section for a plain session");
+  t.claude.talk = { text: "HISTORY-SECRET", cut: false };
+  assert.equal(((await t.action("history", { id: "0" })).result as any).text, "HISTORY-SECRET");
   await t.nextPoll();
   const other = t.received.filter((m) => m.method !== undefined);
   assert.doesNotMatch(JSON.stringify(other), /SECRET/, "nothing but the reply carries it");
@@ -378,5 +383,84 @@ test("open: argv list with the current name, TMUX removed; a gone session fails"
   assert.equal(env.TMUX, undefined);
   assert.equal(env.TMUX_PANE, undefined);
   assert.equal((await t.action("open", { id: "9" })).error?.message, "That session doesn't exist anymore.");
+  await t.end();
+});
+
+test("history: tmux scrollback when the pane has any; else a Claude's conversation; a plain pane gets what tmux has", async () => {
+  const t = setup();
+  const pane = session(0, "a").panes[0]!;
+  // Started from a shell: the shell's lines still count in history_size, out of reach.
+  const fromShell = { ...session(3, "shell tui").panes[0]!, history: 11, alternate: true };
+  t.fake.server = { sessions: [session(0, "a", { panes: [{ ...pane, history: 40 }] }), session(1, "plain"), session(2, "tui"), session(3, "shell tui", { panes: [fromShell] })] };
+  t.claude.panes.set(1002, { pid: 1002, sessionId: "sid", status: "idle" });
+  t.claude.panes.set(1003, { pid: 1003, sessionId: "sid", status: "idle" });
+  t.claude.talk = { text: "the talk", cut: true };
+  t.service.start();
+  await t.settle();
+  assert.deepEqual((await t.action("history", { id: "0" })).result, { source: "tmux", text: t.fake.scrollback, cut: false, cols: 80 });
+  assert.ok(t.fake.lines().includes(`capture-pane -p -e -S -${HISTORY_LINES} -t $0:`));
+  assert.equal(((await t.action("history", { id: "1" })).result as any).source, "tmux");
+  assert.deepEqual((await t.action("history", { id: "2" })).result, { source: "transcript", text: "the talk", cut: true, cols: 0 }, "no scrollback on the alternate screen");
+  assert.equal(((await t.action("history", { id: "3" })).result as any).source, "transcript", "a shell's lines on the main screen don't count");
+  t.claude.talk = undefined;
+  assert.equal(((await t.action("history", { id: "2" })).result as any).source, "tmux", "no transcript: tmux, whatever it has");
+  assert.equal((await t.action("history", { id: "9" })).error?.message, "That session doesn't exist anymore.");
+  assert.equal(t.fake.lines().filter((l) => l.startsWith("capture-pane")).length, 3, "only when asked: polling never fetches history");
+  await t.end();
+});
+
+test("history: a pane longer than the limit says so, and too many bytes keep the newest whole lines", async () => {
+  const t = setup();
+  const pane = session(0, "a").panes[0]!;
+  t.fake.server = { sessions: [session(0, "a", { panes: [{ ...pane, history: HISTORY_LINES + 1 }] })] };
+  t.service.start();
+  await t.settle();
+  assert.equal(((await t.action("history", { id: "0" })).result as any).cut, true);
+  t.fake.server = { sessions: [session(0, "a", { panes: [{ ...pane, history: 5 }] })] };
+  await t.nextPoll();
+  t.fake.scrollback = `${"x".repeat(100)}\n`.repeat(Math.ceil(MAX_HISTORY / 100)) + "the end\n";
+  const r = (await t.action("history", { id: "0" })).result as any;
+  assert.equal(r.cut, true);
+  assert.ok(r.text.length <= MAX_HISTORY);
+  assert.ok(r.text.startsWith("x"), "starts on a line");
+  assert.ok(r.text.endsWith("the end\n"));
+  await t.end();
+});
+
+test("project: the repo Claude works in, not the folder its pane sits in; a folder when there's no repo", async () => {
+  const t = setup();
+  t.fake.server = { sessions: [session(0, "a", { path: "/home/u/work" }), session(1, "b", { path: "/home/u/work" }), session(2, "plain", { path: "/home/u/notes" })] };
+  t.claude.panes.set(1000, { pid: 1000, sessionId: "one", status: "idle" });
+  t.claude.panes.set(1001, { pid: 1001, sessionId: "two", status: "idle" });
+  t.claude.transcripts.set("one", { cwd: "/home/u/work/app" });
+  t.claude.transcripts.set("two", { cwd: "/home/u/work/app/src" });
+  t.git.folders.set("/home/u/work/app", { root: "/home/u/work/app", branch: "main", changes: 3 });
+  t.git.folders.set("/home/u/work/app/src", { root: "/home/u/work/app", branch: "main", changes: 3 });
+  t.git.folders.set("/home/u/notes", null);
+  t.service.start();
+  await t.settle();
+  const row = (id: string) => t.tool.get(`sessions.${id}`) as Record<string, unknown>;
+  for (const id of ["0", "1"]) {
+    assert.deepEqual([row(id).project, row(id).projectPath, row(id).branch, row(id).changes], ["app", "~/work/app", "main", 3]);
+  }
+  assert.deepEqual([row("2").project, row("2").projectPath, row("2").branch], ["notes", "~/notes", undefined]);
+  assert.deepEqual(t.git.asked.at(-1)!.sort(), ["/home/u/notes", "/home/u/work/app", "/home/u/work/app/src"], "per folder, not per session");
+  t.git.folders.set("/home/u/work/app", { root: "/home/u/work/app", branch: "fix", changes: 0 });
+  await t.nextPoll();
+  assert.deepEqual([row("0").branch, row("0").changes], ["fix", 0]);
+  await t.end();
+});
+
+test("stale: idle for days is flagged, a working session never is", async () => {
+  const t = setup();
+  const now = Math.floor(t.timers.now() / 1000);
+  t.fake.server = { sessions: [session(0, "old", { activity: now - 10 * 86400 }), session(1, "fresh", { activity: now - 2 * 86400 })] };
+  t.service.start();
+  await t.settle();
+  assert.equal(t.tool.get("sessions.0.staleDays"), 10);
+  assert.equal(t.tool.get("sessions.1.staleDays"), undefined);
+  t.claude.panes.set(1000, { pid: 1000, sessionId: "sid", status: "busy" });
+  await t.nextPoll();
+  assert.equal(t.tool.get("sessions.0.staleDays"), undefined);
   await t.end();
 });

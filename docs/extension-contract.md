@@ -121,7 +121,7 @@ files older than a minute (`sweepTmpFiles`), left by a save that was killed anyw
   sent the action and neither logs nor caches it. That makes it the place for a value shown
   once, like the inbox tool's new link (`create` returns it; the page and `inboxctl new` show
   it, and only a hash is kept), or for text that may hold secrets, like the tmux tool's screen
-  preview (`view`, which is also in `localActions`).
+  preview and scrollback (`view` and `history`, which are also in `localActions`).
 - **A tool may run its own listener** on `127.0.0.1` and a port of its own (the core doesn't
   know or proxy it). The inbox tool does (default 7324), so that cloudflared can expose that
   port and nothing of the core. Such a tool owns the port's security entirely: bind to

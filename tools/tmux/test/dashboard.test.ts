@@ -8,14 +8,15 @@ import * as path from "node:path";
 import { Alerter, MIN_WORK_SECONDS, QUIET_SECONDS } from "../src/alerts.ts";
 import type { Observation } from "../src/alerts.ts";
 import { color256, parseAnsi } from "../src/ansi.ts";
-import { ClaudeFiles, TAIL_BYTES, endsInterrupted, parseProcStat, parseStatus, scanTranscript, writesFinished } from "../src/claude.ts";
+import { ClaudeFiles, MAX_CONVERSATION, TAIL_BYTES, endsInterrupted, parseProcStat, parseStatus, scanTranscript, writesFinished } from "../src/claude.ts";
 import type { ClaudeStatus } from "../src/claude.ts";
+import { GitCache, NOT_REPO_TTL_MS, TTL_MS, parseStatus as parseGitStatus } from "../src/git.ts";
 import { DesktopNotifier, gdbusArgs, notifyBody, notifySendArgs } from "../src/notify.ts";
 import { openArgv, openEnv } from "../src/open.ts";
 import type { Proc, Runner } from "../src/runner.ts";
-import { claudeState, outputState } from "../src/state.ts";
+import { claudeState, outputState, staleDays } from "../src/state.ts";
 import { BUCKET_MS, Timeline } from "../src/timeline.ts";
-import { formatTokens, previewFontPx, summaryText, timelineBars, timelineText } from "../src/view.ts";
+import { formatElapsed, formatTokens, previewFontPx, summaryText, timelineBars, timelineText } from "../src/view.ts";
 import { FakeProc, tick } from "./fakes.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-tmux-claude-"));
@@ -150,13 +151,14 @@ test("endsInterrupted: only when the last message record is the stop marker", ()
   assert.equal(endsInterrupted(""), false);
 });
 
-test("runningAgents: only unfinished agents of this process; each way an agent ends is left out", () => {
+test("agentList: only unfinished agents of this process; each way an agent ends is left out", () => {
   const h = claudeHome();
   const sid = "dddddddd-4";
   const file = transcript(h, sid, assistant("x", usage));
   const dir = path.join(file.slice(0, -6), "subagents");
   const s = (more: Partial<ClaudeStatus> = {}): ClaudeStatus => ({ pid: 4242, sessionId: sid, status: "busy", startedAt: Date.now() - 60_000, version: "2.1.319", ...more });
-  assert.equal(h.files.runningAgents(s()), 0, "no subagents dir: never had one");
+  const count = (x: ClaudeStatus) => h.files.agentList(x)?.length;
+  assert.equal(count(s()), 0, "no subagents dir: never had one");
   fs.mkdirSync(dir, { recursive: true });
   const meta = (id: string, d: object, jsonl = "") => {
     fs.writeFileSync(path.join(dir, `agent-${id}.meta.json`), JSON.stringify({ agentType: "general-purpose", ...d }));
@@ -170,22 +172,28 @@ test("runningAgents: only unfinished agents of this process; each way an agent e
   meta("killed-with-the-old-process", {});
   fs.utimesSync(path.join(dir, "agent-killed-with-the-old-process.meta.json"), new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
   fs.writeFileSync(path.join(dir, "agent-x.jsonl"), "");
-  assert.equal(h.files.runningAgents(s()), 2);
-  assert.equal(h.files.runningAgents(s({ status: "waiting" })), 2, "agents go on during a prompt");
-  assert.equal(h.files.runningAgents(s({ status: "idle" })), 0, "idle: none, whatever the files say");
-  assert.equal(h.files.runningAgents(s({ status: "shell" })), 0);
+  assert.equal(count(s()), 2);
+  assert.equal(count(s({ status: "waiting" })), 2, "agents go on during a prompt");
+  assert.equal(count(s({ status: "idle" })), 0, "idle: none, whatever the files say");
+  assert.equal(count(s({ status: "shell" })), 0);
+
+  const list = h.files.agentList(s())!;
+  assert.deepEqual(list.map((a) => [a.description, a.type]).sort(), [["", "general-purpose"], ["", "general-purpose"]]);
+  fs.writeFileSync(path.join(dir, "agent-running.meta.json"), JSON.stringify({ agentType: "fork", description: "Build the thing" }));
+  const started = fs.statSync(path.join(dir, "agent-running.meta.json")).mtimeMs;
+  assert.deepEqual(h.files.agentList(s())!.find((a) => a.type === "fork"), { description: "Build the thing", type: "fork", startedAt: started });
 
   // A finished agent continued by SendMessage: `finished` goes away, and it counts again.
   meta("done", {}, assistant("again"));
-  assert.equal(h.files.runningAgents(s()), 3);
+  assert.equal(count(s()), 3);
 
-  assert.equal(h.files.runningAgents(s({ version: "2.1.300" })), undefined, "before `finished`: can't tell");
-  assert.equal(h.files.runningAgents(s({ status: "pondering" })), undefined);
+  assert.equal(count(s({ version: "2.1.300" })), undefined, "before `finished`: can't tell");
+  assert.equal(count(s({ status: "pondering" })), undefined);
   const noStart = s();
   delete noStart.startedAt;
-  assert.equal(h.files.runningAgents(noStart), undefined);
+  assert.equal(count(noStart), undefined);
   fs.writeFileSync(path.join(dir, "agent-broken.meta.json"), "{ nope");
-  assert.equal(h.files.runningAgents(s()), undefined, "a broken file: no answer rather than a wrong one");
+  assert.equal(count(s()), undefined, "a broken file: no answer rather than a wrong one");
 });
 
 const obs = (over: Partial<Observation>): Observation => ({ key: "k", name: "s", state: "idle", claude: false, activity: 0, input: 0, ...over });
@@ -327,4 +335,165 @@ test("view helpers: timeline bars and text, tokens, preview font, summary", () =
   assert.equal(previewFontPx(300, 200), 8, "too wide: the box scrolls");
   assert.equal(summaryText(["working", "idle", "waiting", "working"]), "4 sessions · 1 waiting on you · 2 working");
   assert.equal(summaryText(["idle"]), "1 session");
+});
+
+test("scanTranscript: the working folder is the latest main-thread one", () => {
+  const d = scanTranscript(assistant("a", usage, { cwd: "/w/one" }) + assistant("b", usage, { cwd: "/w/two" }) + assistant("c", usage, { cwd: "/w/side", isSidechain: true }));
+  assert.equal(d.cwd, "/w/two");
+});
+
+const user = (content: unknown, more: object = {}) => rec({ type: "user", message: { content }, ...more });
+
+test("conversation: prompts, replies and tool names in order; wrappers, tool results and sidechains left out", () => {
+  const h = claudeHome();
+  const sid = "eeeeeeee-5";
+  assert.equal(h.files.conversation(sid), undefined);
+  assert.equal(h.files.conversation("../x"), undefined);
+  transcript(
+    h,
+    sid,
+    user("fix the bug") +
+      user("<task-notification>x</task-notification>") +
+      user([{ type: "tool_result", content: "SECRET OUTPUT" }]) +
+      user("harness", { isMeta: true }) +
+      rec({ type: "assistant", message: { content: [{ type: "text", text: "On it." }, { type: "tool_use", name: "Bash", input: { command: "rm x" } }, { type: "thinking", thinking: "hmm" }] } }) +
+      assistant("side", usage, { isSidechain: true }) +
+      user([{ type: "text", text: "thanks" }]) +
+      rec({ type: "attachment", x: 1 }) +
+      "not json\n",
+  );
+  const c = h.files.conversation(sid)!;
+  assert.equal(c.cut, false);
+  const plain = parseAnsi(c.text).map((l) => l.map((r) => r.text).join(""));
+  assert.deepEqual(plain.filter(Boolean), ["❯ fix the bug", "On it.", "· Bash", "❯ thanks"]);
+  assert.doesNotMatch(c.text, /SECRET|rm x|hmm|side|harness|task-notification/);
+});
+
+test("conversation: bounded, newest kept, and it says so", () => {
+  const h = claudeHome();
+  const sid = "ffffffff-6";
+  const big = "y".repeat(10_000);
+  transcript(h, sid, user("the first prompt") + assistant(big, usage).repeat(Math.ceil(MAX_CONVERSATION / 10_000) + 5) + user("the last prompt"));
+  const c = h.files.conversation(sid)!;
+  assert.equal(c.cut, true);
+  assert.ok(c.text.length <= MAX_CONVERSATION);
+  assert.match(c.text, /the last prompt/);
+  assert.doesNotMatch(c.text, /the first prompt/);
+});
+
+test("staleDays: from 3 days on, only at rest", () => {
+  const now = 1_700_000_000_000;
+  const ago = (d: number) => now / 1000 - d * 86400;
+  assert.equal(staleDays(ago(2.9), "idle", now), undefined);
+  assert.equal(staleDays(ago(3), "idle", now), 3);
+  assert.equal(staleDays(ago(10.2), "quiet", now), 10);
+  assert.equal(staleDays(ago(10), "working", now), undefined);
+  assert.equal(staleDays(ago(10), "waiting", now), undefined);
+});
+
+test("git parseStatus: branch, detached, a new repo, changes; nonsense is no answer", () => {
+  assert.deepEqual(parseGitStatus("# branch.oid abcdef123456\n# branch.head main\n1 .M N... x\n? new\n"), { branch: "main", changes: 2 });
+  assert.deepEqual(parseGitStatus("# branch.oid abcdef123456\n# branch.head (detached)\n"), { branch: "abcdef1", changes: 0 });
+  assert.deepEqual(parseGitStatus("# branch.oid (initial)\n# branch.head main\n"), { branch: "main", changes: 0 });
+  assert.equal(parseGitStatus("fatal: oops\n"), undefined);
+});
+
+class GitRunner implements Runner {
+  calls: string[] = [];
+  held: FakeProc[] = [];
+  hold = false;
+  answer: (args: string[]) => { code: number; out?: string } | "missing" = (args) => (args.includes("rev-parse") ? { code: 0, out: "/repo\n" } : { code: 0, out: "# branch.head main\n1 x\n" });
+  spawn(cmd: string, args: string[]): Proc {
+    this.calls.push(`${cmd} ${args.join(" ")}`);
+    const p = new FakeProc(cmd, args);
+    const finish = () => {
+      const a = this.answer(args);
+      if (a === "missing") p.emit("error", Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+      else p.finish(a.code, a.out ?? "", "");
+    };
+    if (this.hold) this.held.push(Object.assign(p, { go: finish }));
+    else setImmediate(finish);
+    return p;
+  }
+}
+
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await tick();
+};
+
+test("GitCache: read-only and lock-free; once per folder; one at a time; again only after the TTL", async () => {
+  const r = new GitRunner();
+  let now = 1_000_000;
+  const g = new GitCache({ runner: r, now: () => now });
+  assert.equal(g.get("/a"), undefined);
+  g.refresh(["/a", "/b"]);
+  await settle();
+  assert.deepEqual(g.get("/a"), { root: "/repo", branch: "main", changes: 1 });
+  assert.deepEqual(g.get("/b"), { root: "/repo", branch: "main", changes: 1 });
+  assert.equal(r.calls.length, 4, "new folders go one after the other");
+  assert.ok(r.calls.every((c) => c.startsWith("git --no-optional-locks -c core.fsmonitor=false -C /")));
+
+  for (let i = 0; i < 10; i++) {
+    g.refresh(["/a", "/b"]);
+    await settle();
+  }
+  assert.equal(r.calls.length, 4, "nothing inside the TTL, however often it polls");
+
+  now += TTL_MS + 1;
+  g.refresh(["/a", "/b"]);
+  await settle();
+  assert.equal(r.calls.length, 5, "one folder a poll, status only: the root is known");
+  assert.match(r.calls.at(-1)!, / status --porcelain=v2 /);
+  g.refresh(["/a", "/b"]);
+  await settle();
+  assert.equal(r.calls.length, 6);
+
+  g.refresh(["/b"]);
+  assert.equal(g.get("/a"), undefined, "a folder no longer in use is forgotten");
+});
+
+test("GitCache: slow git doesn't pile up; not a repo, a broken repo and no git are all null", async () => {
+  const r = new GitRunner();
+  r.hold = true;
+  let now = 1_000_000;
+  const g = new GitCache({ runner: r, now: () => now });
+  g.refresh(["/a"]);
+  g.refresh(["/a"]);
+  g.refresh(["/a"]);
+  assert.equal(r.calls.length, 1, "one at a time");
+  r.hold = false;
+  (r.held[0] as unknown as { go(): void }).go();
+  await settle();
+  assert.ok(g.get("/a"));
+
+  r.answer = () => ({ code: 128 });
+  g.refresh(["/plain"]);
+  await settle();
+  assert.equal(g.get("/plain"), null);
+  r.answer = (args) => (args.includes("rev-parse") ? { code: 0, out: "/r\n" } : { code: 128 });
+  g.refresh(["/broken"]);
+  await settle();
+  assert.equal(g.get("/broken"), null);
+  r.answer = () => "missing";
+  g.refresh(["/nogit"]);
+  await settle();
+  assert.equal(g.get("/nogit"), null);
+
+  r.answer = () => ({ code: 128 });
+  g.refresh(["/plain"]);
+  await settle();
+  const calls = r.calls.length;
+  now += TTL_MS + 1;
+  g.refresh(["/plain"]);
+  await settle();
+  assert.equal(r.calls.length, calls, "not a repo is asked about less often");
+  now += NOT_REPO_TTL_MS;
+  g.refresh(["/plain"]);
+  await settle();
+  assert.equal(r.calls.length, calls + 1);
+});
+
+test("view helpers: elapsed time", () => {
+  assert.deepEqual([12_000, 90_000, 3_900_000, 90_000_000].map(formatElapsed), ["12 s", "1 min", "1 h 5 min", "25 h"]);
+  assert.equal(formatElapsed(-5), "0 s");
 });

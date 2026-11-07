@@ -3,7 +3,8 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { Proc, Runner } from "../src/runner.ts";
-import type { ClaudeDetails, ClaudeSource, ClaudeStatus } from "../src/claude.ts";
+import type { ClaudeDetails, ClaudeSource, ClaudeStatus, Conversation, RunningAgent } from "../src/claude.ts";
+import type { GitSource, GitState } from "../src/git.ts";
 import type { Notifier } from "../src/notify.ts";
 import type { Timers } from "../src/service.ts";
 import type { Session } from "../src/tmux.ts";
@@ -43,6 +44,8 @@ export class FakeTmux implements Runner {
   socket = "/tmp/tmux-1000/default";
   /** What `capture-pane` prints. */
   screen = "\x1b[31mhello\x1b[39m\n";
+  /** What `capture-pane -S` prints. */
+  scrollback = "old line\n\x1b[31mhello\x1b[39m\n";
 
   spawn(cmd: string, args: string[]): Proc {
     if (cmd !== "tmux") throw new Error(`unexpected command ${cmd}`);
@@ -74,7 +77,7 @@ export class FakeTmux implements Runner {
     if (cmd === "capture-pane") {
       const t = args[args.indexOf("-t") + 1]!;
       if (!s.sessions.some((x) => `${x.id}:` === t)) return p.finish(1, "", `can't find session: ${t}\n`);
-      return p.finish(0, this.screen);
+      return p.finish(0, args.includes("-S") ? this.scrollback : this.screen);
     }
     if (cmd === "rename-session") {
       const t = args[args.indexOf("-t") + 1]!;
@@ -114,7 +117,7 @@ export function session(id: number, name: string, more: Partial<Session> = {}): 
     input: 1_700_000_000,
     command,
     path,
-    panes: [{ id: `%${id}`, pid: 1000 + id, active: true, width: 80, height: 24, command, path }],
+    panes: [{ id: `%${id}`, pid: 1000 + id, active: true, width: 80, height: 24, history: 0, alternate: false, command, path }],
     ...more,
   };
 }
@@ -123,7 +126,7 @@ export function session(id: number, name: string, more: Partial<Session> = {}): 
 export function paneLines(sessions: Session[]): string {
   return sessions
     .flatMap((x) =>
-      x.panes.map((p) => [x.id, x.name, x.windows, x.created, x.attached, x.input, x.activity, 1, p.active ? 1 : 0, p.id, p.pid, p.width, p.height, p.command, p.path].join("\t") + "\n"),
+      x.panes.map((p) => [x.id, x.name, x.windows, x.created, x.attached, x.input, x.activity, 1, p.active ? 1 : 0, p.id, p.pid, p.width, p.height, p.history, p.alternate ? 1 : 0, p.command, p.path].join("\t") + "\n"),
     )
     .join("");
 }
@@ -132,15 +135,30 @@ export function paneLines(sessions: Session[]): string {
 export class FakeClaude implements ClaudeSource {
   panes = new Map<number, ClaudeStatus>();
   transcripts = new Map<string, ClaudeDetails>();
-  agents: number | undefined = 0;
+  agents: RunningAgent[] | undefined = [];
+  talk: Conversation | undefined;
   forPanes(panePids: ReadonlySet<number>): Map<number, ClaudeStatus> {
     return new Map([...this.panes].filter(([pid]) => panePids.has(pid)));
   }
   details(sessionId: string): ClaudeDetails | undefined {
     return this.transcripts.get(sessionId);
   }
-  runningAgents(): number | undefined {
+  agentList(): RunningAgent[] | undefined {
     return this.agents;
+  }
+  conversation(): Conversation | undefined {
+    return this.talk;
+  }
+}
+
+export class FakeGit implements GitSource {
+  folders = new Map<string, GitState | null>();
+  asked: string[][] = [];
+  get(path: string): GitState | null | undefined {
+    return this.folders.get(path);
+  }
+  refresh(paths: Iterable<string>): void {
+    this.asked.push([...paths]);
   }
 }
 
