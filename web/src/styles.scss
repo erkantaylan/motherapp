@@ -40,6 +40,10 @@
     --idle: var(--bs-fg-4);
     --radius: var(--bs-radius-5);
     --sidebar-w: 220px;
+    // Sticky things inside a page sit below the page header: top: var(--page-header-h).
+    --page-header-h: 52px;
+    --content-x: 28px;
+    --content-top: 20px;
   }
 
   // Bootstrap only swaps the select caret for [data-bs-theme="dark"], not for the OS setting.
@@ -84,7 +88,8 @@
   .tool-dot[data-status="starting"] { background: var(--bs-warning-base); }
   .tool-dot[data-status="down"], .tool-dot[data-status="failed"] { background: var(--bs-danger-base); }
 
-  .main-col { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+  // clip, not hidden: hidden would make this the scroller and break the sticky page header.
+  .main-col { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow-x: clip; }
   .topbar {
     display: none;
     gap: var(--bs-spacer-3);
@@ -96,7 +101,7 @@
   .topbar .brand { padding: 0; }
   .conn-banner { padding: var(--bs-spacer-2) var(--bs-spacer-5); color: var(--bs-danger-contrast); background: var(--bs-danger-bg); }
   .conn-banner[hidden] { display: none; }
-  .content { width: 100%; max-width: 960px; padding: 20px 28px 40px; }
+  .content { width: 100%; max-width: 960px; padding: var(--content-top) var(--content-x) 40px; }
   // a tool page whose manifest says "wide": true (the CPU page's live column)
   .content.content-wide { max-width: 1600px; }
 
@@ -112,15 +117,37 @@
       transition: transform .15s ease;
     }
     .shell.sidebar-open .sidebar { transform: none; }
-    .content { padding: var(--bs-spacer-5); }
+    .content { --content-x: var(--bs-spacer-5); --content-top: var(--bs-spacer-5); padding-block-end: var(--bs-spacer-5); }
   }
   @media (max-width: 720px) and (prefers-reduced-motion: reduce) {
     .sidebar { transition: none; }
   }
 
   // ---- pages ----
-  .page-header { display: flex; flex-wrap: wrap; gap: var(--bs-spacer-4); align-items: center; margin-bottom: var(--bs-spacer-4); }
-  .page-header h2 { margin: 0; font-size: var(--bs-font-size-xl); }
+  .page-header {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--bs-spacer-3);
+    align-items: center;
+    min-height: var(--page-header-h);
+    padding: 6px var(--content-x);
+    margin: calc(-1 * var(--content-top)) calc(-1 * var(--content-x)) 12px;
+    background: var(--bg);
+  }
+  // The line runs the whole column, past a narrower page's max-width; .main-col clips it.
+  .page-header::after {
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-start: 0;
+    width: 100vw;
+    height: 1px;
+    content: "";
+    background: var(--border);
+  }
+  .page-header h2 { margin: 0; font-size: 1.125rem; font-weight: 600; }
   .banner {
     padding: var(--bs-spacer-3) var(--bs-spacer-4);
     margin: 0 0 var(--bs-spacer-4);

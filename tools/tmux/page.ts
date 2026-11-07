@@ -86,7 +86,7 @@ const TRANSCRIPT_FONT_PX = 13;
 const STYLE = `
 .mtx { display: grid; gap: 12px; color: var(--fg); container-type: inline-size; min-width: 0; }
 /* One line that never changes height: a strip that grew would push the list from under the pointer. */
-.mtx-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; min-height: 36px; background: var(--bg); min-width: 0; }
+.mtx-bar { position: sticky; top: var(--page-header-h, 0px); z-index: 2; display: flex; align-items: center; gap: 10px; min-height: 36px; background: var(--bg); min-width: 0; }
 .mtx-summary { margin: 0; flex: none; color: var(--muted); font-size: 0.9rem; }
 .mtx-needs { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .mtx-needs[hidden] { display: none; }
@@ -98,8 +98,10 @@ const STYLE = `
 .mtx-need .mtx-dot { background: var(--warn); border-color: var(--warn); }
 .mtx-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
 @container (min-width: ${WIDE_PX}px) {
-  .mtx-grid { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); align-items: start; }
-  .mtx-list { position: sticky; top: 44px; max-height: calc(100vh - 60px); overflow-y: auto; }
+  /* The page itself doesn't scroll here: the list and the selected session scroll on their own.
+     76px is the header's margin, the bar, the gap under it and a little room at the bottom. */
+  .mtx-grid { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: calc(100vh - var(--page-header-h, 0px) - 76px); margin-bottom: -24px; }
+  .mtx-list, .mtx-main { min-height: 0; overflow-y: auto; padding-right: 4px; }
 }
 .mtx-list { display: grid; gap: 6px; min-width: 0; align-content: start; }
 .mtx-list[data-stale="true"] { opacity: 0.6; }
@@ -142,7 +144,7 @@ const STYLE = `
 .mtx-tl .base { stroke: var(--border); stroke-width: 1; }
 .mtx-tl .busy { fill: var(--ok); }
 .mtx-tl .wait { fill: var(--warn); }
-.mtx-main { display: grid; gap: 10px; min-width: 0; scroll-margin-top: 44px; }
+.mtx-main { display: grid; gap: 10px; min-width: 0; align-content: start; scroll-margin-top: calc(var(--page-header-h, 0px) + 44px); }
 .mtx-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; min-width: 0; }
 .mtx-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .mtx-head h3 { margin: 0; font-size: 1.05rem; overflow-wrap: anywhere; min-width: 0; }
@@ -163,7 +165,7 @@ const STYLE = `
 .mtx-screen { margin: 0; padding: 8px 10px; overflow: auto; max-height: 60vh; min-height: 120px; border-radius: 8px; border: 1px solid var(--border);
   background: ${DEFAULT_BG}; color: ${DEFAULT_FG}; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.2; white-space: pre; tab-size: 8; }
 .mtx-screen[data-wrap="true"] { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.35; }
-@container (min-width: ${WIDE_PX}px) { .mtx-screen { max-height: calc(100vh - 300px); } }
+@container (min-width: ${WIDE_PX}px) { .mtx-screen { height: 56vh; max-height: none; } }
 .mtx-screen[hidden], .mtx-claude[hidden], .mtx-rename[hidden], .mtx-note[hidden], .mtx-main[hidden] { display: none; }
 .mtx-claude dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 0.875rem; }
 .mtx-claude dt { color: var(--muted); }

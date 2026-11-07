@@ -49,3 +49,11 @@ private tmux server with a real Claude.
   the leading `~/` and `/` get reordered.
 - [local] A state dot is only 8 px, too small to hover reliably, so `.mtx-state` adds padding with
   a matching negative margin. The tooltip opens to the left, so the list's `overflow-y` can't clip it.
+
+## Sticky page header
+
+- [local] `.page-header` is sticky for every page, so anything else sticky in a page must offset by
+  `var(--page-header-h)`, or it slides under the header. The CPU rail only turns sticky above 1240 px
+  of page width, so check it on a wide enough window: at 1500 px it's static and proves nothing.
+- [local] The header's full-width line uses `overflow-x: clip` on `.main-col`. `hidden` would make
+  that column the scroller and break the sticky header.

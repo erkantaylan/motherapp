@@ -167,7 +167,7 @@ const STYLE = `
 @container (min-width: 1240px) {
   .mcpu { grid-template-columns: minmax(0, 1fr) minmax(360px, 420px); column-gap: 24px; align-items: start; }
   .mcpu-main { display: grid; gap: 20px; align-content: start; min-width: 0; }
-  .mcpu-rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+  .mcpu-rail { position: sticky; top: calc(var(--page-header-h, 0px) + 16px); max-height: calc(100vh - var(--page-header-h, 0px) - 32px); overflow: auto; }
   .mcpu-rail .mcpu-plot { height: 130px; }
 }
 .mcpu-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px 16px 0; }
@@ -214,7 +214,7 @@ const STYLE = `
 /* die map */
 .mcpu-d2 { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
 .mcpu-d2main { flex: 999 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-.mcpu-d2side { flex: 1 1 260px; min-width: 0; position: sticky; top: 16px; }
+.mcpu-d2side { flex: 1 1 260px; min-width: 0; position: sticky; top: calc(var(--page-header-h, 0px) + 16px); }
 .mcpu-pkg { margin: 0 auto; width: 100%; max-width: 660px; padding: 16px; border-radius: 14px; display: flex; flex-direction: column; gap: 14px;
   background: color-mix(in oklch, var(--ok) 14%, var(--bg)); border: 1px solid color-mix(in oklch, var(--ok) 40%, var(--bg)); }
 .mcpu-pkg-label { font-size: 0.75rem; opacity: .85; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
