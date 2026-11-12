@@ -18,7 +18,8 @@ import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { ErrorCode, RpcError, RpcPeer } from "@motherapp/protocol";
-import type { JsonObject, NetworkInfo, UiNotifications, UiRequests } from "@motherapp/protocol";
+import type { JsonObject, NetworkInfo, NotificationSettings, UiNotifications, UiRequests } from "@motherapp/protocol";
+import { NotificationError } from "./notifications.ts";
 import { canChangeSettings, isAllowedSource, logSafe, refusal, RejectLog } from "./access.ts";
 import { LanController } from "./lan.ts";
 import type { LogService } from "./logService.ts";
@@ -231,6 +232,8 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     for (const c of clients) if (c.hasStream(h.id, name)) c.notify("stream", { tool: h.id, name, value });
   });
   const offVersion = version?.onChange((v) => broadcast("version", v));
+  const offNotifySettings = manager.notifications.onSettings((s) => broadcast("notifications.settings", s));
+  const offTray = manager.tray.onChange((info) => broadcast("tray", info));
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -245,6 +248,8 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           new Promise<void>((done) => {
             lan.stop();
             offVersion?.();
+            offNotifySettings();
+            offTray();
             for (const c of clients) c.close();
             wss.close();
             server.close(() => done());
@@ -269,6 +274,7 @@ class Client {
   /** The tool whose page this tab shows while visible (`tool.watch`). */
   private watching: string | undefined;
   private unsubscribeLogs: (() => void) | undefined;
+  private unsubscribeNotifications: (() => void) | undefined;
   private version: VersionSource | undefined;
   private updater: Updater | undefined;
   private lan: LanController;
@@ -328,6 +334,16 @@ class Client {
       throw new RpcError(ErrorCode.ActionFailed, (e as Error).message);
     }
     return this.networkInfo();
+  }
+
+  /** A bad tool, kind or sound name becomes InvalidParams (a save failure is already an RpcError). */
+  private notificationChange<T extends NotificationSettings | void>(fn: () => T): T {
+    try {
+      return fn();
+    } catch (e) {
+      if (e instanceof NotificationError) throw new RpcError(ErrorCode.InvalidParams, e.message);
+      throw e;
+    }
   }
 
   private async handle(method: string, p: Record<string, unknown>, id: number | string): Promise<unknown> {
@@ -419,6 +435,54 @@ class Client {
           throw new RpcError(ErrorCode.ActionFailed, `couldn't start the update: ${(e as Error).message}`);
         }
       }
+      case "notifications.subscribe": {
+        this.unsubscribeNotifications?.();
+        const limit = typeof p.limit === "number" ? p.limit : undefined;
+        const entries = this.manager.notifications.backlog(limit);
+        // Subscribe after taking the backlog; both happen synchronously, so nothing is lost.
+        this.unsubscribeNotifications = this.manager.notifications.subscribe((entry) => this.notify("notification", { entry }));
+        return { entries };
+      }
+      case "notifications.unsubscribe":
+        this.unsubscribeNotifications?.();
+        this.unsubscribeNotifications = undefined;
+        return null;
+      case "notifications.settings.get":
+        return this.manager.notifications.settings();
+      case "notifications.setMuted": {
+        if (typeof p.muted !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "muted must be a boolean");
+        const muted = p.muted;
+        return this.notificationChange(() => this.manager.notifications.setMuted(muted));
+      }
+      case "notifications.setTool": {
+        if (typeof p.enabled !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "enabled must be a boolean");
+        const tool = str("tool");
+        const enabled = p.enabled;
+        return this.notificationChange(() => this.manager.notifications.setTool(tool, enabled));
+      }
+      case "notifications.setKind": {
+        const tool = str("tool");
+        const kind = str("kind");
+        const change: { enabled?: boolean; sound?: string } = {};
+        if (p.enabled !== undefined) {
+          if (typeof p.enabled !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "enabled must be a boolean");
+          change.enabled = p.enabled;
+        }
+        if (p.sound !== undefined) change.sound = str("sound");
+        if (change.enabled === undefined && change.sound === undefined) throw new RpcError(ErrorCode.InvalidParams, "give enabled, sound or both");
+        return this.notificationChange(() => this.manager.notifications.setKind(tool, kind, change));
+      }
+      case "notifications.previewSound": {
+        const sound = str("sound");
+        this.notificationChange(() => this.manager.notifications.previewSound(sound));
+        return null;
+      }
+      case "tray.get":
+        return this.manager.tray.info();
+      case "tray.setEnabled": {
+        if (typeof p.enabled !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "enabled must be a boolean");
+        return this.manager.tray.setEnabled(p.enabled);
+      }
       case "network.get":
         await this.lan.get(p.refresh === true);
         return this.networkInfo();
@@ -455,6 +519,8 @@ class Client {
     this.setWatching(undefined);
     this.unsubscribeLogs?.();
     this.unsubscribeLogs = undefined;
+    this.unsubscribeNotifications?.();
+    this.unsubscribeNotifications = undefined;
     for (const key of this.streams) {
       const [tool, name] = key.split("\0") as [string, string];
       this.manager.hosts.get(tool)?.closeStream(name);

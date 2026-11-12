@@ -7,6 +7,10 @@
 //   MOTHERAPP_BUILD_INFO build-info.json to report (default <repo>/build-info.json)
 //   MOTHERAPP_RELEASE_URL the "latest release" API URL, or "off" (default GitHub's; off under
 //                        node --test unless set)
+//   MOTHERAPP_NOTIFY     "off": no desktop popups and no sounds for tools' notifications (the
+//                        history and settings still work); off under node --test unless "on"
+//   MOTHERAPP_TRAY       "off": no tray icon from this core, whatever config.json `tray` says;
+//                        off under node --test unless "on"
 //   XDG_CONFIG_HOME, XDG_STATE_HOME as usual
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -16,6 +20,7 @@ import { Manager } from "./manager.ts";
 import { buildInfoFile, configDir, defaultToolsDir, defaultWebDir, repoRoot, stateDir } from "./paths.ts";
 import { startServer } from "./server.ts";
 import { ReleaseChecker } from "./releases.ts";
+import { openInBrowser } from "./tray.ts";
 import { Updater } from "./updater.ts";
 import { Checkout, readBuildInfo, VersionSource } from "./version.ts";
 
@@ -35,6 +40,12 @@ function updateCommand(): { command: string[]; env: Record<string, string> } {
   return { command: ["/bin/bash", path.join(repoRoot, "scripts", "motherapp.sh"), "install"], env: { ...env, MOTHERAPP_NODE: process.execPath } };
 }
 
+/** The popup's icon by path, so it shows without install.sh's copy in the icon theme. */
+const appIcon = path.join(repoRoot, "web", "public", "icon.png");
+/** The tray helper and the icon it shows while a tool is in trouble (core/src/tray.ts). */
+const trayHelper = path.join(repoRoot, "core", "tray", "motherapp-tray.py");
+const trayWarningIcon = path.join(repoRoot, "core", "tray", "warning.png");
+
 async function main(): Promise<void> {
   const log = new LogService({ file: new RotatingFile({ file: path.join(stateDir(), "log.jsonl") }) });
   const build = readBuildInfo(buildInfoFile());
@@ -49,6 +60,13 @@ async function main(): Promise<void> {
     toolsDir: defaultToolsDir(),
     configFile: path.join(configDir(), "config.json"),
     log,
+    ...(fs.existsSync(appIcon) ? { notifyIcon: appIcon } : {}),
+    tray: {
+      // The distribution's Python: that is the one apt's python3-gi is installed for.
+      command: [fs.existsSync("/usr/bin/python3") ? "/usr/bin/python3" : "python3", trayHelper, appIcon, trayWarningIcon],
+      // The address the desktop entry opens too (install.sh renders the same port into it).
+      onOpen: () => void openInBrowser(panelUrl(), (msg) => log.core("warn", msg)),
+    },
   });
   manager.init();
 
@@ -65,6 +83,8 @@ async function main(): Promise<void> {
   const version = new VersionSource(build, new Checkout({ repo: repoRoot }), release);
   const updater = new Updater({ logFile: path.join(stateDir(), "update.log"), running: build.string, ...updateCommand() });
 
+  let listeningOn: number | undefined;
+  const panelUrl = () => `http://127.0.0.1:${listeningOn ?? manager.config.port}/`;
   const envPort = process.env.MOTHERAPP_PORT;
   const port = envPort !== undefined && envPort !== "" ? Number(envPort) : manager.config.port;
   let server;
@@ -76,7 +96,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   log.core("info", `listening on http://127.0.0.1:${server.port}/`, { port: server.port });
+  listeningOn = server.port;
   release.start();
+  manager.tray.start();
 
   let stopping = false;
   const stop = async (signal: string) => {

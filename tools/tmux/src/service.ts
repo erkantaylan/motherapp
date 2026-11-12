@@ -6,18 +6,19 @@
 // with the `view` action, only while it is visible and only for the selected session.
 //
 // Screen contents and Claude's words can hold secrets, so they exist only in `view`'s result:
-// never in state (the core caches it and sends it to every client) and never in a log.
+// never in state (the core caches it and sends it to every client) and never in a log. The same
+// goes for text typed into a session with `send` (src/send.ts): it goes to tmux and nowhere else.
 import { RpcError } from "@motherapp/tool-sdk";
 import type { JsonObject, JsonValue, Tool } from "@motherapp/tool-sdk";
-import { Alerter } from "./alerts.ts";
+import { Alerter, alertTitle } from "./alerts.ts";
 import type { Observation } from "./alerts.ts";
 import { ClaudeFiles } from "./claude.ts";
 import type { ClaudeSource, ClaudeStatus } from "./claude.ts";
 import { diffState } from "./diff.ts";
 import type { GitSource } from "./git.ts";
-import type { Notifier } from "./notify.ts";
 import { launch, openArgv, openEnv } from "./open.ts";
 import type { Launcher } from "./open.ts";
+import { realSleep, sendToSession } from "./send.ts";
 import { claudeState, outputState, staleDays } from "./state.ts";
 import type { SessionState } from "./state.ts";
 import { Timeline } from "./timeline.ts";
@@ -48,13 +49,14 @@ export const INITIAL_STATE: JsonObject = { sessions: {} };
 export interface ServiceOptions {
   tool: Tool;
   tmux: Tmux;
-  notifier: Notifier;
   git: GitSource;
   timers?: Timers;
   intervalMs?: number;
   home?: string | undefined;
   claude?: ClaudeSource;
   launcher?: Launcher;
+  /** The pause between sent text and Enter. Default: a real timer. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** What the last poll saw of a session. */
@@ -81,13 +83,15 @@ function sessionClaude(panes: Pane[], found: Map<number, ClaudeStatus>): ClaudeS
 export class TmuxService {
   private tool: Tool;
   private tmux: Tmux;
-  private notifier: Notifier;
   private git: GitSource;
   private timers: Timers;
   private intervalMs: number;
   private home: string | undefined;
   private claude: ClaudeSource;
   private launcher: Launcher;
+  private sleep: (ms: number) => Promise<void>;
+  /** One send at a time, so two texts and their Enters can't interleave. */
+  private sending: Promise<unknown> = Promise.resolve();
   private alerter = new Alerter();
   private timeline = new Timeline();
   private seen = new Map<string, Seen>();
@@ -99,13 +103,13 @@ export class TmuxService {
   constructor(opts: ServiceOptions) {
     this.tool = opts.tool;
     this.tmux = opts.tmux;
-    this.notifier = opts.notifier;
     this.git = opts.git;
     this.timers = opts.timers ?? realTimers;
     this.intervalMs = opts.intervalMs ?? POLL_MS;
     this.home = "home" in opts ? opts.home : process.env.HOME;
     this.claude = opts.claude ?? new ClaudeFiles();
     this.launcher = opts.launcher ?? launch;
+    this.sleep = opts.sleep ?? realSleep;
     this.registerActions();
   }
 
@@ -184,7 +188,9 @@ export class TmuxService {
     this.git.refresh(folders);
     this.seen = seen;
     this.timeline.keep(new Set(observations.map((o) => o.key)));
-    for (const a of this.alerter.observe(observations, now)) this.notifier.send(a.name, a.word);
+    // The core delivers (popup, sound, history) and decides whether to: DESIGN.md § 3
+    // "Notifications". Only the session's name and the state word go in, never pane text.
+    for (const a of this.alerter.observe(observations, now)) this.tool.notify({ kind: a.word, title: alertTitle(a) });
     return rows;
   }
 
@@ -320,6 +326,19 @@ export class TmuxService {
       if (!s) throw new TmuxError(SESSION_GONE);
       await this.launcher(openArgv(this.tmux.attachArgv(s.name), process.env), openEnv(process.env));
       this.tool.log.info(`opened a terminal window on '${s.name}'`, { id: s.id });
+    });
+    // The text can hold secrets: it goes to tmux only. The log gets the session and the length.
+    this.tool.action("send", async (args) => {
+      const id = this.idOf(args);
+      if (typeof args.text !== "string") throw new RpcError(-32602, "text must be a string");
+      if (args.enter !== undefined && typeof args.enter !== "boolean") throw new RpcError(-32602, "enter must be a boolean");
+      const text = args.text;
+      const run = this.sending.then(() => sendToSession(this.tmux, `$${id}`, text, { enter: args.enter !== false, sleep: this.sleep }));
+      this.sending = run.catch(() => undefined);
+      const sent = await run;
+      const name = this.tool.get(`sessions.${id}.name`);
+      this.tool.log.info(`sent text to tmux session ${typeof name === "string" ? `'${name}'` : `$${id}`}`, { id: `$${id}`, chars: sent.chars, enter: sent.enter });
+      return { chars: sent.chars, enter: sent.enter };
     });
     this.tool.action("view", (args) => this.view(typeof args.id === "string" ? this.idOf(args) : undefined));
     this.tool.action("history", (args) => this.history(this.idOf(args)));

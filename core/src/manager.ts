@@ -2,6 +2,10 @@
 // Holds no domain logic.
 import { EventEmitter } from "node:events";
 import type { JsonObject, JsonValue, ProgressParams, StateChange, ToolInfo, TrustedNetwork } from "@motherapp/protocol";
+import { NotificationService } from "./notifications.ts";
+import type { NotifyingTool } from "./notifications.ts";
+import { deliveryEnabled, DesktopDelivery } from "./notifyDelivery.ts";
+import type { Delivery } from "./notifyDelivery.ts";
 import { defaultConfig, loadConfig, updateConfigFile } from "./config.ts";
 import type { Config } from "./config.ts";
 import type { LogService } from "./logService.ts";
@@ -11,6 +15,8 @@ import { mergeOrder, orderToSave } from "./toolOrder.ts";
 import { ToolHost } from "./toolHost.ts";
 import type { Clock, SpawnFn } from "./toolHost.ts";
 import type { RestartPolicyOptions } from "./restartPolicy.ts";
+import { ToolHealth, Tray, trayAllowed } from "./tray.ts";
+import type { TrayOptions, TrayView } from "./tray.ts";
 import { ErrorCode, RpcError } from "@motherapp/protocol";
 
 export interface ManagerOptions {
@@ -23,6 +29,18 @@ export interface ManagerOptions {
   actionTimeoutMs?: number;
   /** Debounce of the last viewer leaving a tool's page (ToolHost `unwatchDelayMs`). */
   unwatchDelayMs?: number;
+  /**
+   * Popups and sounds for tools' notifications. Default: the desktop (notify-send/gdbus and
+   * pw-play), switched off by MOTHERAPP_NOTIFY=off and under `node --test`.
+   */
+  delivery?: Delivery;
+  /** The popup's icon (a file path or an icon name). */
+  notifyIcon?: string;
+  /**
+   * The tray icon (tray.ts). Without `command` there is no helper to start, so a Manager built
+   * by a test never shows one; main.ts passes the real command and "Open motherapp".
+   */
+  tray?: Partial<Pick<TrayOptions, "allowed" | "command" | "onOpen" | "spawn" | "env" | "clock" | "policy" | "killGraceMs">>;
 }
 
 export interface ManagerEvents {
@@ -37,11 +55,69 @@ const ICON_FILE_RE = /\.(svg|png)$/i;
 export class Manager extends EventEmitter<ManagerEvents> {
   readonly hosts = new Map<string, ToolHost>();
   config: Config = defaultConfig();
+  /** Tools' notifications: settings, history and delivery (DESIGN.md § 3 "Notifications"). */
+  readonly notifications: NotificationService;
+  /** The tray icon: running or not, and the "Show tray icon" setting (DESIGN.md § 3 "Tray icon"). */
+  readonly tray: Tray;
+  private health = new ToolHealth();
   private opts: ManagerOptions;
 
   constructor(opts: ManagerOptions) {
     super();
     this.opts = opts;
+    const log = opts.log;
+    this.notifications = new NotificationService({
+      store: {
+        get: () => this.config.notifications,
+        save: (next) => {
+          this.patchConfig((raw) => {
+            raw.notifications = next;
+          });
+          this.config.notifications = next;
+        },
+      },
+      tools: () => this.order().map((id) => this.notifyingTool(this.hosts.get(id)!)),
+      delivery:
+        opts.delivery ??
+        new DesktopDelivery({
+          enabled: deliveryEnabled(),
+          ...(opts.notifyIcon !== undefined ? { icon: opts.notifyIcon } : {}),
+          warn: (msg) => log.core("warn", msg),
+        }),
+      log: (level, msg, fields, tool) => log.core(level, msg, fields, tool),
+    });
+    this.tray = new Tray({
+      ...opts.tray,
+      allowed: opts.tray?.command !== undefined && (opts.tray.allowed ?? trayAllowed()),
+      command: opts.tray?.command ?? [],
+      onOpen: opts.tray?.onOpen ?? (() => undefined),
+      store: {
+        get: () => this.config.tray,
+        save: (enabled) => {
+          this.patchConfig((raw) => {
+            raw.tray = enabled;
+          });
+          this.config.tray = enabled;
+        },
+      },
+      view: () => this.trayView(),
+      // The same switch as Settings -> "Mute all": pages hear of it through onSettings.
+      onMute: (muted) => void this.notifications.setMuted(muted),
+      log: (level, msg, fields) => log.core(level, msg, fields),
+    });
+    this.on("tools", () => this.tray.refresh());
+    this.notifications.onSettings(() => this.tray.refresh());
+  }
+
+  /** What the tray icon shows: tool health, and the tick on "Mute notifications". */
+  trayView(): TrayView {
+    return { ...this.health.update(this.list()), muted: this.config.notifications.muted };
+  }
+
+  /** A tool as the notification service sees it: identity from the core, kinds from the manifest. */
+  private notifyingTool(host: ToolHost): NotifyingTool {
+    const { id, title, icon, iconUrl } = this.info(host);
+    return { id, title, kinds: host.manifest.notifications ?? [], ...(icon !== undefined ? { icon } : {}), ...(iconUrl !== undefined ? { iconUrl } : {}) };
   }
 
   /** Loads config, discovers tools, starts the enabled ones. */
@@ -77,6 +153,7 @@ export class Manager extends EventEmitter<ManagerEvents> {
         snapshot: (h) => this.emit("snapshot", h),
         changes: (h, c) => this.emit("state", h, c),
         stream: (h, n, v) => this.emit("stream", h, n, v),
+        notify: (h, params) => void this.notifications.submit(this.notifyingTool(h), params),
       },
     });
     this.hosts.set(host.id, host);
@@ -238,6 +315,6 @@ export class Manager extends EventEmitter<ManagerEvents> {
   }
 
   async shutdown(): Promise<void> {
-    await Promise.all([...this.hosts.values()].map((h) => h.stop()));
+    await Promise.all([this.tray.stop(), ...[...this.hosts.values()].map((h) => h.stop())]);
   }
 }

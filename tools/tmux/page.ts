@@ -4,8 +4,11 @@
 // on a narrow screen. List, state and timeline come from state, which the tool keeps current all
 // the time. The preview and Claude's text come from the `view` action, asked for only while this
 // tab is visible and only for the selected session, and scrollback from `history`, only when
-// asked. All three are local only with `open`: the core refuses them on a LAN connection, and then
-// this page drops the preview and the Open button.
+// asked. All three are local only with `open` and `send`: the core refuses them on a LAN
+// connection, and then this page drops the preview, the Open button and the Send box.
+//
+// Send box, under the preview: types text into the selected session (the `send` action). Enter
+// sends, Shift+Enter is a new line. The tool presses Enter as a separate key after the text.
 //
 // Scrolling: a live refresh only touches the screen while the user is at its bottom. Scrolled up,
 // or looking at history, what they read stays where it is until they go back.
@@ -176,6 +179,14 @@ const STYLE = `
   background: ${DEFAULT_BG}; color: ${DEFAULT_FG}; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.2; white-space: pre; tab-size: 8; }
 .mtx-screen[data-wrap="true"] { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.35; }
 @container (min-width: ${WIDE_PX}px) { .mtx-screen { height: 56vh; max-height: none; } }
+.mtx-send { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; min-width: 0; }
+.mtx-send textarea { flex: 1 1 22em; min-width: 0; min-height: 2.6em; max-height: 40vh; padding: 6px 8px; resize: vertical; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.875rem; line-height: 1.35; }
+.mtx-send textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Wrapped under the box on a narrow screen, the checkbox and the button stay together at the right. */
+.mtx-send label { flex: none; margin-inline-start: auto; display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; font-size: 0.875rem; color: var(--muted); white-space: nowrap; cursor: pointer; }
+.mtx-send .mtx-btn { flex: none; }
+.mtx-send[hidden] { display: none; }
 .mtx-screen[hidden], .mtx-claude[hidden], .mtx-rename[hidden], .mtx-note[hidden], .mtx-main[hidden] { display: none; }
 .mtx-claude dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 0.875rem; }
 .mtx-claude dt { color: var(--muted); }
@@ -348,6 +359,14 @@ export default class TmuxPage extends HTMLElement {
   private liveBtn = el("button", { class: "mtx-btn", text: "Back to live" });
   private screen = el("pre", { class: "mtx-screen" });
   private screenNote = el("p", { class: "mtx-note" });
+  private sendForm = el("form", { class: "mtx-send" });
+  private sendInput = el("textarea");
+  private sendEnter = el("input");
+  private sendBtn = el("button", { class: "mtx-btn", text: "Send" });
+  private sendNote = el("p", { class: "mtx-note" });
+  private sendBusy = false;
+  /** Unsent text per session (`<id>@<created>`), so a draft never follows the selection to another one. */
+  private drafts = new Map<string, string>();
   private claudeList = el("dl");
   private claude = el("div", { class: "mtx-card mtx-claude" }, this.claudeList);
 
@@ -415,10 +434,73 @@ export default class TmuxPage extends HTMLElement {
     this.screen.addEventListener("wheel", (e) => {
       if (e.deltaY < 0 && this.screen.scrollTop <= 0 && !this.history) void this.loadHistory();
     }, { passive: true });
-    this.main.append(el("div", { class: "mtx-card" }, head, actions, this.renameForm, this.renameNote), this.screenBar, this.screen, this.screenNote, this.claude);
+    this.buildSend();
+    this.main.append(el("div", { class: "mtx-card" }, head, actions, this.renameForm, this.renameNote), this.screenBar, this.screen, this.screenNote, this.sendForm, this.sendNote, this.claude);
     this.needs.hidden = true;
     this.updateBar();
     this.root.append(this.bar, el("div", { class: "mtx-grid" }, this.list, this.main));
+  }
+
+  private buildSend(): void {
+    this.sendInput.rows = 2;
+    this.sendInput.spellcheck = false;
+    this.sendInput.setAttribute("autocapitalize", "off");
+    this.sendInput.setAttribute("autocomplete", "off");
+    this.sendInput.setAttribute("aria-label", "Text to type into this session");
+    this.sendEnter.type = "checkbox";
+    this.sendEnter.checked = true;
+    const enterLabel = el("label", {}, this.sendEnter, "Press Enter");
+    enterLabel.title = "After the text, press Enter in the session. Off: the text is only typed.";
+    this.sendBtn.type = "submit";
+    this.sendForm.append(this.sendInput, enterLabel, this.sendBtn);
+    this.sendForm.hidden = true;
+    this.sendNote.hidden = true;
+    this.sendForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      void this.submitSend();
+    });
+    // Enter sends, Shift+Enter is a new line. Not while an input method is composing.
+    this.sendInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+      e.preventDefault();
+      void this.submitSend();
+    });
+  }
+
+  private lifeKey(id: string | undefined): string | undefined {
+    const s = id === undefined ? undefined : this.sessions[id];
+    return s ? `${id}@${s.created}` : undefined;
+  }
+
+  /** Types the box's text into the selected session. Cleared on success, kept with the error otherwise. */
+  private async submitSend(): Promise<void> {
+    const id = this.selected;
+    const text = this.sendInput.value;
+    if (id === undefined || !this.ctx || this.sendBusy || text === "") return;
+    const key = this.lifeKey(id);
+    this.sendBusy = true;
+    this.sendBtn.disabled = true;
+    try {
+      await this.ctx.action("send", { id, text, enter: this.sendEnter.checked });
+      // Only what was sent goes: the selection or the text may have changed meanwhile.
+      if (this.selected === id && this.sendInput.value === text) this.sendInput.value = "";
+      else if (key !== undefined && this.drafts.get(key) === text) this.drafts.delete(key);
+      this.sendNote.hidden = true;
+      // Show what it did: back to the bottom of the live screen.
+      if (!this.history) {
+        this.following = true;
+        this.renderScreenBar();
+      }
+      this.refreshSoon(150);
+    } catch (e) {
+      if ((e as { code?: number }).code === LOCAL_ONLY) this.sendForm.hidden = true;
+      this.sendNote.textContent = `Not sent: ${(e as Error).message}`;
+      this.sendNote.dataset.error = "true";
+      this.sendNote.hidden = false;
+    } finally {
+      this.sendBusy = false;
+      this.sendBtn.disabled = false;
+    }
   }
 
   // ---- list ----
@@ -579,6 +661,15 @@ export default class TmuxPage extends HTMLElement {
   private select(id: string | undefined, byUser: boolean): void {
     if (id === this.selected && !byUser) return;
     const changed = id !== this.selected;
+    if (changed) {
+      const from = this.lifeKey(this.selected);
+      if (from !== undefined) {
+        if (this.sendInput.value) this.drafts.set(from, this.sendInput.value);
+        else this.drafts.delete(from);
+      }
+      this.sendInput.value = this.drafts.get(this.lifeKey(id) ?? "") ?? "";
+      this.sendNote.hidden = true;
+    }
     this.selected = id;
     if (id !== undefined && byUser) {
       this.picked = `${id}@${this.sessions[id]!.created}`;
@@ -609,6 +700,8 @@ export default class TmuxPage extends HTMLElement {
     const git = s.branch ? [`on ${s.branch}`, ...(s.changes ? [`${s.changes} uncommitted`] : [])] : [];
     const flag = s.staleDays !== undefined ? [`idle for ${s.staleDays} days`] : [];
     this.meta.textContent = [s.detail, ...git, ...flag].join(" · ");
+    const hint = `Type into ${s.name}: Enter sends, Shift+Enter for a new line`;
+    if (this.sendInput.placeholder !== hint) this.sendInput.placeholder = hint;
     this.renderActions(s);
     this.renderClaude();
   }
@@ -714,6 +807,7 @@ export default class TmuxPage extends HTMLElement {
         this.local = true;
         this.actionsKey = "";
         this.screenBar.hidden = false;
+        this.sendForm.hidden = false;
         this.renderScreenBar();
       }
       this.applyView(r, id);
@@ -725,6 +819,8 @@ export default class TmuxPage extends HTMLElement {
         this.actionsKey = "";
         this.screen.hidden = true;
         this.screenBar.hidden = true;
+        this.sendForm.hidden = true;
+        this.sendNote.hidden = true;
         this.screenNote.textContent = "Screen contents and Claude's messages are shown only on this computer.";
         this.screenNote.hidden = false;
         this.renderSelected();

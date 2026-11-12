@@ -41,6 +41,12 @@ test("validateManifest", () => {
   assert.equal(validateManifest({ id: "a", title: "A", serve: ["x"], localActions: "open" }), "localActions must be an array of strings");
   assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], localActions: ["open"] }), { id: "a", title: "A", serve: ["x"], localActions: ["open"] });
   assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], page: "p.ts", extra: 1 }), { id: "a", title: "A", serve: ["x"], page: "p.ts" });
+  const kinds = [{ id: "finished", label: "Finished", sound: "bell" }, { id: "waiting", label: "Waiting" }];
+  assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], notifications: kinds }), { id: "a", title: "A", serve: ["x"], notifications: kinds });
+  assert.match(validateManifest({ id: "a", title: "A", serve: ["x"], notifications: [{ id: "Bad id", label: "x" }] }) as string, /kind's id must match/);
+  assert.match(validateManifest({ id: "a", title: "A", serve: ["x"], notifications: [{ id: "k", label: "x" }, { id: "k", label: "y" }] }) as string, /duplicate kind "k"/);
+  assert.match(validateManifest({ id: "a", title: "A", serve: ["x"], notifications: [{ id: "k" }] }) as string, /needs a label/);
+  assert.match(validateManifest({ id: "a", title: "A", serve: ["x"], notifications: [{ id: "k", label: "x", sound: "/etc/passwd" }] }) as string, /sound must be a sound name/);
   // "bin" is for install.sh only; the core accepts and ignores it.
   assert.deepEqual(validateManifest({ id: "a", title: "A", serve: ["x"], bin: { actl: "a.ts" } }), { id: "a", title: "A", serve: ["x"] });
 });
@@ -65,12 +71,12 @@ test("config: created with defaults when missing, normalized when partial, kept 
   const file = path.join(dir, "sub", "config.json");
   const first = loadConfig(file);
   assert.equal(first.created, true);
-  assert.deepEqual(first.config, { port: 7323, tools: {}, lan: { enabled: false, trusted: [] }, localhostSubdomains: true });
+  assert.deepEqual(first.config, { port: 7323, tools: {}, lan: { enabled: false, trusted: [] }, localhostSubdomains: true, notifications: { muted: false, tools: {} }, tray: true });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { port: 7323, tools: {} });
 
   saveConfig(file, { port: 9000, tools: { demo: { enabled: true } } });
   fs.writeFileSync(file, JSON.stringify({ port: 9000, tools: { demo: { enabled: true }, bad: { enabled: "yes" } }, junk: 1 }));
-  assert.deepEqual(loadConfig(file).config, { port: 9000, tools: { demo: { enabled: true } }, lan: { enabled: false, trusted: [] }, localhostSubdomains: true });
+  assert.deepEqual(loadConfig(file).config, { port: 9000, tools: { demo: { enabled: true } }, lan: { enabled: false, trusted: [] }, localhostSubdomains: true, notifications: { muted: false, tools: {} }, tray: true });
 
   fs.writeFileSync(file, "{broken");
   const broken = loadConfig(file);

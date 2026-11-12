@@ -4,7 +4,9 @@
 # systemd user service. It also writes a small wrapper in ~/.local/bin for each command a tool
 # declares in its manifest ("bin", e.g. audioctl), so tool CLIs work from any terminal and from
 # GNOME keyboard shortcuts, plus ~/.local/bin/motherapp (scripts/motherapp.sh: `motherapp
-# install` pulls main and re-runs this script, `motherapp status`, ...). It records the version
+# install` pulls main and re-runs this script, `motherapp status`, ...), and a desktop entry
+# (~/.local/share/applications/motherapp.desktop plus the icon) so GNOME shows the core's
+# notifications under motherapp's name. It records the version
 # it built (v<N>-<hash>[-dirty], scripts/build-info.sh) in build-info.json for the core.
 # Target: Ubuntu 24.04, GNOME 46, Wayland. Safe to re-run.
 #
@@ -16,8 +18,9 @@
 #   ./install.sh --yes         accept every prompt, except an apt install that would remove
 #                              packages (add --allow-removals to accept that too)
 #   ./install.sh --uninstall   stop + disable the service, remove the unit file and the
-#                              ~/.local/bin wrappers this installer wrote, and offer to
-#                              remove the GNOME keyboard shortcuts motherapp made (default no)
+#                              ~/.local/bin wrappers, the desktop entry and the icon this
+#                              installer wrote, and offer to remove the GNOME keyboard
+#                              shortcuts motherapp made (default no)
 #                              (add --purge to also delete ~/.config/motherapp and
 #                              ~/.local/state/motherapp)
 #
@@ -42,6 +45,11 @@ STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 UNIT_DIR="$CONFIG_HOME/systemd/user"
 UNIT_FILE="$UNIT_DIR/$UNIT_NAME"
 APP_CONFIG_DIR="$CONFIG_HOME/motherapp"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+DESKTOP_TEMPLATE="$REPO_DIR/packaging/motherapp.desktop"
+DESKTOP_FILE="$DATA_HOME/applications/motherapp.desktop"
+ICON_SRC="$REPO_DIR/web/public/icon.png"
+ICON_FILE="$DATA_HOME/icons/hicolor/512x512/apps/motherapp.png"
 APP_STATE_DIR="$STATE_HOME/motherapp"
 CPU_UNIT_NAME="motherapp-cpu-access.service"
 CPU_UNIT_TEMPLATE="$REPO_DIR/packaging/$CPU_UNIT_NAME"
@@ -98,7 +106,9 @@ Usage: ./install.sh [--doctor | --uninstall [--purge]] [--yes [--allow-removals]
                 ask before enabling it, then check http://127.0.0.1:7323/. Writes a
                 wrapper in ~/.local/bin for each tool command (e.g. audioctl) and for
                 the motherapp command (motherapp install/update pulls main and re-runs
-                this; motherapp help lists the rest).
+                this; motherapp help lists the rest), and the desktop entry
+                ~/.local/share/applications/motherapp.desktop with its icon, which
+                GNOME files motherapp's notifications under.
                 Node 24: offers nvm/fnm first when you have one (no sudo), then the
                 NodeSource apt repo, showing first what that install would remove.
   --doctor      Report status, then offer the fixes it found, asking before each (missing
@@ -112,7 +122,8 @@ Usage: ./install.sh [--doctor | --uninstall [--purge]] [--yes [--allow-removals]
   --allow-removals
                 With --yes: also accept an install that removes packages.
   --uninstall   Stop and disable the service, remove ~/.config/systemd/user/motherapp.service
-                and the ~/.local/bin wrappers written by this installer. Asks whether to
+                and the ~/.local/bin wrappers, the desktop entry and the icon written by
+                this installer. Asks whether to
                 remove the GNOME keyboard shortcuts motherapp made (default no; --yes
                 removes them). Shortcuts made elsewhere are never touched.
                 Keeps ~/.config/motherapp and ~/.local/state/motherapp.
@@ -842,6 +853,26 @@ check_misc_tools() {
   fi
 }
 
+# The tray icon is a small Python helper the core starts (core/tray/motherapp-tray.py: GTK 3 and
+# AyatanaAppIndicator3 through python3-gi). Optional: without it the core logs one warning and
+# shows no icon. Checked by file, as apt installs them for /usr/bin/python3, which is the Python
+# the core runs it with; nothing is started. Whether the desktop shows tray icons at all (on
+# GNOME: the AppIndicator extension) is only known to the running helper, which logs it.
+check_tray() {
+  local missing=() f
+  [[ -x $ROOT/usr/bin/python3 ]] || missing+=(python3)
+  [[ -e $ROOT/usr/lib/python3/dist-packages/gi/__init__.py ]] || missing+=(python3-gi)
+  for f in Gtk-3.0:gir1.2-gtk-3.0 AyatanaAppIndicator3-0.1:gir1.2-ayatanaappindicator3-0.1; do
+    compgen -G "$ROOT/usr/lib/*/girepository-1.0/${f%%:*}.typelib" >/dev/null || missing+=("${f##*:}")
+  done
+  if (( ${#missing[@]} == 0 )); then
+    record OK tray-icon "python3-gi with GTK 3 and AyatanaAppIndicator3"
+  else
+    record WARN tray-icon "no tray icon: missing Ubuntu package(s) ${missing[*]} (everything else works)" \
+      "sudo apt-get install ${missing[*]}   then: systemctl --user restart motherapp" 0
+  fi
+}
+
 run_checks() {
   NEED_NODE=0 NEED_PKGS=() NEED_I2C_LOAD=0 NEED_I2C_PERSIST=0 NEED_USERMOD=0 NEED_CPU_ACCESS=0 NEED_THERMALD_OFF=0 NEED_CPU_VOLTAGE=0
   NEED_ENERGY_ACCESS=0
@@ -859,6 +890,8 @@ run_checks() {
   section "CPU access"
   check_cpu_access
   check_cpu_voltage
+  section "Tray icon"
+  check_tray
   section "Service manager"
   check_systemd_user
 }
@@ -1307,6 +1340,99 @@ app_status() {
   fi
 }
 
+# ---------------------------------------------------------------- desktop entry
+
+# ~/.local/share/applications/motherapp.desktop plus the icon. The core sends its notifications
+# with the hint desktop-entry=motherapp, so GNOME shows them under motherapp's name and icon and
+# lists motherapp in Settings -> Notifications; the entry also puts motherapp in the app grid
+# (it opens the panel in the default browser).
+DESKTOP_MARKER="# managed by motherapp install.sh"
+
+render_desktop() {
+  local t="" line
+  [[ -r $DESKTOP_TEMPLATE ]] || return 1
+  # A desktop entry is line-based and Exec has its own quoting: refuse a path that needs any.
+  [[ $ICON_FILE == *$'\n'* || $ICON_FILE == *'\'* ]] && return 1
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line == '#@'* ]] || t+="$line"$'\n'
+  done <"$DESKTOP_TEMPLATE"
+  t="${t%$'\n'}"
+  t="${t//@PORT@/"$PORT"}"
+  t="${t//@ICON@/"$ICON_FILE"}"
+  printf '%s\n' "$t"
+}
+
+desktop_is_managed() { [[ -f $1 && ! -L $1 ]] && grep -qxF -- "$DESKTOP_MARKER" "$1" 2>/dev/null; }
+
+desktop_setup() {
+  section "Desktop entry"
+  if [[ ! -f $ICON_SRC ]]; then
+    record WARN app-icon "$ICON_SRC missing; icon not installed" "" 0
+  elif [[ -f $ICON_FILE ]] && cmp -s "$ICON_SRC" "$ICON_FILE"; then
+    record OK app-icon "$ICON_FILE unchanged"
+  elif mkdir -p "$(dirname "$ICON_FILE")" && cp -f "$ICON_SRC" "$ICON_FILE.tmp" && mv -f "$ICON_FILE.tmp" "$ICON_FILE"; then
+    record OK app-icon "wrote $ICON_FILE"
+  else
+    rm -f "$ICON_FILE.tmp"
+    record WARN app-icon "couldn't write $ICON_FILE" "" 0
+  fi
+  local want
+  if ! want="$(render_desktop)"; then
+    record WARN desktop-entry "couldn't render $DESKTOP_TEMPLATE; notifications will show as \"notify-send\"" "" 0
+  elif [[ -e $DESKTOP_FILE || -L $DESKTOP_FILE ]] && ! desktop_is_managed "$DESKTOP_FILE"; then
+    record WARN desktop-entry "$DESKTOP_FILE exists and wasn't written by install.sh; left alone" \
+      "remove or rename it and re-run ./install.sh" 0
+  elif [[ -f $DESKTOP_FILE && "$(<"$DESKTOP_FILE")" == "$want" ]]; then
+    record OK desktop-entry "$DESKTOP_FILE unchanged"
+  elif mkdir -p "$(dirname "$DESKTOP_FILE")" && printf '%s\n' "$want" >"$DESKTOP_FILE.tmp" && mv -f "$DESKTOP_FILE.tmp" "$DESKTOP_FILE"; then
+    record OK desktop-entry "wrote $DESKTOP_FILE (opens http://127.0.0.1:$PORT/)"
+  else
+    rm -f "$DESKTOP_FILE.tmp"
+    record WARN desktop-entry "couldn't write $DESKTOP_FILE" "" 0
+  fi
+}
+
+# Read-only version of desktop_setup for --doctor. Optional: without the entry notifications
+# still arrive, only under the sender's name instead of motherapp's.
+desktop_status() {
+  section "Desktop entry"
+  if [[ ! -f $ICON_SRC ]]; then
+    record WARN app-icon "$ICON_SRC missing" "" 0
+  elif [[ ! -f $ICON_FILE ]]; then
+    record WARN app-icon "$ICON_FILE not installed" "./install.sh" 0
+  elif cmp -s "$ICON_SRC" "$ICON_FILE"; then
+    record OK app-icon "$ICON_FILE up to date"
+  else
+    record WARN app-icon "$ICON_FILE differs from $ICON_SRC" "./install.sh" 0
+  fi
+  local want
+  if [[ ! -e $DESKTOP_FILE && ! -L $DESKTOP_FILE ]]; then
+    record WARN desktop-entry "$DESKTOP_FILE not installed; notifications show as \"notify-send\", not motherapp" "./install.sh" 0
+  elif ! desktop_is_managed "$DESKTOP_FILE"; then
+    record WARN desktop-entry "$DESKTOP_FILE exists and wasn't written by install.sh; the installer leaves it alone" \
+      "remove or rename it, then re-run ./install.sh" 0
+  elif want="$(render_desktop)" && [[ "$(<"$DESKTOP_FILE")" == "$want" ]]; then
+    record OK desktop-entry "$DESKTOP_FILE up to date"
+  else
+    record WARN desktop-entry "$DESKTOP_FILE differs from what the installer would write now (port changed?)" "./install.sh" 0
+  fi
+}
+
+uninstall_desktop() {
+  if [[ ! -e $DESKTOP_FILE && ! -L $DESKTOP_FILE ]]; then
+    record OK desktop-entry "$DESKTOP_FILE not present"
+  elif desktop_is_managed "$DESKTOP_FILE"; then
+    run rm -f -- "$DESKTOP_FILE"
+    record OK desktop-entry "removed $DESKTOP_FILE"
+  else
+    record WARN desktop-entry "$DESKTOP_FILE wasn't written by install.sh; left alone" "" 0
+  fi
+  if [[ -f $ICON_FILE ]]; then
+    run rm -f -- "$ICON_FILE"
+    record OK app-icon "removed $ICON_FILE"
+  fi
+}
+
 # ---------------------------------------------------------------- tool commands (~/.local/bin)
 
 BIN_DIR="$HOME/.local/bin"
@@ -1690,6 +1816,7 @@ uninstall() {
   fi
   uninstall_shortcuts
   uninstall_bins
+  uninstall_desktop
   uninstall_cpu_access
   uninstall_energy_access
   uninstall_cpu_voltage
@@ -1739,6 +1866,7 @@ case "$MODE" in
     fi
     resolve_port
     app_status
+    desktop_status
     bin_status
     shortcuts_status
     summary
@@ -1754,6 +1882,7 @@ case "$MODE" in
     fi
     resolve_port
     app_setup
+    desktop_setup
     bin_setup
     shortcuts_status
     summary

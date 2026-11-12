@@ -31,6 +31,7 @@ tools/<id>/
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
 | `wide` | Optional, default `false`. The page may grow to 1600 px on a wide screen instead of the usual 960 px column (the CPU page uses it for its live column). Lay the page out so it still works at 960 px and on a phone. |
 | `localActions` | Optional array of action names only this computer may call, even while the "Local network" switch is on. The core refuses them for any other connection with `-32004` before the tool hears of them; the test is the one for changing network settings (a loopback source under a localhost name). For what must not leave this machine (DESIGN.md § 3 "Network switch scope"). A page can read the code from the rejected `ctx.action` and adapt, as `tools/tmux/page.ts` does. |
+| `notifications` | Optional array of the kinds of notification the tool sends: `[{ "id": "finished", "label": "A session finished", "sound": "bell" }]`. `id` matches `[a-z0-9][a-z0-9_-]*` (at most 64 characters) and is unique within the tool; `label` is what Settings calls it; `sound` is the default sound, a file name from `/usr/share/sounds/freedesktop/stereo` without `.oga`, or `"none"` (the default). A manifest with a bad entry is refused. See "Notifications" in § 2. |
 | `order` | Optional number, a default sidebar position hint: lower comes first, and tools without one follow alphabetically by id. It applies only until the user re-orders the tools on the Settings page; after that their saved order rules, and a newly installed tool is appended at the end (alphabetically among other new ones), hint or not. Audio has `"order": 1` so it comes first out of the box. |
 | `bin` | Optional. `{ "<command>": "<script relative to the tool dir>" }`, e.g. `{"audioctl": "audioctl.ts"}`. For each entry `install.sh` writes `~/.local/bin/<command>`, a bash wrapper that runs the script with the installer's Node 24 by absolute path (so an older `node` on PATH or a keyboard shortcut's minimal PATH doesn't matter), and `--uninstall` removes it. The script must be a Node script; the command name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and must be unique across tools. The core ignores this field. |
 
@@ -71,6 +72,7 @@ becomes a log entry with level `error`.
 | `progress` | notification | `{ id, text, fraction? }`, `id` = the action request's id |
 | `stream` | notification | `{ name, value }`, only while open, never cached, ≤ ~20 Hz |
 | `log` | notification | `{ level: "debug"\|"info"\|"warn"\|"error", msg, fields? }` |
+| `notify` | notification | `{ kind, title, body? }`: ask the core to notify the user (see "Notifications" below) |
 | `watch` | notification, core → tool | `{ watching: boolean }`: whether a visible browser tab shows the tool's page (see "Poll only while watched" in § 3). No reply. Ignore it if you don't poll. |
 
 Startup: the core sends `describe`, then `state.get` (10 s timeout each; failure counts as a
@@ -112,16 +114,51 @@ the final state save always finishes. The systemd unit uses `KillMode=mixed`, so
 stop only the core gets systemd's SIGTERM. On startup the SDK removes `<id>.json.<pid>.tmp`
 files older than a minute (`sweepTmpFiles`), left by a save that was killed anyway.
 
+### Notifications
+
+A tool never shows a desktop notification itself. It sends `notify`, and the core does the rest
+(DESIGN.md § 3 "Notifications"):
+
+```json
+{ "jsonrpc": "2.0", "method": "notify", "params": { "kind": "finished", "title": "Nebula finished" } }
+```
+
+- **`kind`** is one of the ids in the manifest's `notifications`. The user turns each kind on or
+  off and picks its sound on the Settings page, also while the tool is stopped, which is why the
+  kinds are declared in the manifest and not in `describe`. A kind the manifest doesn't declare is
+  still delivered, but with no sound and no row in Settings, and the core logs one warning:
+  declare it.
+- **`title`** is the event itself, one line: "Nebula finished", "Nebula is waiting on you". It
+  is the popup's title. Longer than 200 characters is cut; line breaks become spaces.
+- **`body`** is optional plain text (cut at 1000 characters), shown under the tool's name.
+- **The core adds who it is from**: the tool's id, its display name and its icon come from the
+  core's own records of the process that sent the message, so nothing in `params` can change
+  them. The popup is shown as the application "motherapp" with the tool's name as the second
+  line.
+- **The tool is never told what happened to it.** The user may have muted everything, turned
+  the tool or the kind off, or the core may run with `MOTHERAPP_NOTIFY=off`; there is no reply
+  and no setting to read. Send the event whenever it happens and don't add a switch of your
+  own.
+- **Never a secret**, the same rule as for state and `log`: a notification is shown on the
+  desktop, kept in the core's history (the last 200, in memory) and sent to every page,
+  including LAN clients. The tmux tool sends the session's name and the state, never pane text.
+- **Rate limit:** 10 notifications per tool in any 10 seconds; the rest are dropped and the core
+  logs one warning. Notify on events (an edge: working → finished), never on every poll.
+- Only a `running` tool is heard: nothing sent before the `state.get` reply counts.
+
 ### Secrets, and a tool's own listener
 
 - **State is public inside motherapp**: the core caches it, sends it to every page, and the
   SDK may persist it. Never put a secret in state or in a `log` notification (both reach
-  journald or `log.jsonl`).
+  journald or `log.jsonl`), nor in a `notify` (the desktop, the history, every page).
 - **An action's result goes only to the caller.** The core forwards it to the one client that
   sent the action and neither logs nor caches it. That makes it the place for a value shown
   once, like the inbox tool's new link (`create` returns it; the page and `inboxctl new` show
   it, and only a hash is kept), or for text that may hold secrets, like the tmux tool's screen
-  preview and scrollback (`view` and `history`, which are also in `localActions`).
+  preview and scrollback (`view` and `history`, which are also in `localActions`). An action's
+  arguments aren't logged or cached by the core either, so the tmux tool's `send` (text typed
+  into a session, also in `localActions`) keeps its text out of state and logs by not putting
+  it there itself: its log line names the session and the length.
 - **A tool may run its own listener** on `127.0.0.1` and a port of its own (the core doesn't
   know or proxy it). The inbox tool does (default 7324), so that cloudflared can expose that
   port and nothing of the core. Such a tool owns the port's security entirely: bind to
@@ -175,13 +212,15 @@ if (process.argv[2] === "serve") {
 | `tool.action(name, handler)` | `handler(args, { id, progress })`; return value is the result, a throw is the error. |
 | `tool.stream(name, handler)` | See above. |
 | `tool.log.debug/info/warn/error(msg, fields?)` | `log` notification. While serving, `console.log/info/debug/warn` are routed here too; `console.error` goes to stderr (→ level error). |
+| `tool.notify({ kind, title, body? })` | Sends `notify` (see "Notifications" in § 2): `kind` from the manifest's `notifications`, `title` the event itself. No return value, and nothing happens outside serve mode. |
 | `tool.watching` / `tool.onWatch((watching) => …)` | Whether a visible tab shows the tool's page; `onWatch` is called on every change and returns an unsubscribe function. Starts `false`. |
 | `tool.save()` | Write the state file now (otherwise debounced 500 ms, and on shutdown). |
 | `readPersistedState(id)` | For plain CLI subcommands that want the last known state. |
 | `exitOnBrokenPipe(...streams)` | Plain CLI subcommands only, never `serve`: an EPIPE on stdout/stderr (default) or the given streams exits 0 quietly; other errors still throw. |
 
 **Poll only while watched.** Nothing should run every N seconds while nobody looks (the tmux
-tool is the one decided exception, DESIGN.md § 3 "Polling": its notifications must work with no
+tool is the one decided exception, DESIGN.md § 3 "Polling": its notifications (it sends them to
+the core with `tool.notify`) must work with no
 page open, so it polls all the time, one `tmux` call a tick, and ignores `watch`). The core
 counts viewers per tool: a browser tab that has the tool's page open **and** visible (Page
 Visibility API; a hidden tab, another page or a closed socket doesn't count). On 0→1 it sends
@@ -376,5 +415,7 @@ updated in place, and terminal colours applied as style properties on `textConte
 1. `tools/<id>/manifest.json`, `package.json`, `<id>.ts` with `serve` + plain CLI subcommands.
 2. Key list maps by ids; publish deltas; mark hardware-backed values stale until re-read.
 3. Errors as `throw new Error("human readable")`; never print to stdout outside the SDK.
-4. Tests with `node:test` next to the tool; drive `serve` through `input`/`output` streams
+4. To notify the user: declare the kinds in the manifest's `notifications` and call
+   `tool.notify`; never run `notify-send` yourself.
+5. Tests with `node:test` next to the tool; drive `serve` through `input`/`output` streams
    (see `packages/tool-sdk/test/sdk.test.ts`).

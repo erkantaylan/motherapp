@@ -2,6 +2,7 @@
 import type { Writable } from "node:stream";
 import { launch, openArgv, openEnv } from "./open.ts";
 import type { Launcher } from "./open.ts";
+import { realSleep, sendToSession } from "./send.ts";
 import { Tmux, TmuxError, ago, attachCommand, attachedText } from "./tmux.ts";
 import type { Session, TmuxOptions } from "./tmux.ts";
 
@@ -13,6 +14,11 @@ export const USAGE = `usage: tmuxctl <command> [args]
   rename <name> <new>  rename the session with exactly this name; prints the name it really got
                        (tmux turns ":" and "." into "_")
   open <name>          open the session in a new Terminator window
+  send [--no-enter] <name> <text…>
+                       type the text into the session's active pane, then press Enter as a
+                       separate key (--no-enter: leave it typed). Several words are joined with
+                       spaces; text with line breaks is pasted, and Enter runs it once.
+                       Options go before the name; the text may start with "-".
   serve                JSON-RPC serve mode (started by the motherapp core)
 
 Exit codes: 0 ok, 1 tmux failed or no such session, 2 usage error.
@@ -24,6 +30,8 @@ export interface CliIO {
   stderr: Writable;
   now?: () => number;
   launcher?: Launcher;
+  /** The pause between sent text and Enter. Default: a real timer. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 class UsageError extends Error {}
@@ -92,6 +100,23 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
         const s = await find(tmux, one(args, "session name"));
         await (io.launcher ?? launch)(openArgv(tmux.attachArgv(s.name), process.env), openEnv(process.env));
         line(io.stdout, `opened '${s.name}'`);
+        return 0;
+      }
+      case "send": {
+        let enter = true;
+        let rest = args;
+        while (rest[0]?.startsWith("-") && rest[0] !== "-") {
+          const opt = rest[0];
+          rest = rest.slice(1);
+          if (opt === "--") break;
+          if (opt === "--no-enter" || opt === "-n") enter = false;
+          else throw new UsageError(`unknown option "${opt}"`);
+        }
+        if (rest.length < 2 || rest[0] === "") throw new UsageError("expected a session name and the text to send");
+        const s = await find(tmux, rest[0]!);
+        const sent = await sendToSession(tmux, s.id, rest.slice(1).join(" "), { enter, sleep: io.sleep ?? realSleep });
+        // The text itself is not repeated: stdout may be a log.
+        line(io.stdout, `sent ${sent.chars} character${sent.chars === 1 ? "" : "s"} to '${s.name}'${enter ? " and pressed Enter" : ", Enter not pressed"}`);
         return 0;
       }
       case undefined:

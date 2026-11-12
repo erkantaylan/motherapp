@@ -1,5 +1,6 @@
 // DEMO TOOL — exists only to exercise the extension contract end to end (declarative page,
-// actions that can fail, stale values, a keyed list, a stream, logs). Not a real feature;
+// actions that can fail, stale values, a keyed list, a stream, logs, a notification). Not a
+// real feature;
 // disabled by default (manifest `defaultEnabled: false`), enable it on the Settings page.
 //
 //   node tools/demo/demo.ts serve    serve mode (started by the core)
@@ -18,6 +19,9 @@ const layout: Widget[] = [
   { type: "button", label: "Copy count", copy: { bind: "count" } },
   // confirm: an in-page dialog first (danger style by default); Cancel sends nothing
   { type: "button", label: "Reset counter", action: "reset", confirm: "Reset the counter to 0?" },
+  // notify: the core shows the popup, plays the sound and keeps it in the history (the kind
+  // "hello" is declared in manifest.json's "notifications")
+  { type: "button", label: "Send a notification", action: "notify" },
   { type: "text", text: "Controls", style: "heading" },
   { type: "toggle", label: "Enabled", bind: "enabled", action: "setEnabled" },
   { type: "slider", label: "Level (slow device, starts stale)", bind: "level", action: "setLevel", min: 0, max: 100, step: 1, unit: "%" },
@@ -79,6 +83,9 @@ tool
     tool.set("count", count);
     tool.log.info("incremented", { count });
     return { count };
+  })
+  .action("notify", () => {
+    tool.notify({ kind: "hello", title: "Hello from the demo", body: `The counter is at ${tool.get("count") as number}.` });
   })
   .action("reset", () => {
     tool.set("count", 0);

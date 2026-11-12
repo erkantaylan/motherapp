@@ -1,4 +1,5 @@
-// Talking to tmux: list sessions, kill or rename one, capture a pane, and the commands that attach.
+// Talking to tmux: list sessions, kill or rename one, capture a pane, type into one, and the
+// commands that attach.
 //
 // Facts checked against real tmux 3.4 and 3.6a (see test/real-tmux.test.ts):
 // - Without a UTF-8 client, tmux replaces every non-printable or non-ASCII byte in -F output
@@ -16,6 +17,7 @@
 //   own process, but counts the shell's lines for one started from a shell. `alternate_on` does.
 // - `rename-session` expands formats in the new name: "#S" and "#{...}" are replaced, "##" is a
 //   literal "#". `#(...)` isn't run, it becomes empty.
+// - `display-message -p -t '$99:'` for a session that doesn't exist is exit 0 with empty fields.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { run } from "./runner.ts";
@@ -152,6 +154,33 @@ export interface TmuxOptions {
 
 export const SESSION_GONE = "That session doesn't exist anymore.";
 
+/**
+ * tmux reads an argument that ends in ";" as a command separator and drops the ";" (`send-keys -l
+ * -- 'ls;'` types "ls"); one ending in "\;" gets the ";" back. Checked on 3.4 and 3.6a, for
+ * `send-keys` and `set-buffer`. Same rule as tools/inbox/src/clean.ts.
+ */
+export function tmuxLiteralArg(text: string): string {
+  return text.endsWith(";") ? `${text.slice(0, -1)}\\;` : text;
+}
+
+/** A command line over 16 KiB is refused ("command too long"), so long text goes in parts. */
+export const CHUNK_CHARS = 2000;
+
+/** Cuts text into parts of at most `size` UTF-16 units, never inside a surrogate pair. */
+export function chunks(text: string, size = CHUNK_CHARS): string[] {
+  const out: string[] = [];
+  let part = "";
+  for (const ch of text) {
+    if (part.length + ch.length > size) {
+      out.push(part);
+      part = "";
+    }
+    part += ch;
+  }
+  if (part !== "") out.push(part);
+  return out;
+}
+
 function firstLine(s: string): string {
   return s.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
 }
@@ -161,6 +190,7 @@ export class Tmux {
   private socket: string | undefined;
   readonly socketPath: string;
   private exists: (p: string) => boolean;
+  private buffers = 0;
 
   constructor(opts: TmuxOptions) {
     this.runner = opts.runner;
@@ -252,6 +282,52 @@ export class Tmux {
   /** The same, with up to `lines` lines of scrollback above the screen. */
   captureHistory(id: string, lines: number): Promise<string> {
     return this.session("capture-pane", "capture-pane", "-p", "-e", "-S", String(-lines), "-t", `${id}:`);
+  }
+
+  /**
+   * The pane keys for this session go to: the active pane of its current window, the one the
+   * preview shows. By pane id, so later calls can't drift to another pane.
+   */
+  async activePane(id: string): Promise<{ pane: string; inMode: boolean }> {
+    // A missing session is exit 0 with empty fields here, not an error.
+    const out = await this.session("display-message", "display-message", "-p", "-t", `${id}:`, "#{pane_id}\t#{pane_in_mode}");
+    const m = /^(%\d+)\t(\d+)/.exec(out);
+    if (!m) throw new TmuxError(SESSION_GONE);
+    return { pane: m[1]!, inMode: m[2] !== "0" };
+  }
+
+  /**
+   * Types text into a pane as literal keys (`-l`: no key names; `--`: a leading "-" is text).
+   * Never pass a line break, or more than CHUNK_CHARS: see send.ts. The text can hold secrets:
+   * never log it.
+   */
+  async typeLiteral(pane: string, text: string): Promise<void> {
+    await this.session("send-keys", "send-keys", "-t", pane, "-l", "--", tmuxLiteralArg(text));
+  }
+
+  /**
+   * Pastes text into a pane through a buffer of its own, bracketed if the program asked for
+   * that (`-p`), so line breaks stay text. The buffer is deleted with the paste (`-d`).
+   */
+  async paste(pane: string, text: string): Promise<void> {
+    const buffer = `motherapp-send-${process.pid}-${++this.buffers}`;
+    try {
+      let first = true;
+      for (const part of chunks(text)) {
+        await this.session("set-buffer", "set-buffer", ...(first ? [] : ["-a"]), "-b", buffer, "--", tmuxLiteralArg(part));
+        first = false;
+      }
+      await this.session("paste-buffer", "paste-buffer", "-p", "-d", "-b", buffer, "-t", pane);
+    } catch (e) {
+      // Don't leave the text behind in tmux's buffer list.
+      await run(this.runner, "tmux", this.args("delete-buffer", "-b", buffer)).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  /** The Enter key, as its own call. */
+  async pressEnter(pane: string): Promise<void> {
+    await this.session("send-keys", "send-keys", "-t", pane, "Enter");
   }
 
   /** Argv of a tmux client attached to a session by exact name. For a terminal to run. */

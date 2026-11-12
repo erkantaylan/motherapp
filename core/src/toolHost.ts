@@ -52,6 +52,8 @@ export interface ToolHostEvents {
   snapshot(host: ToolHost): void;
   changes(host: ToolHost, changes: StateChange[]): void;
   stream(host: ToolHost, name: string, value: JsonValue): void;
+  /** The tool's `notify`, unchecked; the notification service validates and decides. */
+  notify?(host: ToolHost, params: unknown): void;
 }
 
 export interface ToolHostOptions {
@@ -347,6 +349,10 @@ export class ToolHost {
         this.opts.log.add(this.id, "tool", level, p.msg, fields);
         return;
       }
+      case "notify":
+        // Only a running tool: nothing during the handshake, nothing from a process on its way out.
+        if (this.running) this.opts.events.notify?.(this, params);
+        return;
       default:
         this.log("debug", `ignoring unknown notification "${method}"`);
     }

@@ -23,6 +23,10 @@
 @use "bootstrap/scss/helpers/visually-hidden";
 @use "utilities-subset";
 
+// From this window width up the side panel docks beside the page; keep in step with
+// DOCK_MIN_PX in toolStrip.ts.
+$dock-min: 1480px;
+
 @layer custom {
   // Shared theme for custom pages (docs/extension-contract.md § 6), defined from Bootstrap's
   // tokens. Light/dark follows the OS: Bootstrap's tokens are light-dark() pairs.
@@ -44,6 +48,11 @@
     --page-header-h: 52px;
     --content-x: 28px;
     --content-top: 20px;
+    // The tool strip on the right edge and the side panel it opens (toolStrip.ts).
+    // 32px, no wider: in an 1100 px window the tmux page is 852 px wide and needs 820 for its
+    // two-column layout, which its own media query takes for granted from 1100 px up.
+    --strip-w: 32px;
+    --panel-w: 340px;
   }
 
   // Bootstrap only swaps the select caret for [data-bs-theme="dark"], not for the OS setting.
@@ -122,6 +131,153 @@
   @media (max-width: 720px) and (prefers-reduced-motion: reduce) {
     .sidebar { transition: none; }
   }
+
+  // ---- tool strip and side panel (toolStrip.ts) ----
+  // The strip is the last column of the shell on every page; the panel sits between the page
+  // and the strip. From $dock-min up an open panel is a column of its own, so the page narrows
+  // and nothing is covered. Below that there is no room: the panel lies over the page's right
+  // side, and on a phone over all of it. $dock-min keeps a page at least as wide with the panel
+  // docked as it is in an 1100 px window without it (the tmux page's own wide layout starts
+  // there), so docking never drops a page into its narrow layout.
+  .tool-strip {
+    position: sticky;
+    top: 0;
+    z-index: 9;
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: var(--bs-spacer-2);
+    align-items: center;
+    width: var(--strip-w);
+    height: 100vh;
+    padding: 13px 0;
+    background: var(--surface);
+    border-inline-start: var(--bs-border-width) solid var(--border);
+  }
+  .strip-btn {
+    position: relative;
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    color: var(--muted);
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-radius: var(--bs-radius-3, 6px);
+  }
+  .strip-btn:hover { color: var(--fg); background: var(--bs-bg-2); }
+  .strip-btn.active { color: var(--bs-primary-fg-emphasis, var(--fg)); background: var(--bs-primary-bg-subtle); }
+  .strip-btn:focus-visible { outline: var(--bs-focus-ring); outline-offset: var(--bs-focus-ring-offset); }
+  .strip-badge {
+    position: absolute;
+    inset-block-start: -6px;
+    inset-inline-end: -3px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    font-size: 10px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    line-height: 15px;
+    color: var(--accent-fg);
+    text-align: center;
+    pointer-events: none;
+    background: var(--accent);
+    border-radius: 8px;
+  }
+  .strip-badge[hidden] { display: none; }
+
+  .side-panel {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    width: var(--panel-w);
+    height: 100vh;
+    background: var(--bg);
+    border-inline-start: var(--bs-border-width) solid var(--border);
+  }
+  .side-panel[hidden] { display: none; }
+  // As tall as the page header, so the two bottom lines meet.
+  .side-panel-header {
+    display: flex;
+    flex: none;
+    gap: var(--bs-spacer-4);
+    align-items: center;
+    min-height: var(--page-header-h);
+    padding: 6px var(--bs-spacer-3) 6px var(--bs-spacer-5);
+    border-block-end: var(--bs-border-width) solid var(--border);
+  }
+  .side-panel-title { flex: 1; min-width: 0; margin: 0; font-size: 1.125rem; font-weight: 600; }
+  .side-panel-controls { display: flex; flex: none; gap: var(--bs-spacer-3); align-items: center; }
+  .side-panel-controls .control { flex-wrap: nowrap; gap: var(--bs-spacer-3); margin: 0; }
+  .side-panel-controls .control-label { min-width: 0; font-size: var(--bs-font-size-sm); color: var(--muted); }
+  .side-panel-close {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    line-height: 1;
+    color: var(--muted);
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius);
+  }
+  .side-panel-close:hover { color: var(--fg); background: var(--bs-bg-2); }
+  .side-panel-close:focus-visible { outline: var(--bs-focus-ring); outline-offset: var(--bs-focus-ring-offset); }
+  .side-panel-body { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+
+  // No room to dock: over the page's right side, beside the strip.
+  @media (max-width: #{$dock-min - 0.02px}) {
+    .side-panel {
+      position: fixed;
+      inset-block: 0;
+      inset-inline-end: var(--strip-w);
+      z-index: 8;
+      width: min(var(--panel-w), calc(100vw - var(--strip-w)));
+      box-shadow: var(--bs-box-shadow-lg);
+    }
+  }
+  // Phone: the bell moves into the top bar, and the panel covers the page until it is closed.
+  @media (max-width: 720px) {
+    .shell { position: relative; }
+    .tool-strip {
+      position: absolute;
+      inset-block-start: 0;
+      inset-inline-end: 0;
+      flex-direction: row;
+      width: auto;
+      height: auto;
+      padding: 11px var(--bs-spacer-4); // centred on the top bar's menu button
+      background: transparent;
+      border: 0;
+    }
+    .side-panel { inset: 0; z-index: 20; width: auto; border: 0; box-shadow: none; }
+  }
+
+  // The notification history in the side panel (notifyPanel.ts), newest on top.
+  .note-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+  .note-list { flex: 1; min-height: 0; padding: 0; margin: 0; overflow-y: auto; list-style: none; }
+  .note-list[hidden], .note-empty[hidden] { display: none; }
+  .note { display: flex; gap: var(--bs-spacer-3); padding: var(--bs-spacer-3) var(--bs-spacer-5); border-block-end: var(--bs-border-width) solid var(--border); }
+  .note-icon { flex: none; width: 20px; text-align: center; }
+  .note-icon img { width: 18px; height: 18px; vertical-align: middle; }
+  .note-main { flex: 1; min-width: 0; }
+  .note-head { display: flex; gap: var(--bs-spacer-3); align-items: baseline; }
+  .note-title { flex: 1; min-width: 0; font-weight: 550; overflow-wrap: anywhere; }
+  .note-time { flex: none; font-size: var(--bs-font-size-sm); font-variant-numeric: tabular-nums; color: var(--muted); }
+  .note-muted { flex: none; padding: 0 6px; font-size: var(--bs-font-size-xs, .75rem); color: var(--muted); border: var(--bs-border-width) solid var(--border); border-radius: 999px; }
+  .note-body { font-size: var(--bs-font-size-sm); overflow-wrap: anywhere; white-space: pre-wrap; }
+  // Arrived while Mute all was on: dimmed and marked.
+  .note.is-muted :is(.note-icon, .note-title, .note-body) { opacity: .55; }
+  .note-empty { flex: 1; padding: var(--bs-spacer-6) var(--bs-spacer-5); text-align: center; }
+  .note-empty p { margin: 0 0 var(--bs-spacer-3); }
+  .note-foot { flex: none; padding: var(--bs-spacer-3) var(--bs-spacer-5); font-size: var(--bs-font-size-sm); border-block-start: var(--bs-border-width) solid var(--border); }
 
   // ---- pages ----
   .page-header {
@@ -304,6 +460,36 @@
     background-color: color-mix(in oklch, var(--bs-primary-bg-subtle) 60%, var(--bs-bg-body));
     box-shadow: var(--bs-box-shadow);
   }
+  // Settings: notifications. One grid as for the tool order: every row is a subgrid, so the
+  // switch, sound, play button and dot each have one column whether or not a row has them
+  // (Mute all and a tool's own row have no sound).
+  .list-group.notify-rows {
+    display: grid;
+    grid-template-columns: [labels] minmax(0, 1fr) [enabled] auto [sound] auto [play] auto [dot] auto [end];
+    column-gap: var(--bs-spacer-4);
+  }
+  .notify-rows > .list-row {
+    display: grid;
+    grid-column: labels / end;
+    grid-template-columns: subgrid;
+    gap: var(--bs-spacer-2) var(--bs-spacer-4);
+    align-items: center;
+  }
+  .notify-rows > .list-row > .row-labels { grid-column: labels; }
+  .notify-rows > .list-row > .row-enabled { grid-column: enabled; flex-wrap: nowrap; gap: var(--bs-spacer-3); }
+  .notify-rows > .list-row > .row-sound { grid-column: sound; width: auto; max-width: min(19em, 50vw); }
+  .notify-rows > .list-row > .row-play { grid-column: play; display: inline-grid; place-items: center; }
+  .notify-rows > .list-row > .row-play[hidden] { display: none; }
+  .notify-rows > .list-row > .dot { grid-column: dot; }
+  // A kind belongs to the tool row above it.
+  .notify-kind > .row-labels { padding-inline-start: var(--bs-spacer-6); }
+  .notify-kind > .row-labels > .row-title { font-weight: 400; }
+  .notify-kind.is-off > .row-labels { opacity: .6; }
+  @media (max-width: 560px) {
+    .notify-rows > .list-row > .row-labels { grid-row: 1; grid-column: labels / end; }
+    .notify-rows > .list-row > :is(.row-enabled, .row-sound, .row-play, .dot) { grid-row: 2; }
+  }
+
   // dialogs (button confirm, manual copy) and the "Copied" toast
   .dialog { --bs-dialog-width: 460px; }
   .dialog-text { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }

@@ -9,7 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const children: ChildProcess[] = [];
 
 function run(cmd: string, args: string[], cwd: string): void {
-  const child = spawn(cmd, args, { cwd, stdio: "inherit", env: process.env });
+  // A dev core beside the installed service would put a second, identical icon in the tray.
+  const child = spawn(cmd, args, { cwd, stdio: "inherit", env: { ...process.env, MOTHERAPP_TRAY: process.env.MOTHERAPP_TRAY ?? "off" } });
   child.on("exit", (code) => {
     for (const c of children) if (c !== child) c.kill("SIGTERM");
     process.exit(code ?? 0);

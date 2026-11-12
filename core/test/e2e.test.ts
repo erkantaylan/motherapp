@@ -7,14 +7,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import type { LogEntry, RpcId } from "@motherapp/protocol";
+import type { LogEntry, NotificationEntry, NotificationSettings, RpcId } from "@motherapp/protocol";
 import { fixturesDir, waitFor } from "./helpers.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function startCore(env: Record<string, string>) {
   const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(repo, "core/src/main.ts")], {
-    env: { ...process.env, ...env },
+    // MOTHERAPP_NOTIFY=off, MOTHERAPP_TRAY=off: a test core never puts a popup, a sound or a
+    // tray icon on the real desktop
+    env: { ...process.env, MOTHERAPP_NOTIFY: "off", MOTHERAPP_TRAY: "off", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const lines: Record<string, unknown>[] = [];
@@ -126,6 +128,45 @@ test("core + demo tool over WebSocket: cached state, action, delta, log entry", 
   assert.equal(slow.result, "done");
   assert.ok(c.notes("progress").filter((p) => p.id === slow.id).length === 5);
 
+  // a tool's notify: history and a live push for subscribers, with the core's view of the tool;
+  // this core shows no popup and plays no sound (MOTHERAPP_NOTIFY=off)
+  const before = await c.call("notifications.subscribe", {});
+  assert.deepEqual(before.result, { entries: [] });
+  const ns = (await c.call("notifications.settings.get", {})).result as NotificationSettings;
+  assert.equal(ns.delivery, false);
+  assert.equal(ns.muted, false);
+  assert.deepEqual(ns.tools.find((x) => x.id === "demo"), {
+    id: "demo", title: "Demo", icon: "🧪", enabled: true,
+    kinds: [{ id: "hello", label: "Demo notification", enabled: true, sound: "message", defaultSound: "message" }],
+  });
+  assert.equal((await c.call("action", { tool: "demo", name: "notify" })).error, undefined);
+  await waitFor(() => c.notes("notification").length === 1, "live notification");
+  const entry = c.notes("notification")[0].entry as NotificationEntry;
+  assert.deepEqual({ ...entry, ts: "" }, { seq: 1, ts: "", tool: "demo", toolTitle: "Demo", toolIcon: "🧪", kind: "hello", title: "Hello from the demo", body: "The counter is at 1." });
+  assert.equal(c2.notes("notification").length, 0, "only subscribers get the push");
+  assert.deepEqual((await c2.call("notifications.subscribe", { limit: 5 })).result.entries, [entry], "the backlog for a later page");
+  // settings: saved in config.json, pushed to every client; a turned-off kind is dropped entirely
+  const off = await c.call("notifications.setKind", { tool: "demo", kind: "hello", enabled: false });
+  assert.equal((off.result as NotificationSettings).tools.find((x) => x.id === "demo")!.kinds[0]!.enabled, false);
+  await waitFor(() => c2.notes("notifications.settings").length === 1, "settings pushed to the other client");
+  const saved = JSON.parse(fs.readFileSync(path.join(cfgDir, "config.json"), "utf8"));
+  assert.deepEqual(saved.notifications, { muted: false, tools: { demo: { kinds: { hello: { enabled: false } } } } });
+  assert.equal(saved.port, 0, "other keys kept");
+  await c.call("action", { tool: "demo", name: "notify" });
+  assert.equal((await c.call("notifications.setKind", { tool: "demo", kind: "hello", enabled: true })).error, undefined);
+  assert.equal((await c.call("notifications.subscribe", {})).result.entries.length, 1, "nothing recorded while the kind was off");
+  assert.equal((await c.call("notifications.setKind", { tool: "demo", kind: "hello", sound: "../../etc/passwd" })).error.code, -32602);
+  assert.equal((await c.call("notifications.setKind", { tool: "demo", kind: "nope", enabled: true })).error.code, -32602);
+  assert.equal((await c.call("notifications.previewSound", { sound: "/usr/share/sounds/x.oga" })).error.code, -32602);
+  await c.call("notifications.unsubscribe", {});
+
+  // the tray icon: off for this core (MOTHERAPP_TRAY=off); the setting is still saved and pushed
+  assert.deepEqual((await c.call("tray.get", {})).result, { enabled: true, available: false, state: "off" });
+  assert.equal((await c.call("tray.setEnabled", { enabled: "no" })).error.code, -32602);
+  assert.deepEqual((await c.call("tray.setEnabled", { enabled: false })).result, { enabled: false, available: false, state: "off" });
+  await waitFor(() => c2.notes("tray").length === 1, "tray info pushed to the other client");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(cfgDir, "config.json"), "utf8")).tray, false);
+
   // streams only flow to subscribed clients
   await c.call("stream.open", { tool: "demo", name: "wave" });
   await waitFor(() => c.notes("stream").length >= 3, "stream values");
@@ -164,6 +205,7 @@ for (const mode of ["mixed", "control-group"] as const) {
       XDG_STATE_HOME: path.join(tmp, "state"),
       MOTHERAPP_TOOLS_DIR: path.join(repo, "tools"),
       MOTHERAPP_WEB_DIR: path.join(tmp, "noweb"),
+      MOTHERAPP_TRAY: "off",
     };
     // its own process group, so "control-group" can signal the core and its tools at once
     const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(repo, "core/src/main.ts")], { env, stdio: ["ignore", "pipe", "pipe"], detached: true });

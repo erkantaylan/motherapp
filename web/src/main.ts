@@ -1,4 +1,4 @@
-// Shell: sidebar (enabled tools with status dots, Logs, Settings) + content area.
+// Shell: sidebar (enabled tools with status dots, Logs, Settings) + content area + tool strip.
 // Routes: #/tool/<id>, #/logs, #/settings.
 import "./styles.scss";
 import type { ToolInfo } from "@motherapp/protocol";
@@ -7,7 +7,9 @@ import { KeyedList } from "./keyedList.ts";
 import { LogsPage } from "./pages/logs.ts";
 import { mountSettings } from "./pages/settings.ts";
 import { mountToolPage } from "./pages/toolPage.ts";
+import { mountNotifications } from "./notifyPanel.ts";
 import { h } from "./renderer.ts";
+import { ToolStrip } from "./toolStrip.ts";
 import { footerText } from "./versionText.ts";
 import { WatchTracker } from "./watch.ts";
 
@@ -46,6 +48,8 @@ const connBanner = h("div", { class: "conn-banner", text: "Disconnected from mot
 const content = h("main", { class: "content" });
 const shell = h("div", { class: "shell" }, sidebar, h("div", { class: "main-col" }, h("div", { class: "topbar" }, menuBtn, h("span", { class: "brand", text: "motherapp" })), connBanner, content));
 document.body.append(shell);
+// Right edge: the tool strip (a bell for now) and the side panel it opens beside the page.
+mountNotifications(app, new ToolStrip(shell));
 
 const setSidebar = (open: boolean) => {
   shell.classList.toggle("sidebar-open", open);

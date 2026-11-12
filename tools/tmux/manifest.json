@@ -12,5 +12,9 @@
   },
   "defaultEnabled": true,
   "wide": true,
-  "localActions": ["open", "view", "history"]
+  "localActions": ["open", "view", "history", "send"],
+  "notifications": [
+    { "id": "finished", "label": "A session finished", "sound": "bell" },
+    { "id": "waiting", "label": "A session is waiting on you", "sound": "window-attention" }
+  ]
 }

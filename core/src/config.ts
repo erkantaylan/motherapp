@@ -2,6 +2,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TrustedNetwork } from "@motherapp/protocol";
+import { defaultNotificationsConfig, normalizeNotifications } from "./notifications.ts";
+import type { NotificationsConfig } from "./notifications.ts";
 
 export interface ToolConfig {
   enabled: boolean;
@@ -29,12 +31,19 @@ export interface Config {
   lan: { enabled: boolean; trusted: TrustedNetwork[] };
   /** Accept `*.localhost` Host/Origin names (portgate subdomains). Default true. */
   localhostSubdomains: boolean;
+  /**
+   * Notification settings from the Settings page (DESIGN.md § 3 "Notifications"): mute all, and
+   * per tool and per kind what the user changed. See notifications.ts.
+   */
+  notifications: NotificationsConfig;
+  /** Show the tray icon (DESIGN.md § 3 "Tray icon"). Default true; Settings writes it. */
+  tray: boolean;
 }
 
 export const DEFAULT_PORT = 7323;
 
 export function defaultConfig(): Config {
-  return { port: DEFAULT_PORT, tools: {}, lan: { enabled: false, trusted: [] }, localhostSubdomains: true };
+  return { port: DEFAULT_PORT, tools: {}, lan: { enabled: false, trusted: [] }, localhostSubdomains: true, notifications: defaultNotificationsConfig(), tray: true };
 }
 
 const MAC_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/;
@@ -83,6 +92,8 @@ function normalize(raw: unknown): Config {
     cfg.lan = { enabled: lan.enabled === true, trusted: normalizeTrusted(lan.trusted) };
   }
   if (r.localhostSubdomains === false) cfg.localhostSubdomains = false;
+  cfg.notifications = normalizeNotifications(r.notifications);
+  if (r.tray === false) cfg.tray = false;
   return cfg;
 }
 

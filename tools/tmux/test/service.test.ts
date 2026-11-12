@@ -6,7 +6,7 @@ import { createTool } from "@motherapp/tool-sdk";
 import { LineDecoder } from "@motherapp/protocol";
 import { HISTORY_LINES, INITIAL_STATE, MAX_HISTORY, POLL_MS, TmuxService } from "../src/service.ts";
 import { Tmux } from "../src/tmux.ts";
-import { FakeClaude, FakeGit, FakeNotifier, FakeTimers, FakeTmux, session, tick, waitFor } from "./fakes.ts";
+import { FakeClaude, FakeGit, FakeTimers, FakeTmux, session, tick, waitFor } from "./fakes.ts";
 
 type Msg = { id?: number; method?: string; params?: any; result?: any; error?: { code: number; message: string } };
 
@@ -17,11 +17,10 @@ function setup() {
   const fake = new FakeTmux();
   const timers = new FakeTimers();
   const claude = new FakeClaude();
-  const notifier = new FakeNotifier();
   const git = new FakeGit();
   const launched: { argv: string[]; env: NodeJS.ProcessEnv }[] = [];
   const launcher = async (argv: string[], env: NodeJS.ProcessEnv) => void launched.push({ argv, env });
-  const service = new TmuxService({ tool, tmux: new Tmux({ runner: fake, defaultSocket: fake.socket, exists: () => true }), timers, home: "/home/u", claude, notifier, git, launcher });
+  const service = new TmuxService({ tool, tmux: new Tmux({ runner: fake, defaultSocket: fake.socket, exists: () => true }), timers, home: "/home/u", claude, git, launcher });
   const received: Msg[] = [];
   const dec = new LineDecoder();
   output.setEncoding("utf8");
@@ -56,7 +55,9 @@ function setup() {
     input.end();
     await done;
   };
-  return { tool, fake, timers, service, claude, notifier, git, launched, received, action, changes, settle, nextPoll, end };
+  /** The `notify` messages sent to the core so far. */
+  const notified = () => received.filter((m) => m.method === "notify").map((m) => m.params);
+  return { tool, fake, timers, service, claude, notified, git, launched, received, action, changes, settle, nextPoll, end };
 }
 
 test("first poll publishes the whole map fresh, then only deltas; rename keeps the row", async () => {
@@ -274,21 +275,21 @@ test("the timeline fills in with no one watching; history stays out of the way o
   await t.end();
 });
 
-test("notifications: Claude's transitions, nothing for what was already so at start", async () => {
+test("notifications: Claude's transitions go to the core as notify, nothing for what was already so at start", async () => {
   const t = setup();
   t.fake.server = { sessions: [session(0, "a")] };
   withClaude(t, "busy");
   t.service.start();
   await t.settle();
-  assert.deepEqual(t.notifier.sent, [], "already busy at start: no alert");
+  assert.deepEqual(t.notified(), [], "already busy at start: no alert");
   withClaude(t, "waiting");
   await t.nextPoll();
-  assert.deepEqual(t.notifier.sent, ["a: waiting"]);
+  assert.deepEqual(t.notified(), [{ kind: "waiting", title: "a is waiting on you" }]);
   withClaude(t, "busy");
   await t.nextPoll();
   withClaude(t, "idle");
   await t.nextPoll();
-  assert.deepEqual(t.notifier.sent, ["a: waiting", "a: finished"]);
+  assert.deepEqual(t.notified(), [{ kind: "waiting", title: "a is waiting on you" }, { kind: "finished", title: "a finished" }], "name and state only, no body");
   await t.end();
 });
 

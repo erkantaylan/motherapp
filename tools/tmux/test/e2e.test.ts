@@ -76,8 +76,9 @@ test("core + tmux tool with a fake tmux: live list, rename in place, kill", asyn
       XDG_STATE_HOME: path.join(tmp, "state"),
       MOTHERAPP_TOOLS_DIR: path.join(repo, "tools"),
       MOTHERAPP_WEB_DIR: path.join(tmp, "noweb"),
-      MOTHERAPP_TMUX_NOTIFY: "off",
       CLAUDE_CONFIG_DIR: path.join(tmp, "claude"),
+      // the tool polls from the start; whatever it notifies must stay off the real desktop
+      MOTHERAPP_NOTIFY: "off",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -104,6 +105,10 @@ test("core + tmux tool with a fake tmux: live list, rename in place, kill", asyn
   assert.equal(info.page, "custom");
   assert.equal(info.title, "tmux");
   assert.equal(info.wide, true);
+  // The manifest's notification kinds reach Settings with their default sounds.
+  const ns = (await c.call("notifications.settings.get", {})).result;
+  assert.equal(ns.delivery, false, "MOTHERAPP_NOTIFY=off");
+  assert.deepEqual(ns.tools.find((x: any) => x.id === "tmux").kinds.map((k: any) => [k.id, k.sound, k.enabled]), [["finished", "bell", true], ["waiting", "window-attention", true]]);
   // Nobody has the page open, and it polls anyway: state and notifications need that.
   // The first poll lands in the snapshot or as a delta.
   const hasRow = (key: string, name: string) =>

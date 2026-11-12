@@ -171,6 +171,91 @@ export interface NetworkInfo {
   canChange: boolean;
 }
 
+// ---- notifications from tools (DESIGN.md § 3 "Notifications") ----
+
+/** One notification a tool sent, as the core keeps it (the last 200, in memory only). */
+export interface NotificationEntry {
+  /** Monotonic sequence number within one core run. */
+  seq: number;
+  /** ISO 8601 timestamp. */
+  ts: string;
+  /** Tool id. */
+  tool: string;
+  /** The tool's display name when it was sent, e.g. "tmux". */
+  toolTitle: string;
+  /** The tool's icon as text (an emoji), when its manifest icon isn't a file. */
+  toolIcon?: string;
+  /** URL of the tool's icon when it is a file. */
+  toolIconUrl?: string;
+  /** The tool's kind id, e.g. "finished". */
+  kind: string;
+  /** The event, e.g. "Nebula finished". */
+  title: string;
+  body?: string;
+  /** Recorded while "mute all" was on: no desktop popup and no sound went out. */
+  muted?: boolean;
+}
+
+/** The sound name that means "play nothing". */
+export const NO_SOUND = "none";
+
+export interface NotificationKindSettings {
+  id: string;
+  label: string;
+  enabled: boolean;
+  /** The chosen sound: one of `NotificationSettings.sounds`, or "none". */
+  sound: string;
+  /** The manifest's default, for a "reset" in the UI. */
+  defaultSound: string;
+}
+
+export interface NotificationToolSettings {
+  id: string;
+  title: string;
+  icon?: string;
+  iconUrl?: string;
+  /** Off: nothing from this tool is delivered or recorded. */
+  enabled: boolean;
+  /** The kinds the tool's manifest declares, in that order. */
+  kinds: NotificationKindSettings[];
+}
+
+/** What Settings shows and edits (config.json `notifications` merged with the manifests). */
+export interface NotificationSettings {
+  /** Mute all: no popups and no sounds; notifications are still recorded (`muted: true`). */
+  muted: boolean;
+  /** Every tool that declares notification kinds, in sidebar order. */
+  tools: NotificationToolSettings[];
+  /** The sound names that can be chosen besides "none" (the stock freedesktop sounds), sorted. */
+  sounds: string[];
+  /**
+   * False when this core doesn't show popups or play sounds at all (MOTHERAPP_NOTIFY=off, or a
+   * core started by a test). The history and the settings work as usual.
+   */
+  delivery: boolean;
+}
+
+// ---- tray icon (DESIGN.md § 3 "Tray icon") ----
+
+/** The tray icon's setting and what became of it. */
+export interface TrayInfo {
+  /** The "Show tray icon" setting (config.json `tray`, default true). */
+  enabled: boolean;
+  /**
+   * False when this core never shows one, whatever the setting says (MOTHERAPP_TRAY=off, or a
+   * core started by a test). The setting can still be changed and is saved.
+   */
+  available: boolean;
+  /**
+   * off: not shown (turned off, or not `available`); starting: the helper is being started or
+   * retried; running: the icon exists; failed: it can't be shown and the core stopped trying
+   * (`message` says why; turning the setting off and on tries again).
+   */
+  state: "off" | "starting" | "running" | "failed";
+  /** One line for the page: why it failed, is being retried, or isn't visible. */
+  message?: string;
+}
+
 // ---- requests (browser -> core) ----
 
 export interface UiRequests {
@@ -212,6 +297,33 @@ export interface UiRequests {
   "network.trust": { params: Record<string, never>; result: NetworkInfo };
   "network.untrust": { params: { uuid: string }; result: NetworkInfo };
   "network.setLocalhostSubdomains": { params: { enabled: boolean }; result: NetworkInfo };
+  /**
+   * Returns the notification history (oldest first, at most `limit`, default all 200) and starts
+   * live `notification` pushes to this client. LAN clients may call it.
+   */
+  "notifications.subscribe": { params: { limit?: number }; result: { entries: NotificationEntry[] } };
+  "notifications.unsubscribe": { params: Record<string, never>; result: null };
+  "notifications.settings.get": { params: Record<string, never>; result: NotificationSettings };
+  /**
+   * The three changes below are saved in config.json (`notifications`), answer with the new
+   * settings and push `notifications.settings` to every client. Like enabling a tool or
+   * re-ordering, a LAN client may make them (all-or-none).
+   */
+  "notifications.setMuted": { params: { muted: boolean }; result: NotificationSettings };
+  "notifications.setTool": { params: { tool: string; enabled: boolean }; result: NotificationSettings };
+  /** `enabled` and `sound` are each optional; `sound` must be "none" or one of `sounds`. */
+  "notifications.setKind": { params: { tool: string; kind: string; enabled?: boolean; sound?: string }; result: NotificationSettings };
+  /**
+   * Plays a sound on the computer the core runs on (the Settings play button). `sound` must be
+   * one of `sounds`: a name, never a path. A new preview stops the one still playing.
+   */
+  "notifications.previewSound": { params: { sound: string }; result: null };
+  "tray.get": { params: Record<string, never>; result: TrayInfo };
+  /**
+   * The "Show tray icon" toggle: saved in config.json (`tray`), applied at once, answered with
+   * the new info and pushed to every client as `tray`. A LAN client may change it (all-or-none).
+   */
+  "tray.setEnabled": { params: { enabled: boolean }; result: TrayInfo };
 }
 
 // ---- notifications (core -> browser) ----
@@ -234,4 +346,10 @@ export interface UiNotifications {
   version: VersionInfo;
   /** A network setting or the LAN listener's state changed (`canChange` is per connection). */
   network: NetworkInfo;
+  /** A tool notified. Only to clients that called `notifications.subscribe`. */
+  notification: { entry: NotificationEntry };
+  /** The notification settings changed (or a tool's title did). To every client. */
+  "notifications.settings": NotificationSettings;
+  /** The tray icon's setting or state changed. To every client. */
+  tray: TrayInfo;
 }

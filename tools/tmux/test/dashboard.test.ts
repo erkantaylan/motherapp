@@ -5,13 +5,12 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Alerter, MIN_WORK_SECONDS, QUIET_SECONDS } from "../src/alerts.ts";
+import { Alerter, MIN_WORK_SECONDS, QUIET_SECONDS, alertTitle } from "../src/alerts.ts";
 import type { Observation } from "../src/alerts.ts";
 import { color256, parseAnsi } from "../src/ansi.ts";
 import { ClaudeFiles, MAX_CONVERSATION, TAIL_BYTES, endsInterrupted, parseProcStat, parseStatus, scanTranscript, writesFinished } from "../src/claude.ts";
 import type { ClaudeStatus } from "../src/claude.ts";
 import { GitCache, NOT_REPO_TTL_MS, TTL_MS, parseStatus as parseGitStatus } from "../src/git.ts";
-import { DesktopNotifier, gdbusArgs, notifyBody, notifySendArgs } from "../src/notify.ts";
 import { openArgv, openEnv } from "../src/open.ts";
 import type { Proc, Runner } from "../src/runner.ts";
 import { claudeState, outputState, staleDays } from "../src/state.ts";
@@ -264,58 +263,9 @@ test("parseAnsi: colours of every kind, attributes, resets; other escapes vanish
   assert.deepEqual([color256(0), color256(231), color256(232), color256(255), color256(256)], ["#000000", "#ffffff", "#080808", "#eeeeee", undefined]);
 });
 
-test("notification text: name and word only, escaped for GNOME's body markup", () => {
-  assert.equal(notifyBody("a<b>&c", "finished"), "a&lt;b&gt;&amp;c: finished");
-  assert.deepEqual(notifySendArgs("x: waiting").slice(-3), ["--", "tmux", "x: waiting"], "-- so a name can't be an option");
-  const g = gdbusArgs("it's a \\ name: waiting");
-  assert.equal(g[g.indexOf("tmux") + 1], `'it\\'s a \\\\ name: waiting'`);
-});
-
-class ScriptedRunner implements Runner {
-  calls: string[] = [];
-  answer: (cmd: string) => "ok" | "missing" | number = () => "ok";
-  spawn(cmd: string, args: string[]): Proc {
-    this.calls.push(`${cmd} ${args.join(" ")}`);
-    const p = new FakeProc(cmd, args);
-    const a = this.answer(cmd);
-    setImmediate(() => {
-      if (a === "missing") p.emit("error", Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
-      else if (a === "ok") p.finish(0);
-      else p.finish(a, "", "boom\n");
-    });
-    return p;
-  }
-}
-
-test("DesktopNotifier: notify-send; gdbus when it's missing, and stays there; warns once when neither works", async () => {
-  const r = new ScriptedRunner();
-  const warnings: string[] = [];
-  const n = new DesktopNotifier(r, { warn: (m) => warnings.push(m) });
-  const settle = async () => {
-    for (let i = 0; i < 8; i++) await tick();
-  };
-  n.send("a", "finished");
-  await settle();
-  assert.match(r.calls[0]!, /^notify-send .* -- tmux a: finished$/);
-
-  r.answer = (cmd) => (cmd === "notify-send" ? "missing" : "ok");
-  n.send("b", "waiting");
-  await settle();
-  assert.match(r.calls.at(-1)!, /^gdbus call --session .* 'b: waiting' /);
-  n.send("c", "waiting");
-  await settle();
-  assert.equal(r.calls.filter((c) => c.startsWith("notify-send")).length, 2, "not tried again");
-
-  r.answer = () => 1;
-  n.send("d", "waiting");
-  n.send("e", "waiting");
-  await settle();
-  assert.deepEqual(warnings, ["gdbus failed: boom"], "a failure is logged once, and never with the name");
-
-  r.answer = () => "missing";
-  n.send("f", "waiting");
-  await settle();
-  assert.equal(warnings.at(-1), "No notifications: neither notify-send nor gdbus could be started.");
+test("notification titles: the session's name and what happened", () => {
+  assert.equal(alertTitle({ name: "Nebula", word: "finished" }), "Nebula finished");
+  assert.equal(alertTitle({ name: "a<b>", word: "waiting" }), "a<b> is waiting on you", "plain text: the core escapes for the desktop");
 });
 
 test("openArgv: --no-dbus and an argv list; a scope of its own under systemd; no TMUX in the env", () => {

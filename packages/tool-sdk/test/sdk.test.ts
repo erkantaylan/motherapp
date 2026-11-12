@@ -172,3 +172,20 @@ test("watch: tool.watching and onWatch follow the core's edges; repeats, bad par
   h.input.end();
   await h.done;
 });
+
+test("notify: a `notify` notification with kind, title and an optional body; nothing before serve", async () => {
+  const quiet = createTool({ id: "q", title: "Q", persist: false, captureConsole: false });
+  quiet.notify({ kind: "done", title: "ignored" }); // no core to ask: must not throw or print
+  const h = harness({ id: "t", title: "T", persist: false });
+  h.tool.notify({ kind: "finished", title: "Nebula finished" });
+  h.tool.notify({ kind: "waiting", title: "Nebula is waiting on you", body: "permission prompt" });
+  h.tool.notify({ kind: "finished", title: "x", body: "" });
+  await h.call("state.get");
+  assert.deepEqual(h.notes("notify"), [
+    { kind: "finished", title: "Nebula finished" },
+    { kind: "waiting", title: "Nebula is waiting on you", body: "permission prompt" },
+    { kind: "finished", title: "x" },
+  ]);
+  h.input.end();
+  await h.done;
+});

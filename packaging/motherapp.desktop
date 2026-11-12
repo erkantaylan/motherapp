@@ -1,0 +1,18 @@
+#@ Template, not a desktop entry to copy: install.sh renders it into
+#@ ~/.local/share/applications/motherapp.desktop, replacing @PORT@ with the core's port and
+#@ @ICON@ with the absolute path of the installed icon. Lines starting with "#@" are dropped.
+#@ The core sends its notifications with the hint desktop-entry=motherapp, so GNOME files them
+#@ under this entry (name, icon, and a row in Settings -> Notifications).
+# managed by motherapp install.sh
+# Generated from packaging/motherapp.desktop: re-run ./install.sh to update it;
+# ./install.sh --uninstall removes it.
+[Desktop Entry]
+Type=Application
+Name=motherapp
+Comment=Local control panel
+Exec=xdg-open http://127.0.0.1:@PORT@/
+Icon=@ICON@
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+X-GNOME-UsesNotifications=true

@@ -13,6 +13,7 @@ import { runCli } from "../src/cli.ts";
 import { GitCache } from "../src/git.ts";
 import { launch, openArgv, openEnv } from "../src/open.ts";
 import { RealRunner } from "../src/runner.ts";
+import { COPY_MODE, sendToSession } from "../src/send.ts";
 import { Tmux, attachCommand } from "../src/tmux.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { encoding: "utf8" }).status === 0;
@@ -252,6 +253,53 @@ test("real tmux: a full-screen program has no scrollback, which is why Claude's 
   assert.equal(s.panes[0]!.alternate, true);
   assert.ok((await client().captureHistory(s.id, 3000)).trimEnd().split("\n").length <= 10, "the screen and no more");
   tmux("kill-session", "-t", "=alt");
+});
+
+test("real tmux: sent text arrives as typed, Enter on its own; lines are pasted; copy mode and a gone session refuse", { skip }, async () => {
+  const out = path.join(dir, "typed.txt");
+  // `cat`, not a shell: whatever reaches the pane lands in the file, a line per Enter.
+  assert.equal(tmux("new-session", "-d", "-s", "send; -it", "-x", "80", "-y", "24", "-c", dir, "cat > typed.txt").code, 0);
+  const { id } = (await sessionNamed("send; -it"))!;
+  const c = client();
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const lines = async (n: number) => {
+    let got: string[] = [];
+    for (let i = 0; i < 200 && got.length < n; i++) {
+      await sleep(20);
+      got = fs.existsSync(out) ? fs.readFileSync(out, "utf8").split("\n").slice(0, -1) : [];
+    }
+    return got;
+  };
+  const awkward = `-l echo "it's" $HOME #S é🚀 \\;`;
+  await sendToSession(c, id, awkward, { enter: true, sleep, delayMs: 50 });
+  assert.deepEqual(await lines(1), [awkward]);
+  await sendToSession(c, id, "ends in a semicolon;\n", { enter: true, sleep, delayMs: 50 });
+  assert.deepEqual((await lines(2))[1], "ends in a semicolon;");
+  // Without Enter the line stays typed: the next send completes it.
+  await sendToSession(c, id, "typed, ", { enter: false, sleep });
+  await sleep(150);
+  assert.equal((await lines(2)).length, 2);
+  await sendToSession(c, id, "then entered", { enter: true, sleep, delayMs: 50 });
+  assert.deepEqual((await lines(3))[2], "typed, then entered");
+  // Several lines: one paste (cat asks for no bracketing, so each break is an Enter), then ours.
+  await sendToSession(c, id, "first\nsecond;", { enter: true, sleep, delayMs: 50 });
+  assert.deepEqual((await lines(5)).slice(3), ["first", "second;"]);
+  const long = "0123456789;".repeat(300);
+  await sendToSession(c, id, `${long}\n${long}`, { enter: true, sleep, delayMs: 50 });
+  assert.deepEqual((await lines(7)).slice(5), [long, long]);
+  assert.equal(tmux("list-buffers").out, "", "no buffer left behind");
+
+  assert.equal(tmux("copy-mode", "-t", `${id}:`).code, 0);
+  await assert.rejects(sendToSession(c, id, "q", { enter: true, sleep }), { message: COPY_MODE });
+  tmux("send-keys", "-t", `${id}:`, "-X", "cancel");
+  await assert.rejects(sendToSession(c, "$9999", "x", { enter: true, sleep }), { message: "That session doesn't exist anymore." });
+  await sleep(100);
+  assert.equal((await lines(7)).length, 7, "nothing else arrived");
+
+  const viaCli = await cli("send", "send; -it", "from", "the cli");
+  assert.deepEqual([viaCli.code, viaCli.out], [0, "sent 12 characters to 'send; -it' and pressed Enter\n"]);
+  assert.deepEqual((await lines(8))[7], "from the cli");
+  tmux("kill-session", "-t", id);
 });
 
 const git = (cwd: string, ...args: string[]) => {

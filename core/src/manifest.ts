@@ -1,7 +1,7 @@
 // Discovery (DESIGN.md § 4.8): tools/*/manifest.json.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ToolManifest } from "@motherapp/protocol";
+import type { NotificationKind, ToolManifest } from "@motherapp/protocol";
 
 export interface DiscoveredTool {
   manifest: ToolManifest;
@@ -15,6 +15,9 @@ export interface DiscoveryResult {
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9_-]*$/;
+const KIND_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** A file name in the sound theme without its extension (or "none"), never a path. */
+const SOUND_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** Validates a parsed manifest; returns an error string or the typed manifest. */
 export function validateManifest(raw: unknown): ToolManifest | string {
@@ -35,6 +38,20 @@ export function validateManifest(raw: unknown): ToolManifest | string {
   if (m.order !== undefined && (typeof m.order !== "number" || !Number.isFinite(m.order))) return "order must be a number";
   if (m.wide !== undefined && typeof m.wide !== "boolean") return "wide must be a boolean";
   if (m.localActions !== undefined && (!Array.isArray(m.localActions) || !m.localActions.every((a) => typeof a === "string"))) return "localActions must be an array of strings";
+  let notifications: NotificationKind[] | undefined;
+  if (m.notifications !== undefined) {
+    if (!Array.isArray(m.notifications)) return "notifications must be an array";
+    notifications = [];
+    for (const raw of m.notifications as unknown[]) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return "notifications: each kind must be an object";
+      const k = raw as Record<string, unknown>;
+      if (typeof k.id !== "string" || !KIND_RE.test(k.id)) return "notifications: a kind's id must match " + KIND_RE.source;
+      if (notifications.some((n) => n.id === k.id)) return `notifications: duplicate kind "${k.id}"`;
+      if (typeof k.label !== "string" || k.label === "") return `notifications: kind "${k.id}" needs a label`;
+      if (k.sound !== undefined && (typeof k.sound !== "string" || !SOUND_RE.test(k.sound))) return `notifications: kind "${k.id}": sound must be a sound name or "none"`;
+      notifications.push({ id: k.id, label: k.label, ...(k.sound !== undefined ? { sound: k.sound as string } : {}) });
+    }
+  }
   const out: ToolManifest = { id: m.id, title: m.title, serve: m.serve as string[] };
   if (m.icon !== undefined) out.icon = m.icon;
   if (m.page !== undefined) out.page = m.page;
@@ -42,6 +59,7 @@ export function validateManifest(raw: unknown): ToolManifest | string {
   if (m.order !== undefined) out.order = m.order;
   if (m.wide !== undefined) out.wide = m.wide;
   if (m.localActions !== undefined) out.localActions = m.localActions as string[];
+  if (notifications !== undefined) out.notifications = notifications;
   return out;
 }
 

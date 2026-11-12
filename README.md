@@ -18,6 +18,7 @@ its own, and the manager is just a UI over them.
 | `web/` | Frontend (plain TS + Vite): sidebar shell, declarative renderer, Logs and Settings pages. |
 | `tools/demo/` | Demo tool that exercises the contract. Not a real feature; disabled by default. |
 | `packaging/motherapp.service` | systemd user unit. |
+| `packaging/motherapp.desktop` | Desktop entry (template) that GNOME files motherapp's notifications under. |
 | `reference/audio-switch/` | The predecessor, for reference only. |
 
 ## Run
@@ -36,6 +37,18 @@ npm run typecheck
 Config lives in `~/.config/motherapp/config.json` (created on first start: `port`, enabled
 tools), state and `log.jsonl` in `~/.local/state/motherapp/`. Enable the demo tool on the
 Settings page to try the widgets.
+
+**Notifications.** Tools notify through the core, which shows the desktop popup (as
+"motherapp"), plays a sound and keeps the last 200 for the web page. `MOTHERAPP_NOTIFY=off`
+starts a core that shows no popups and plays no sounds (use it for a second, test core); the
+settings are under `notifications` in config.json (DESIGN.md § 3 "Notifications").
+
+**Tray icon.** While the core runs it shows the motherapp icon in the notification area (with
+an amber "!" while a tool has crashed); its menu opens the panel, mutes notifications and says
+how the tools are doing. It is a small Python helper (`core/tray/`, needs `python3-gi` and
+`gir1.2-ayatanaappindicator3-0.1`; `motherapp doctor` checks). Without them there is just no
+icon. `"tray": false` in config.json turns it off; `MOTHERAPP_TRAY=off` does so for one core
+(use it, too, for a second, test core). DESIGN.md § 3 "Tray icon".
 
 **Network** (Settings → Network). The core answers on `127.0.0.1` to `localhost`, `127.x.x.x`,
 `[::1]` and, unless turned off, `*.localhost` names (portgate). Every other Host/Origin name gets
@@ -59,7 +72,8 @@ missing says so on its page.
 | Audio | `pw-dump`, `pw-play`, `pw-record`, `pw-metadata`, `wpctl`; PipeWire, WirePlumber and pipewire-pulse user services | `pipewire-bin`, `wireplumber` |
 | Audio (L/R test) | freedesktop test sounds | `sound-theme-freedesktop` |
 | Brightness | `ddcutil`, `libddcutil`, the `i2c-dev` module, `/dev/i2c-*`, membership of the `i2c` group | `ddcutil`, `libddcutil4` |
-| tmux tool | `tmux`; for Open, `terminator`; for notifications, `notify-send` or `gdbus` | `tmux`, `terminator`, `libnotify-bin` or `libglib2.0-bin` |
+| tmux tool | `tmux`; for Open, `terminator` | `tmux`, `terminator` |
+| Notifications (core) | `notify-send` or `gdbus` for the popup; `pw-play` and the freedesktop sounds for the sound | `libnotify-bin` or `libglib2.0-bin`, `pipewire-bin`, `sound-theme-freedesktop` |
 | Shortcuts tool | `gsettings`, `dconf` (GNOME) | `libglib2.0-bin`, `dconf-cli` |
 | Inbox tool | `cloudflared` (quick tunnels, no account) | Cloudflare's package |
 
@@ -146,7 +160,11 @@ Every status line starts with `OK`, `MISSING`, `WARN`, `FAIL` or `SKIP`, the las
 Re-running it is safe; re-run it after moving the checkout or changing Node.
 It also puts each tool's command in `~/.local/bin` (e.g. `audioctl`, a small wrapper that runs it
 with that Node), plus the `motherapp` command, for terminals and GNOME keyboard shortcuts;
-`--uninstall` removes them.
+`--uninstall` removes them. And it writes a desktop entry,
+`~/.local/share/applications/motherapp.desktop` (from `packaging/motherapp.desktop`; it opens the
+panel in your browser) with the icon in `~/.local/share/icons/hicolor/512x512/apps/`, so GNOME
+shows motherapp's notifications under its own name and lists it in Settings → Notifications;
+`--uninstall` removes both.
 
 ```sh
 journalctl --user -u motherapp -f    # one JSON line per log entry

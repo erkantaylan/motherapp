@@ -18,6 +18,7 @@ import type { SessionState } from "./state.ts";
 export const MIN_WORK_SECONDS = 10;
 export const QUIET_SECONDS = 5;
 
+/** Also the notification kind ids in manifest.json's `notifications`. */
 export type AlertWord = "finished" | "waiting";
 
 export interface Observation {
@@ -36,6 +37,11 @@ export interface Observation {
 export interface Alert {
   name: string;
   word: AlertWord;
+}
+
+/** The notification's title: the session's name and what happened, nothing from the pane. */
+export function alertTitle(a: Alert): string {
+  return a.word === "waiting" ? `${a.name} is waiting on you` : `${a.name} finished`;
 }
 
 interface Track {

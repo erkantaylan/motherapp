@@ -21,6 +21,7 @@ import type {
   JsonObject,
   JsonValue,
   LogLevel,
+  NotifyParams,
   PageKind,
   RpcId,
   StateChange,
@@ -31,7 +32,7 @@ import type {
 } from "@motherapp/protocol";
 
 export { RpcError, ErrorCode };
-export type { JsonObject, JsonValue, Widget, StateObject };
+export type { JsonObject, JsonValue, NotifyParams, Widget, StateObject };
 
 export interface ToolOptions {
   id: string;
@@ -263,6 +264,22 @@ export class Tool {
       const extra = fields ? " " + JSON.stringify(fields) : "";
       process.stderr.write(`[${level}] ${msg}${extra}\n`);
     }
+  }
+
+  // ---- notifications ----
+
+  /**
+   * Asks the core to notify the user: a desktop popup, a sound and an entry in the web page's
+   * history. `kind` is one of the manifest's `notifications` ids; `title` is the event itself
+   * ("Nebula finished"); the core adds this tool's name and icon. Whether it is delivered is the
+   * user's setting and the tool isn't told. Never put a secret in it. Outside serve mode (a
+   * plain CLI subcommand) there is no core to ask, so nothing happens.
+   */
+  notify(n: NotifyParams): void {
+    if (!this.peer || this.stopped) return;
+    const params: NotifyParams = { kind: n.kind, title: n.title };
+    if (n.body !== undefined && n.body !== "") params.body = n.body;
+    this.peer.notify("notify", params);
   }
 
   // ---- serve ----

@@ -28,6 +28,24 @@ export interface ToolManifest {
    * the Settings page. Tools without one follow, alphabetically.
    */
   order?: number;
+  /**
+   * The kinds of notification this tool sends (`notify`), so Settings can list them with a
+   * switch and a sound each, also while the tool is stopped. See `NotificationKind`.
+   */
+  notifications?: NotificationKind[];
+}
+
+/** One kind of notification a tool sends, declared in its manifest's `notifications`. */
+export interface NotificationKind {
+  /** `[a-z0-9][a-z0-9_-]*`, unique within the tool. The `kind` of a `notify`. */
+  id: string;
+  /** What Settings calls it, e.g. "Session finished". */
+  label: string;
+  /**
+   * Default sound: a name from /usr/share/sounds/freedesktop/stereo without `.oga` (e.g.
+   * "bell"), or "none". Default "none". The user can change it in Settings.
+   */
+  sound?: string;
 }
 
 export type StateObject = JsonObject;
@@ -114,11 +132,27 @@ export interface LogParams {
   fields?: JsonObject;
 }
 
+/**
+ * Asks the core to notify the user (DESIGN.md § 3 "Notifications"). The core adds the tool's id,
+ * name and icon itself, decides whether it is delivered (the user's settings; the tool never
+ * learns), shows the desktop popup, plays the sound and keeps it in the history the web page
+ * shows. Never put a secret in it: like state, it reaches every page and the desktop.
+ */
+export interface NotifyParams {
+  /** One of the manifest's `notifications` ids. */
+  kind: string;
+  /** The event itself, one line: "Nebula finished". At most 200 characters (longer is cut). */
+  title: string;
+  /** Optional detail, plain text. At most 1000 characters (longer is cut). */
+  body?: string;
+}
+
 export interface ToolNotifications {
   state: StateParams;
   progress: ProgressParams;
   stream: StreamParams;
   log: LogParams;
+  notify: NotifyParams;
 }
 
 // ---- notifications (core -> tool) ----

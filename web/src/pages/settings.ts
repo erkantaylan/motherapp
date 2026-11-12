@@ -1,10 +1,13 @@
 // Built-in settings page: enable/disable tools, restart them, set their sidebar order (#20);
-// the network switches; which version is running.
-import type { NetworkInfo, ToolInfo, UpdateStatus, VersionInfo } from "@motherapp/protocol";
+// notifications (mute, per tool, per kind, sounds); the network switches; which version is running.
+import { NO_SOUND } from "@motherapp/protocol";
+import type { NetworkInfo, NotificationKindSettings, NotificationSettings, NotificationToolSettings, ToolInfo, UpdateStatus, VersionInfo } from "@motherapp/protocol";
 import type { App } from "../app.ts";
 import { KeyedList } from "../keyedList.ts";
 import { confirmDialog, h, statusDot } from "../renderer.ts";
 import { LAN_NOTE, networkView } from "../networkView.ts";
+import { isLocalPage, soundChoices } from "../notifications.ts";
+import { trayText } from "../trayText.ts";
 import { ReorderModel, dropIndex, keyMove, moveMessage, moveItem, sameOrder } from "../reorder.ts";
 import { bannerText, releaseText, updateView, when } from "../versionText.ts";
 
@@ -301,6 +304,241 @@ function networkSection(app: App): { el: HTMLElement; off: () => void } {
   };
 }
 
+/**
+ * The "Notifications" section: Mute all, then per tool an on/off and per kind an on/off, a
+ * sound and a play button. The core owns all of it (config.json `notifications`) and pushes
+ * `notifications.settings` to every page after a change, so the rows are updated in place.
+ * One grid with a named column per part, every row a subgrid (as the tool rows): the switches,
+ * sounds and dots line up whether or not a row has a sound.
+ */
+function notificationsSection(app: App): { el: HTMLElement; off: () => void } {
+  type Dot = ReturnType<typeof statusDot>;
+  const dots = new Set<Dot>();
+  const newDot = () => {
+    const d = statusDot();
+    dots.add(d);
+    return d;
+  };
+  // The preview plays on the computer motherapp runs on, so only a page opened there offers it.
+  const local = isLocalPage(location.hostname);
+
+  const change = (dot: Dot, req: Promise<NotificationSettings>) => {
+    dot.set("setting");
+    req.then(
+      (s) => {
+        dot.set("set");
+        app.setNotifySettings(s);
+      },
+      (e: Error) => {
+        dot.set("failed", e.message);
+        show(); // put the control back
+      },
+    );
+  };
+  const enabledSwitch = (aria: string) => {
+    const sw = switchControl("On", aria);
+    sw.el.classList.add("row-enabled");
+    return sw;
+  };
+
+  const muteDot = newDot();
+  const mute = enabledSwitch("Mute all notifications");
+  mute.input.addEventListener("change", () => change(muteDot, app.conn.request("notifications.setMuted", { muted: mute.input.checked })));
+  const muteRow = h(
+    "div",
+    { class: "list-group-item list-row" },
+    h("div", { class: "row-labels" }, h("div", { class: "row-title", text: "Mute all" }), h("div", { class: "row-sub", text: "No popups and no sounds. Notifications are still listed under the bell." })),
+    mute.el,
+    muteDot.el,
+  );
+
+  // Mute all is the first row of the same list, so its switch shares the tools' column.
+  const rowsEl = h("div", { class: "list-group list-rows notify-rows" }, muteRow);
+  const none = h("p", { class: "w-text muted", text: "None of your tools sends notifications." });
+  const noDelivery = h("p", { class: "banner", text: "This motherapp was started with notifications off: it shows no popups and plays no sounds. The list under the bell and these settings work as usual." });
+  const remoteNote = h("p", { class: "w-text muted", text: "Popups and sounds happen on the computer motherapp runs on, so a sound can be tried only there." });
+  remoteNote.hidden = local;
+
+  interface Row {
+    node: HTMLElement;
+    update(s: NotificationSettings): void;
+    dot: Dot;
+  }
+  let rows: Row[] = [];
+  let builtFor = "";
+
+  const toolRow = (id: string): Row => {
+    const dot = newDot();
+    const title = h("div", { class: "row-title" });
+    const sub = h("div", { class: "row-sub" });
+    const sw = enabledSwitch("");
+    sw.input.addEventListener("change", () => change(dot, app.conn.request("notifications.setTool", { tool: id, enabled: sw.input.checked })));
+    const node = h("div", { class: "list-group-item list-row notify-tool" }, h("div", { class: "row-labels" }, title, sub), sw.el, dot.el);
+    node.dataset.tool = id;
+    return {
+      node,
+      dot,
+      update: (s) => {
+        const t = s.tools.find((x) => x.id === id);
+        if (!t) return;
+        title.textContent = `${t.icon ? t.icon + " " : ""}${t.title}`;
+        sub.textContent = t.enabled ? "Notifications from this tool" : "Off: nothing from this tool is shown or kept";
+        sub.title = sub.textContent;
+        sw.input.setAttribute("aria-label", `Notifications from ${t.title}`);
+        sw.input.checked = t.enabled;
+        sw.input.disabled = !app.conn.connected;
+      },
+    };
+  };
+
+  const kindRow = (toolId: string, kindId: string, sounds: readonly string[]): Row => {
+    const dot = newDot();
+    const title = h("div", { class: "row-title" });
+    const sw = enabledSwitch("");
+    const select = h("select", { class: "form-control form-control-sm row-sound" });
+    const play = h("button", { class: "btn-outline theme-secondary btn-sm row-play" });
+    play.type = "button";
+    // Drawn, not the ▶ character: that one comes out as a colour emoji in some fonts.
+    play.innerHTML = `<svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M2.5 1.2v9.6L10.5 6z"/></svg>`;
+    play.hidden = !local;
+    let shownFor = "";
+    const setKind = (c: { enabled?: boolean; sound?: string }) => change(dot, app.conn.request("notifications.setKind", { tool: toolId, kind: kindId, ...c }));
+    sw.input.addEventListener("change", () => setKind({ enabled: sw.input.checked }));
+    select.addEventListener("change", () => setKind({ sound: select.value }));
+    play.addEventListener("click", () => {
+      dot.set("setting");
+      app.conn.request("notifications.previewSound", { sound: select.value }).then(
+        () => dot.set("set"),
+        (e: Error) => dot.set("failed", e.message),
+      );
+    });
+    const node = h("div", { class: "list-group-item list-row notify-kind" }, h("div", { class: "row-labels" }, title), sw.el, select, play, dot.el);
+    node.dataset.tool = toolId;
+    node.dataset.kind = kindId;
+    return {
+      node,
+      dot,
+      update: (s) => {
+        const t: NotificationToolSettings | undefined = s.tools.find((x) => x.id === toolId);
+        const k: NotificationKindSettings | undefined = t?.kinds.find((x) => x.id === kindId);
+        if (!t || !k) return;
+        title.textContent = k.label;
+        node.classList.toggle("is-off", !t.enabled);
+        sw.input.setAttribute("aria-label", `${t.title}: ${k.label}`);
+        sw.input.checked = k.enabled;
+        sw.input.disabled = !app.conn.connected;
+        const choices = soundChoices(sounds, k.sound);
+        const key = `${choices.join("\0")}\0\0${k.defaultSound}`;
+        if (key !== shownFor) {
+          shownFor = key;
+          select.replaceChildren(
+            ...choices.map((c) => {
+              const o = h("option", { text: c === NO_SOUND ? "No sound" : c === k.defaultSound ? `${c} (default)` : c });
+              o.value = c;
+              return o;
+            }),
+          );
+        }
+        select.value = k.sound;
+        select.disabled = !app.conn.connected;
+        select.setAttribute("aria-label", `Sound for ${t.title}: ${k.label}`);
+        // A core that plays no sounds (`delivery` false) would answer the preview and stay silent.
+        play.disabled = k.sound === NO_SOUND || !s.delivery || !app.conn.connected;
+        play.title = k.sound === NO_SOUND ? "No sound to play" : s.delivery ? "Play this sound on this computer" : "This motherapp plays no sounds";
+        play.setAttribute("aria-label", `Play the sound for ${t.title}: ${k.label}`);
+      },
+    };
+  };
+
+  function show(): void {
+    const s = app.notifySettings;
+    mute.input.checked = s?.muted === true;
+    mute.input.disabled = !s || !app.conn.connected;
+    noDelivery.hidden = !s || s.delivery;
+    none.hidden = !s || s.tools.length > 0;
+    if (!s) return;
+    // Rows are rebuilt only when the tools, kinds or sounds changed, so a push that follows
+    // the user's own change leaves the focus where it is.
+    const shape = JSON.stringify([s.tools.map((t) => [t.id, t.kinds.map((k) => k.id)]), s.sounds]);
+    if (shape !== builtFor) {
+      builtFor = shape;
+      for (const r of rows) {
+        r.dot.dispose();
+        dots.delete(r.dot);
+      }
+      rows = s.tools.flatMap((t) => [toolRow(t.id), ...t.kinds.map((k) => kindRow(t.id, k.id, s.sounds))]);
+      rowsEl.replaceChildren(muteRow, ...rows.map((r) => r.node));
+    }
+    for (const r of rows) r.update(s);
+  }
+
+  const offs = [app.onNotifySettings(show), app.conn.onState(show)];
+  show();
+  const el = h(
+    "section",
+    { class: "notify-settings" },
+    h("h3", { class: "w-text heading", text: "Notifications" }),
+    noDelivery,
+    rowsEl,
+    none,
+    remoteNote,
+  );
+  return {
+    el,
+    off: () => {
+      for (const off of offs) off();
+      for (const d of dots) d.dispose();
+    },
+  };
+}
+
+/** The "Desktop" section: the tray icon's switch and what became of it. */
+function desktopSection(app: App): { el: HTMLElement; off: () => void } {
+  const sub = h("div", { class: "row-sub update-text" });
+  const sw = switchControl("On", "Show tray icon");
+  const dot = statusDot();
+  const show = () => {
+    const t = app.tray;
+    sub.textContent = trayText(t);
+    sub.dataset.tone = t?.available && t.state === "failed" ? "error" : "";
+    sw.input.checked = t?.enabled === true;
+    sw.input.disabled = !t || !app.conn.connected;
+  };
+  sw.input.addEventListener("change", () => {
+    dot.set("setting");
+    app.conn.request("tray.setEnabled", { enabled: sw.input.checked }).then(
+      (t) => {
+        dot.set("set");
+        app.setTray(t);
+      },
+      (e: Error) => {
+        dot.set("failed", e.message);
+        show(); // put the switch back
+      },
+    );
+  });
+  const get = () =>
+    void app.conn.request("tray.get", {}).then(
+      (t) => app.setTray(t),
+      () => {},
+    );
+  const offs = [app.onTray(show), app.conn.onState(show), app.conn.onOpen(get)];
+  show();
+  const el = h(
+    "section",
+    { class: "desktop-settings" },
+    h("h3", { class: "w-text heading", text: "Desktop" }),
+    h("div", { class: "list-group list-rows" }, h("div", { class: "list-group-item list-row" }, h("div", { class: "row-labels" }, h("div", { class: "row-title", text: "Show tray icon" }), sub), h("div", { class: "row-controls" }, sw.el, dot.el))),
+  );
+  return {
+    el,
+    off: () => {
+      for (const off of offs) off();
+      dot.dispose();
+    },
+  };
+}
+
 interface RowRefs {
   node: HTMLElement;
   handle: HTMLButtonElement;
@@ -311,6 +549,8 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
   const rowsEl = h("div", { class: "list-group list-rows tool-order" });
   const version = versionSection(app);
   const network = networkSection(app);
+  const notifications = notificationsSection(app);
+  const desktop = desktopSection(app);
   // Moves are announced here ("Brightness moved to position 1 of 6").
   const live = h("div", { class: "visually-hidden" });
   // Every drag handle points here (aria-describedby).
@@ -341,6 +581,8 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     live,
     keyHint,
     h("p", { class: "w-text muted", text: "Changes are saved to ~/.config/motherapp/config.json." }),
+    notifications.el,
+    desktop.el,
     network.el,
     version.el,
   );
@@ -587,6 +829,8 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     orderDot.dispose();
     version.off();
     network.off();
+    notifications.off();
+    desktop.off();
     root.replaceChildren();
   };
 }

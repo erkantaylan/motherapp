@@ -5,7 +5,6 @@ import { PassThrough } from "node:stream";
 import type { Proc, Runner } from "../src/runner.ts";
 import type { ClaudeDetails, ClaudeSource, ClaudeStatus, Conversation, RunningAgent } from "../src/claude.ts";
 import type { GitSource, GitState } from "../src/git.ts";
-import type { Notifier } from "../src/notify.ts";
 import type { Timers } from "../src/service.ts";
 import type { Session } from "../src/tmux.ts";
 
@@ -46,6 +45,12 @@ export class FakeTmux implements Runner {
   screen = "\x1b[31mhello\x1b[39m\n";
   /** What `capture-pane -S` prints. */
   scrollback = "old line\n\x1b[31mhello\x1b[39m\n";
+  /** Pane ids in copy mode. */
+  inMode = new Set<string>();
+  /** tmux's paste buffers, by name. */
+  buffers = new Map<string, string>();
+  /** What reached each pane, in order: typed text, pastes and keys. */
+  typed: { pane: string; kind: "keys" | "paste" | "key"; text: string }[] = [];
 
   spawn(cmd: string, args: string[]): Proc {
     if (cmd !== "tmux") throw new Error(`unexpected command ${cmd}`);
@@ -90,8 +95,42 @@ export class FakeTmux implements Runner {
     }
     if (cmd === "display-message") {
       const t = args[args.indexOf("-t") + 1]!;
+      if (args.at(-1)!.includes("pane_id")) {
+        // Like the real one: a missing session is exit 0 with empty fields.
+        const pane = s.sessions.find((y) => `${y.id}:` === t)?.panes.find((q) => q.active);
+        return p.finish(0, pane ? `${pane.id}\t${this.inMode.has(pane.id) ? 1 : 0}\n` : "\t\n");
+      }
       const x = s.sessions.find((y) => y.id === t);
       return x ? p.finish(0, `${x.name}\n`) : p.finish(1, "", `can't find session: ${t}\n`);
+    }
+    // What tmux does to a last argument ending in ";" (a separator) or "\;" (a ";").
+    const last = (a: string) => (a.endsWith("\\;") ? `${a.slice(0, -2)};` : a.endsWith(";") ? a.slice(0, -1) : a);
+    const hasPane = (id: string) => s.sessions.some((y) => y.panes.some((q) => q.id === id));
+    if (cmd === "send-keys") {
+      const pane = args[args.indexOf("-t") + 1]!;
+      if (!hasPane(pane)) return p.finish(1, "", `can't find pane: ${pane}\n`);
+      const dashes = args.indexOf("--");
+      if (args.includes("-l") && dashes >= 0) this.typed.push({ pane, kind: "keys", text: last(args.slice(dashes + 1).join(" ")) });
+      else this.typed.push({ pane, kind: "key", text: args.at(-1)! });
+      return p.finish(0);
+    }
+    if (cmd === "set-buffer") {
+      const name = args[args.indexOf("-b") + 1]!;
+      const text = last(args[args.indexOf("--") + 1]!);
+      this.buffers.set(name, (args.includes("-a") ? (this.buffers.get(name) ?? "") : "") + text);
+      return p.finish(0);
+    }
+    if (cmd === "paste-buffer") {
+      const name = args[args.indexOf("-b") + 1]!;
+      const pane = args[args.indexOf("-t") + 1]!;
+      if (!hasPane(pane)) return p.finish(1, "", `can't find pane: ${pane}\n`);
+      this.typed.push({ pane, kind: "paste", text: this.buffers.get(name) ?? "" });
+      if (args.includes("-d")) this.buffers.delete(name);
+      return p.finish(0);
+    }
+    if (cmd === "delete-buffer") {
+      this.buffers.delete(args[args.indexOf("-b") + 1]!);
+      return p.finish(0);
     }
     if (cmd === "kill-session") {
       const t = args[args.indexOf("-t") + 1]!;
@@ -159,13 +198,6 @@ export class FakeGit implements GitSource {
   }
   refresh(paths: Iterable<string>): void {
     this.asked.push([...paths]);
-  }
-}
-
-export class FakeNotifier implements Notifier {
-  sent: string[] = [];
-  send(name: string, word: string): void {
-    this.sent.push(`${name}: ${word}`);
   }
 }
 

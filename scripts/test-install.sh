@@ -74,7 +74,10 @@ new_case() {
   cp "$REPO/scripts/build-info.sh" "$REPO/scripts/motherapp.sh" "$R/scripts/"
   cp "$REPO/packaging/motherapp.service" "$REPO/packaging/motherapp-cpu-access.service" "$REPO/packaging/motherapp-cpu-access.sh" \
     "$REPO/packaging/motherapp-cpu-voltage.sh" "$REPO/packaging/motherapp-cpu-voltage.sudoers" \
-    "$REPO/packaging/motherapp-energy.rules" "$REPO/packaging/motherapp-energy-access.sh" "$R/packaging/"
+    "$REPO/packaging/motherapp-energy.rules" "$REPO/packaging/motherapp-energy-access.sh" \
+    "$REPO/packaging/motherapp.desktop" "$R/packaging/"
+  mkdir -p "$R/web/public"
+  cp "$REPO/web/public/icon.png" "$R/web/public/"
   local t
   for t in "$REPO"/tools/*/manifest.json; do   # the real manifests (audio declares "bin")
     t="${t%/manifest.json}"
@@ -100,6 +103,12 @@ new_case() {
   echo 1.4.1-1build2 >"$FAKE/dpkg/libddcutil4"
   mkdir -p "$ROOT/usr/lib/x86_64-linux-gnu"
   touch "$ROOT/usr/lib/x86_64-linux-gnu/libddcutil.so.4"
+  # what the tray icon's helper needs (check_tray looks at files only)
+  mkdir -p "$ROOT/usr/bin" "$ROOT/usr/lib/python3/dist-packages/gi" "$ROOT/usr/lib/x86_64-linux-gnu/girepository-1.0"
+  printf '#!/bin/sh\n' >"$ROOT/usr/bin/python3"; chmod +x "$ROOT/usr/bin/python3"
+  touch "$ROOT/usr/lib/python3/dist-packages/gi/__init__.py" \
+    "$ROOT/usr/lib/x86_64-linux-gnu/girepository-1.0/Gtk-3.0.typelib" \
+    "$ROOT/usr/lib/x86_64-linux-gnu/girepository-1.0/AyatanaAppIndicator3-0.1.typelib"
 
   pw_stubs pw-dump pw-play pw-record pw-metadata wpctl
   sound_files
@@ -815,6 +824,75 @@ stub id '[[ $1 == -u ]] && echo 0; exit 0'
 run_installer --doctor
 check "running as root: exit 2" exit_is 2
 
+new_case desktop-entry
+DESKTOP() { printf '%s' "$HOME_/.local/share/applications/motherapp.desktop"; }
+ICON() { printf '%s' "$HOME_/.local/share/icons/hicolor/512x512/apps/motherapp.png"; }
+run_installer --yes
+check "exit 0" exit_is 0
+check "entry written" out_has "^OK +desktop-entry +wrote $(DESKTOP) \\(opens http://127\\.0\\.0\\.1:7323/\\)"
+check "icon written" out_has "^OK +app-icon +wrote $(ICON)"
+check "icon is the app icon" cmp -s "$(ICON)" "$REPO/web/public/icon.png"
+check "entry carries the marker" grep -qxF "# managed by motherapp install.sh" "$(DESKTOP)"
+check "entry has no template lines" file_lacks "$(DESKTOP)" "#@"
+check "entry is named motherapp" grep -qxF "Name=motherapp" "$(DESKTOP)"
+check "entry opens the panel in the default browser" grep -qxF "Exec=xdg-open http://127.0.0.1:7323/" "$(DESKTOP)"
+check "entry points at the installed icon" grep -qxF "Icon=$(ICON)" "$(DESKTOP)"
+check "entry says it uses notifications" grep -qxF "X-GNOME-UsesNotifications=true" "$(DESKTOP)"
+cp "$(DESKTOP)" "$C/desktop.first"
+run_installer --yes
+check "re-run: entry unchanged" out_has '^OK +desktop-entry +.* unchanged'
+check "re-run: icon unchanged" out_has '^OK +app-icon +.* unchanged'
+check "re-run: same entry" cmp -s "$(DESKTOP)" "$C/desktop.first"
+run_installer --doctor
+check "--doctor: entry up to date" out_has '^OK +desktop-entry +.* up to date'
+check "--doctor: icon up to date" out_has '^OK +app-icon +.* up to date'
+# another port: the entry follows, and --doctor notices an old one
+EXTRA_ENV=(MOTHERAPP_PORT=7400)
+run_installer --doctor
+check "--doctor: entry for another port is a WARN" out_has '^WARN +desktop-entry +.*differs from what the installer would write'
+check "--doctor: a stale entry doesn't fail the check" exit_is 0
+run_installer --yes
+check "port from the environment: entry opens it" grep -qxF "Exec=xdg-open http://127.0.0.1:7400/" "$(DESKTOP)"
+EXTRA_ENV=()
+echo changed >"$(ICON)"
+rm "$(DESKTOP)"
+run_installer --doctor
+check "--doctor: missing entry is a WARN" out_has '^WARN +desktop-entry +.*not installed'
+check "--doctor: changed icon is a WARN" out_has '^WARN +app-icon +.*differs from'
+check "--doctor: wrote nothing" test ! -e "$(DESKTOP)"
+run_installer --yes
+check "install: icon restored" cmp -s "$(ICON)" "$REPO/web/public/icon.png"
+run_installer --uninstall
+check "uninstall: entry removed" test ! -e "$(DESKTOP)"
+check "uninstall: icon removed" test ! -e "$(ICON)"
+check "uninstall: reported" out_has "^OK +desktop-entry +removed $(DESKTOP)"
+run_installer --uninstall
+check "uninstall twice: nothing to remove" out_has '^OK +desktop-entry +.* not present'
+# an entry the user made by hand is never touched
+mkdir -p "$(dirname "$(DESKTOP)")"
+printf '[Desktop Entry]\nName=mine\n' >"$(DESKTOP)"
+cp "$(DESKTOP)" "$C/desktop.foreign"
+run_installer --yes
+check "foreign entry: WARN" out_has "^WARN +desktop-entry +.*wasn't written by install\\.sh; left alone"
+check "foreign entry: still exit 0" exit_is 0
+run_installer --uninstall
+check "foreign entry: kept through install and uninstall" cmp -s "$(DESKTOP)" "$C/desktop.foreign"
+
+new_case tray-icon
+run_installer --yes
+check "tray: helper's packages found" out_has '^OK +tray-icon +python3-gi with GTK 3 and AyatanaAppIndicator3'
+rm "$ROOT/usr/lib/x86_64-linux-gnu/girepository-1.0/AyatanaAppIndicator3-0.1.typelib" "$ROOT/usr/lib/python3/dist-packages/gi/__init__.py"
+: >"$FAKE/calls"
+run_installer --doctor
+check "tray: missing packages are a WARN naming them" \
+  out_has '^WARN +tray-icon +no tray icon: missing Ubuntu package\(s\) python3-gi gir1\.2-ayatanaappindicator3-0\.1 \(everything else works\)'
+check "tray: the fix is one apt-get line" out_has 'sudo apt-get install python3-gi gir1\.2-ayatanaappindicator3-0\.1'
+check "tray: optional, so --doctor still passes" exit_is 0
+check "tray: nothing installed for it" calls_lacks '^sudo'
+run_installer --yes
+check "tray: install goes on without it" exit_is 0
+check "tray: install doesn't apt-get it either" calls_lacks 'apt-get install'
+
 new_case bin-wrappers
 run_installer --yes
 check "exit 0" exit_is 0
@@ -909,7 +987,7 @@ make_node "$NODE_PATH_DIR" v22.23.2
 run_installer --doctor
 check "--doctor without Node 24: commands SKIP" out_has '^SKIP +commands +can.t check the wrappers'
 check "--doctor without Node 24: SKIP counted as skipped, not as a warning" \
-  out_has '^RESULT: FAIL \([0-9]+ required item\(s\) missing or failed, 0 warning\(s\), 1 skipped\)$'
+  out_has '^RESULT: FAIL \([0-9]+ required item\(s\) missing or failed, 2 warning\(s\), 1 skipped\)$'   # the 2: desktop entry and icon, not installed
 run_installer <<<"n"
 check "install without Node 24: commands SKIP" out_has '^SKIP +commands +Node >= 24 missing; wrappers not written'
 check "install without Node 24: optional SKIP counted as skipped" out_has '^RESULT: FAIL \(.*, 1 skipped\)$'

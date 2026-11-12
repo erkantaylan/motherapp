@@ -1,6 +1,7 @@
 // App-wide client state: tool infos, one ToolStore per tool, streams, progress, logs.
-import type { JsonObject, JsonValue, LogEntry, NetworkInfo, RpcId, ToolInfo, UiNotifications, VersionInfo } from "@motherapp/protocol";
+import type { JsonObject, JsonValue, LogEntry, NetworkInfo, NotificationSettings, RpcId, ToolInfo, TrayInfo, UiNotifications, VersionInfo } from "@motherapp/protocol";
 import { Connection } from "./connection.ts";
+import { NotificationFeed } from "./notifications.ts";
 import { ToolStore } from "./store.ts";
 
 type ProgressCb = (text: string, fraction?: number) => void;
@@ -26,6 +27,16 @@ export class App {
   /** Network settings and state (Settings → Network); asked for by the Settings page. */
   network: NetworkInfo | undefined;
   private networkListeners = new Set<() => void>();
+  /** Notification history (the bell panel). Subscribed once for the app, on every (re)connect. */
+  readonly notifications = new NotificationFeed();
+  private notificationListeners = new Set<() => void>();
+  /** Notification settings (Settings → Notifications, the panel's mute switch). */
+  notifySettings: NotificationSettings | undefined;
+  private notifySettingsListeners = new Set<() => void>();
+  private subscribeRun = 0;
+  /** The tray icon's setting and state (Settings → Desktop); asked for by the Settings page. */
+  tray: TrayInfo | undefined;
+  private trayListeners = new Set<() => void>();
 
   constructor(url: string) {
     this.conn = new Connection(url, (method, params) => this.onNotify(method, params));
@@ -40,7 +51,59 @@ export class App {
         this.conn.request("stream.open", { tool, name }).catch(() => {});
       }
       this.refreshVersion().catch(() => {});
+      this.subscribeNotifications();
+      this.conn.request("notifications.settings.get", {}).then(
+        (n) => this.setNotifySettings(n),
+        () => {},
+      );
     });
+  }
+
+  /**
+   * Asks for the history and the live pushes. Run on every (re)connect: the backlog replaces
+   * the list, so nothing shows twice and a restarted core's empty history is taken over too.
+   */
+  private subscribeNotifications(): void {
+    const run = ++this.subscribeRun;
+    this.notifications.beginSync();
+    this.conn.request("notifications.subscribe", {}).then(
+      (r) => {
+        if (run !== this.subscribeRun) return; // an older connection's answer
+        this.notifications.sync(r.entries);
+        this.emitNotifications();
+      },
+      () => {}, // disconnected meanwhile: the next connect subscribes again
+    );
+  }
+
+  private emitNotifications(): void {
+    for (const l of [...this.notificationListeners]) l();
+  }
+
+  /** Runs when the notification history changed. */
+  onNotifications(l: () => void): () => void {
+    this.notificationListeners.add(l);
+    return () => this.notificationListeners.delete(l);
+  }
+
+  setTray(t: TrayInfo): void {
+    this.tray = t;
+    for (const l of [...this.trayListeners]) l();
+  }
+
+  onTray(l: () => void): () => void {
+    this.trayListeners.add(l);
+    return () => this.trayListeners.delete(l);
+  }
+
+  setNotifySettings(n: NotificationSettings): void {
+    this.notifySettings = n;
+    for (const l of [...this.notifySettingsListeners]) l();
+  }
+
+  onNotifySettings(l: () => void): () => void {
+    this.notifySettingsListeners.add(l);
+    return () => this.notifySettingsListeners.delete(l);
   }
 
   /**
@@ -159,6 +222,15 @@ export class App {
         break;
       case "network":
         this.setNetwork(params as UiNotifications["network"]);
+        break;
+      case "notification":
+        if (this.notifications.add((params as UiNotifications["notification"]).entry)) this.emitNotifications();
+        break;
+      case "tray":
+        this.setTray(params as UiNotifications["tray"]);
+        break;
+      case "notifications.settings":
+        this.setNotifySettings(params as UiNotifications["notifications.settings"]);
         break;
     }
   }

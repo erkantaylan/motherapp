@@ -3,5 +3,6 @@
   "title": "Demo",
   "icon": "🧪",
   "serve": ["node", "demo.ts", "serve"],
-  "defaultEnabled": false
+  "defaultEnabled": false,
+  "notifications": [{ "id": "hello", "label": "Demo notification", "sound": "message" }]
 }
