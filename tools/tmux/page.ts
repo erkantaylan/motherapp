@@ -13,12 +13,16 @@
 // Scrolling: a live refresh only touches the screen while the user is at its bottom. Scrolled up,
 // or looking at history, what they read stays where it is until they go back.
 //
+// Details card, at the bottom: its header is a toggle. Collapsed, it is one line naming the session,
+// and in the wide layout the preview takes the height that frees (stacked, the page just gets
+// shorter: the preview there is as tall as its text). One choice for the card, kept in localStorage.
+//
 // Everything from a pane or a transcript goes in through textContent and style properties, never
 // as HTML. Shared logic is in ./src/view.ts and ./src/ansi.ts, which import nothing.
 import type { JsonValue } from "@motherapp/protocol";
 import type { PageContext } from "@motherapp/protocol/page";
 import { DEFAULT_BG, DEFAULT_FG, parseAnsi } from "./src/ansi.ts";
-import { formatElapsed, formatTokens, previewFontPx, timelineBars, timelineText } from "./src/view.ts";
+import { DETAILS_COLLAPSED, DETAILS_EXPANDED, DETAILS_KEY, detailsCollapsed, detailsSummary, formatElapsed, formatTokens, previewFontPx, timelineBars, timelineText } from "./src/view.ts";
 
 interface Row {
   id: string;
@@ -178,7 +182,13 @@ const STYLE = `
 .mtx-screen { margin: 0; padding: 8px 10px; overflow: auto; max-height: 60vh; min-height: 120px; border-radius: 8px; border: 1px solid var(--border);
   background: ${DEFAULT_BG}; color: ${DEFAULT_FG}; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.2; white-space: pre; tab-size: 8; }
 .mtx-screen[data-wrap="true"] { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.35; }
-@container (min-width: ${WIDE_PX}px) { .mtx-screen { height: 56vh; max-height: none; } }
+@container (min-width: ${WIDE_PX}px) {
+  .mtx-screen { height: 56vh; max-height: none; }
+  /* Details collapsed: the preview takes what's left of the column, and never less than before. */
+  .mtx-main[data-details="collapsed"]:not([hidden]) { display: flex; flex-direction: column; }
+  .mtx-main[data-details="collapsed"] > * { flex: none; }
+  .mtx-main[data-details="collapsed"] > .mtx-screen { flex: 1 0 56vh; height: auto; }
+}
 .mtx-send { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; min-width: 0; }
 .mtx-send textarea { flex: 1 1 22em; min-width: 0; min-height: 2.6em; max-height: 40vh; padding: 6px 8px; resize: vertical; border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg); color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.875rem; line-height: 1.35; }
@@ -188,7 +198,16 @@ const STYLE = `
 .mtx-send .mtx-btn { flex: none; }
 .mtx-send[hidden] { display: none; }
 .mtx-screen[hidden], .mtx-claude[hidden], .mtx-rename[hidden], .mtx-note[hidden], .mtx-main[hidden] { display: none; }
-.mtx-claude dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 0.875rem; }
+/* The header's padding is taken back by its margin, so its text lines up with the card's and the hover tint has room. */
+.mtx-details-head { display: flex; align-items: baseline; gap: 8px; width: calc(100% + 12px); min-width: 0; margin: -4px -6px; padding: 4px 6px;
+  border: 0; border-radius: 6px; background: none; color: var(--fg); font: inherit; font-size: 0.875rem; text-align: start; cursor: pointer; }
+.mtx-details-head:hover { background: var(--bg); }
+.mtx-details-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mtx-caret { flex: none; display: inline-block; width: 1em; color: var(--muted); }
+.mtx-details-label { flex: none; font-weight: 600; }
+.mtx-details-sum { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.mtx-details-sum[hidden], .mtx-claude dl[hidden] { display: none; }
+.mtx-claude dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 10px 0 0; font-size: 0.875rem; }
 .mtx-claude dt { color: var(--muted); }
 .mtx-claude dd.mtx-full { max-height: none; overflow-y: visible; }
 .mtx-claude dd { margin: 0; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 12em; overflow-y: auto; }
@@ -261,6 +280,22 @@ function readPicked(): string | undefined {
     return localStorage.getItem(PICKED_KEY) ?? undefined;
   } catch {
     return undefined;
+  }
+}
+
+function readDetailsCollapsed(): boolean {
+  try {
+    return detailsCollapsed(localStorage.getItem(DETAILS_KEY));
+  } catch {
+    return false;
+  }
+}
+
+function saveDetailsCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(DETAILS_KEY, collapsed ? DETAILS_COLLAPSED : DETAILS_EXPANDED);
+  } catch {
+    // only a convenience
   }
 }
 
@@ -368,7 +403,12 @@ export default class TmuxPage extends HTMLElement {
   /** Unsent text per session (`<id>@<created>`), so a draft never follows the selection to another one. */
   private drafts = new Map<string, string>();
   private claudeList = el("dl");
-  private claude = el("div", { class: "mtx-card mtx-claude" }, this.claudeList);
+  /** Built once and never replaced, so focus stays on it across refreshes. */
+  private detailsToggle = el("button", { class: "mtx-details-head" });
+  private detailsCaret = el("span", { class: "mtx-caret" });
+  private detailsSum = el("span", { class: "mtx-details-sum" });
+  private detailsAreCollapsed = readDetailsCollapsed();
+  private claude = el("div", { class: "mtx-card mtx-claude" }, this.detailsToggle, this.claudeList);
 
   connectedCallback(): void {
     const ctx = this.ctx;
@@ -435,6 +475,7 @@ export default class TmuxPage extends HTMLElement {
       if (e.deltaY < 0 && this.screen.scrollTop <= 0 && !this.history) void this.loadHistory();
     }, { passive: true });
     this.buildSend();
+    this.buildDetails();
     this.main.append(el("div", { class: "mtx-card" }, head, actions, this.renameForm, this.renameNote), this.screenBar, this.screen, this.screenNote, this.sendForm, this.sendNote, this.claude);
     this.needs.hidden = true;
     this.updateBar();
@@ -465,6 +506,32 @@ export default class TmuxPage extends HTMLElement {
       e.preventDefault();
       void this.submitSend();
     });
+  }
+
+  private buildDetails(): void {
+    this.claudeList.id = "mtx-details";
+    this.detailsToggle.type = "button";
+    this.detailsToggle.setAttribute("aria-controls", this.claudeList.id);
+    this.detailsCaret.setAttribute("aria-hidden", "true");
+    this.detailsToggle.append(this.detailsCaret, el("span", { class: "mtx-details-label", text: "Details" }), this.detailsSum);
+    this.detailsToggle.addEventListener("click", () => {
+      this.setDetailsCollapsed(!this.detailsAreCollapsed);
+      saveDetailsCollapsed(this.detailsAreCollapsed);
+      // In the wide layout the preview's box just changed height: a live screen stays at its bottom.
+      if (this.following && !this.history) this.screen.scrollTop = this.screen.scrollHeight;
+    });
+    this.setDetailsCollapsed(this.detailsAreCollapsed);
+  }
+
+  /** Only the toggle and the stored choice call this: a refresh fills the list and leaves the state alone. */
+  private setDetailsCollapsed(collapsed: boolean): void {
+    this.detailsAreCollapsed = collapsed;
+    this.detailsToggle.setAttribute("aria-expanded", String(!collapsed));
+    this.detailsCaret.textContent = collapsed ? "▸" : "▾";
+    this.claudeList.hidden = collapsed;
+    this.detailsSum.hidden = !collapsed;
+    if (collapsed) this.main.dataset.details = "collapsed";
+    else delete this.main.dataset.details;
   }
 
   private lifeKey(id: string | undefined): string | undefined {
@@ -745,6 +812,11 @@ export default class TmuxPage extends HTMLElement {
     const shown = (s?.claude ? rows : [panePath]).filter((r): r is [string, string] => !!r[1]);
     this.claude.hidden = shown.length === 0;
     fillList(this.claudeList, shown);
+    const sum = detailsSummary(c?.title ?? (this.selected === undefined ? undefined : this.extras[this.selected]?.title), c?.name, s?.name);
+    if (this.detailsSum.textContent !== sum) {
+      this.detailsSum.textContent = sum;
+      this.detailsSum.title = sum;
+    }
   }
 
   private toggleRename(): void {

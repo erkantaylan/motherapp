@@ -57,3 +57,22 @@ export function previewFontPx(widthPx: number, cols: number): number {
   const fit = widthPx / (cols * MONO_RATIO);
   return Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.floor(fit * 10) / 10));
 }
+
+/** localStorage key for the details card: one setting for the card, not per session. */
+export const DETAILS_KEY = "motherapp.tmux.detailsCollapsed";
+export const DETAILS_COLLAPSED = "1";
+export const DETAILS_EXPANDED = "0";
+
+/** Expanded unless the user collapsed it: nothing stored, no storage or a value from elsewhere all mean expanded. */
+export function detailsCollapsed(stored: string | null | undefined): boolean {
+  return stored === DETAILS_COLLAPSED;
+}
+
+/** The collapsed card's one line: Claude's title, else its session name, else the tmux session's. Line breaks become spaces. */
+export function detailsSummary(title: string | undefined, claudeName: string | undefined, sessionName: string | undefined): string {
+  for (const v of [title, claudeName, sessionName]) {
+    const line = (v ?? "").replace(/\s+/g, " ").trim();
+    if (line) return line;
+  }
+  return "";
+}

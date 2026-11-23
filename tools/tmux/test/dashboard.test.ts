@@ -15,7 +15,7 @@ import { openArgv, openEnv } from "../src/open.ts";
 import type { Proc, Runner } from "../src/runner.ts";
 import { claudeState, outputState, staleDays } from "../src/state.ts";
 import { BUCKET_MS, Timeline } from "../src/timeline.ts";
-import { formatElapsed, formatTokens, previewFontPx, timelineBars, timelineText } from "../src/view.ts";
+import { DETAILS_COLLAPSED, DETAILS_EXPANDED, DETAILS_KEY, detailsCollapsed, detailsSummary, formatElapsed, formatTokens, previewFontPx, timelineBars, timelineText } from "../src/view.ts";
 import { FakeProc, tick } from "./fakes.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-tmux-claude-"));
@@ -444,4 +444,15 @@ test("GitCache: slow git doesn't pile up; not a repo, a broken repo and no git a
 test("view helpers: elapsed time", () => {
   assert.deepEqual([12_000, 90_000, 3_900_000, 90_000_000].map(formatElapsed), ["12 s", "1 min", "1 h 5 min", "25 h"]);
   assert.equal(formatElapsed(-5), "0 s");
+});
+
+test("view helpers: the details card is expanded unless collapsed was stored; its one line names the session", () => {
+  assert.equal(DETAILS_KEY, "motherapp.tmux.detailsCollapsed");
+  assert.equal(detailsCollapsed(DETAILS_COLLAPSED), true);
+  for (const v of [DETAILS_EXPANDED, null, undefined, "", "true", "collapsed"]) assert.equal(detailsCollapsed(v), false, `stored ${JSON.stringify(v)}`);
+  assert.equal(detailsSummary("Fix the login bug", "claude-1", "work"), "Fix the login bug");
+  assert.equal(detailsSummary(undefined, "claude-1", "work"), "claude-1");
+  assert.equal(detailsSummary("  ", "", "work"), "work", "blank counts as missing");
+  assert.equal(detailsSummary("two\nlines\t here", undefined, "work"), "two lines here", "always one line");
+  assert.equal(detailsSummary(undefined, undefined, undefined), "");
 });

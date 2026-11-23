@@ -21,7 +21,9 @@ if (server === "none") {
 if (cmd === "list-panes") {
   process.stdout.write(paneLines(server));
 } else if (cmd === "capture-pane") {
-  process.stdout.write("screen secret\n");
+  // $FAKE_TMUX_DIR/screen.txt, when a test wants a taller screen.
+  const screen = path.join(dir, "screen.txt");
+  process.stdout.write(fs.existsSync(screen) ? fs.readFileSync(screen, "utf8") : "screen secret\n");
 } else if (cmd === "kill-session") {
   const t = args[args.indexOf("-t") + 1]!;
   const rest = server.filter((s) => (t.startsWith("=") ? s.name !== t.slice(1) : s.id !== t));
