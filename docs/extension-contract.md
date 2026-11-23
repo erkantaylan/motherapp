@@ -26,7 +26,7 @@ tools/<id>/
 |---|---|
 | `id` | `[a-z0-9][a-z0-9_-]*`, unique, `core` is reserved. Also the state file name and the log tag. |
 | `title`, `icon` | Sidebar entry. Once the tool has started, the `title` its `describe` returns replaces the manifest's (the CPU tool names the detected vendor: "CPU - AMD"); keep the manifest's a neutral fallback. `icon` is text (an emoji) or a file in the tool dir ending in `.svg`/`.png`. |
-| `serve` | Command line, relative to the tool dir. `"node"` means the Node that runs the core (so systemd's PATH doesn't matter). A command with a `/` is resolved against the tool dir. Any language works. |
+| `serve` | Command line, relative to the tool dir. `"node"` means the Node that runs the core (so systemd's PATH doesn't matter). A command with a `/` is resolved against the tool dir, so an absolute path stays as it is. The process starts with the tool dir as its working directory. Any language works. |
 | `page` | Optional custom page module (see § 6). |
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
 | `wide` | Optional, default `false`. The page may grow to 1600 px on a wide screen instead of the usual 960 px column (the CPU page uses it for its live column). Lay the page out so it still works at 960 px and on a phone. |
@@ -47,7 +47,8 @@ tools/<id>/
 }
 ```
 
-The core reads `tools/*/manifest.json` at startup. Enabled/disabled is stored in
+The core reads `tools/*/manifest.json` at startup, and then the external folder (see "A tool
+outside this repo" below). Enabled/disabled is stored in
 `~/.config/motherapp/config.json` (`{"port": 7323, "tools": {"<id>": {"enabled": true}}}`) and can
 be changed on the Settings page. The sidebar order the user sets there (drag the ⠿ handle, or
 focus it and use the arrow keys) is saved in the same file as `"order": ["audio", "brightness", …]`; ids of tools that no
@@ -55,6 +56,61 @@ longer exist are ignored and dropped on the next save, and "Reset to default ord
 key. The core writes the file atomically and keeps every key it doesn't know. Logs and Settings
 are core pages and always sit at the bottom of the sidebar. Unknown manifest fields are ignored. After adding a tool, run `npm install` once at the repo root
 (the tool is a workspace) and restart the core.
+
+### A tool outside this repo (external tools)
+
+A tool that belongs to another project doesn't have to live in `tools/`. The core scans a second
+folder with the same layout (DESIGN.md § 4.8):
+
+```
+${XDG_CONFIG_HOME:-~/.config}/motherapp/tools/<id>/
+  manifest.json
+  page.ts         only for a custom page
+  icon.svg        only if `icon` names a file
+```
+
+**Installing** is writing that folder, which the other project does itself (for example a
+`mytool motherapp install` subcommand that writes the files embedded in its binary), then
+restarting the core (`systemctl --user restart motherapp`): the folder is read at startup only.
+Removing the folder and restarting uninstalls it. motherapp's `install.sh` never touches these
+folders, except that `--uninstall --purge` deletes the whole of `~/.config/motherapp`.
+
+```json
+{ "id": "nebula", "title": "Nebula", "icon": "icon.svg",
+  "serve": ["/home/me/.local/bin/nebula", "motherapp", "serve"], "page": "page.ts",
+  "localActions": ["output"], "notifications": [{ "id": "finished", "label": "A run finished" }] }
+```
+
+What such a tool may rely on:
+
+- **The manifest fields mean the same**, and the tool is enabled, disabled, ordered, restarted
+  after a crash and shown in Settings → Notifications like a built-in one. `bin` and `commands`
+  are the exception: they are ignored for an external tool (no `~/.local/bin` wrapper is
+  written and the shortcuts tool doesn't list its commands), so it brings its own commands.
+- **`serve`**: write `serve[0]` as the **absolute path** of your executable. The core runs it
+  directly (no shell, no Node), with the manifest's remaining entries as arguments. The service
+  runs with systemd's PATH, so a bare name like `"nebula"` is only found if it is on that PATH,
+  and `~/.local/bin` usually isn't. `"node"` still means the Node that runs the core and a path
+  with a `/` that isn't absolute is relative to the tool's folder, but a Node tool outside the
+  workspace can't import `@motherapp/tool-sdk`; an external tool speaks § 2 itself.
+- **The process**: its working directory is the tool's folder (the path under
+  `~/.config/motherapp/tools`, also when that entry is a symlink); its environment is the
+  core's plus `MOTHERAPP_TOOL_ID=<id>`; stdin and stdout are the JSON-RPC channel, stderr goes
+  to the log. Stop is SIGTERM, then SIGKILL after 3 s; exit when stdin closes.
+- **Files**: `/tools/<id>/<file>` serves `.ts`, `.js`, `.mjs`, `.css`, `.svg` and `.png` files
+  from the tool's folder, `.ts` type-stripped, so `page.ts` may be plain TypeScript with
+  `import type` lines (they are removed; nothing is type-checked for you). `manifest.json`
+  itself is not served.
+- **The id**: a built-in tool wins a clash; the external tool with the same id is skipped with
+  one error in the log. Pick an id no built-in tool is likely to take.
+- **The folder entry may be a symlink to a directory** (handy while developing the tool);
+  a dangling link is ignored.
+- **Not promised**: versioning. The protocol is whatever the installed motherapp speaks; keep to
+  the messages in § 2, ignore notifications you don't know, and tolerate unknown fields.
+
+`MOTHERAPP_EXTERNAL_TOOLS_DIR=<dir>` makes a core scan another folder instead, and `off` (or an
+empty value) none. A core started under `node --test` scans none unless the variable names one,
+so tests never load your real tools; `npm run dev` does load them.
 
 ## 2. Serve mode: messages
 

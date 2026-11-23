@@ -9,7 +9,7 @@ import type { Delivery } from "./notifyDelivery.ts";
 import { defaultConfig, loadConfig, updateConfigFile } from "./config.ts";
 import type { Config } from "./config.ts";
 import type { LogService } from "./logService.ts";
-import { discoverTools } from "./manifest.ts";
+import { discoverAllTools } from "./manifest.ts";
 import type { DiscoveredTool } from "./manifest.ts";
 import { mergeOrder, orderToSave } from "./toolOrder.ts";
 import { ToolHost } from "./toolHost.ts";
@@ -21,6 +21,12 @@ import { ErrorCode, RpcError } from "@motherapp/protocol";
 
 export interface ManagerOptions {
   toolsDir: string;
+  /**
+   * A second folder of tools, outside the checkout (DESIGN.md § 4.8); it need not exist.
+   * Without it only `toolsDir` is scanned, so a Manager built by a test never reads the
+   * user's own folder; main.ts passes paths.ts `externalToolsDir()`.
+   */
+  externalToolsDir?: string;
   configFile: string;
   log: LogService;
   clock?: Clock;
@@ -128,12 +134,15 @@ export class Manager extends EventEmitter<ManagerEvents> {
     if (created) log.core("info", "created default config", { file: this.opts.configFile });
     if (error) log.core("error", `config unreadable, using defaults: ${error}`, { file: this.opts.configFile });
 
-    const found = discoverTools(this.opts.toolsDir);
+    const found = discoverAllTools(this.opts.toolsDir, this.opts.externalToolsDir);
     for (const e of found.errors) log.core("error", `skipping tool: ${e.error}`, { dir: e.dir });
     for (const t of found.tools) this.addHost(t);
     log.core("info", `discovered ${found.tools.length} tool(s)`, {
       dir: this.opts.toolsDir,
       tools: found.tools.map((t) => t.manifest.id),
+      ...(this.opts.externalToolsDir !== undefined
+        ? { externalDir: this.opts.externalToolsDir, external: found.tools.filter((t) => t.external).map((t) => t.manifest.id) }
+        : {}),
     });
     for (const host of this.hosts.values()) if (this.isEnabled(host.id)) host.start();
   }

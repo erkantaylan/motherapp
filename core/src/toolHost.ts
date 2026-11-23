@@ -79,7 +79,11 @@ export const UNWATCH_DELAY_MS = 5000;
 const defaultSpawn: SpawnFn = (cmd, args, opts) =>
   nodeSpawn(cmd, args, { cwd: opts.cwd, env: opts.env, stdio: ["pipe", "pipe", "pipe"] });
 
-/** Resolves the serve command: "node" means the Node running the core; "./x" is tool-relative. */
+/**
+ * Resolves the serve command: "node" means the Node running the core; a command with a "/" is
+ * resolved against the tool dir, so "./x" is tool-relative and an absolute path (an external
+ * tool's own binary) stays as it is; a bare name is looked up on the core's PATH.
+ */
 export function resolveCommand(serve: string[], dir: string, execPath = process.execPath): { cmd: string; args: string[] } {
   const [first, ...rest] = serve;
   if (first === "node") return { cmd: execPath, args: ["--disable-warning=ExperimentalWarning", ...rest] };

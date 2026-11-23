@@ -1,4 +1,4 @@
-// Discovery (DESIGN.md § 4.8): tools/*/manifest.json.
+// Discovery (DESIGN.md § 4.8): tools/*/manifest.json in the checkout, plus the external folder.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { NotificationKind, ToolManifest } from "@motherapp/protocol";
@@ -7,6 +7,8 @@ export interface DiscoveredTool {
   manifest: ToolManifest;
   /** Absolute tool directory; `serve` and `page` are relative to it. */
   dir: string;
+  /** True for a tool found in the external folder, outside the checkout. */
+  external?: boolean;
 }
 
 export interface DiscoveryResult {
@@ -63,19 +65,27 @@ export function validateManifest(raw: unknown): ToolManifest | string {
   return out;
 }
 
-export function discoverTools(toolsDir: string): DiscoveryResult {
+export interface DiscoverOptions {
+  /** A missing folder is normal: no tools and no error (the external folder). */
+  optional?: boolean;
+  /** Also take entries that are symlinks to directories (the external folder). */
+  followSymlinks?: boolean;
+}
+
+export function discoverTools(toolsDir: string, opts: DiscoverOptions = {}): DiscoveryResult {
   const result: DiscoveryResult = { tools: [], errors: [] };
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(toolsDir, { withFileTypes: true });
   } catch (e) {
+    if (opts.optional && (e as NodeJS.ErrnoException).code === "ENOENT") return result;
     result.errors.push({ dir: toolsDir, error: (e as Error).message });
     return result;
   }
   const seen = new Set<string>();
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (!entry.isDirectory()) continue;
     const dir = path.join(toolsDir, entry.name);
+    if (!entry.isDirectory() && !(opts.followSymlinks && entry.isSymbolicLink() && isDirectory(dir))) continue;
     const file = path.join(dir, "manifest.json");
     if (!fs.existsSync(file)) continue;
     let raw: unknown;
@@ -96,6 +106,37 @@ export function discoverTools(toolsDir: string): DiscoveryResult {
     }
     seen.add(m.id);
     result.tools.push({ manifest: m, dir });
+  }
+  return result;
+}
+
+/** Follows symlinks; a dangling one is not a directory. */
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The checkout's tools plus the ones installed outside it (DESIGN.md § 4.8). `externalDir`
+ * need not exist. A checkout tool wins over an external one with the same id: the external
+ * one is skipped with one error. External tools are marked `external`.
+ */
+export function discoverAllTools(toolsDir: string, externalDir?: string): DiscoveryResult {
+  const result = discoverTools(toolsDir);
+  if (externalDir === undefined || path.resolve(externalDir) === path.resolve(toolsDir)) return result;
+  const ext = discoverTools(externalDir, { optional: true, followSymlinks: true });
+  result.errors.push(...ext.errors);
+  const builtIn = new Map(result.tools.map((t) => [t.manifest.id, t.dir]));
+  for (const t of ext.tools) {
+    const clash = builtIn.get(t.manifest.id);
+    if (clash !== undefined) {
+      result.errors.push({ dir: t.dir, error: `external tool id "${t.manifest.id}" is taken by the built-in tool in ${clash}` });
+      continue;
+    }
+    result.tools.push({ ...t, external: true });
   }
   return result;
 }

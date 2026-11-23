@@ -4,7 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { loadConfig, saveConfig } from "../src/config.ts";
-import { discoverTools, validateManifest } from "../src/manifest.ts";
+import { discoverAllTools, discoverTools, validateManifest } from "../src/manifest.ts";
+import { externalToolsDir } from "../src/paths.ts";
 import { resolveCommand } from "../src/toolHost.ts";
 import { fixturesDir } from "./helpers.ts";
 
@@ -64,6 +65,77 @@ test("resolveCommand: node is the core's own Node, ./ paths are tool-relative", 
   });
   assert.deepEqual(resolveCommand(["./bin/tool", "serve"], "/t"), { cmd: "/t/bin/tool", args: ["serve"] });
   assert.deepEqual(resolveCommand(["python3", "t.py"], "/t"), { cmd: "python3", args: ["t.py"] });
+});
+
+test("resolveCommand: an absolute serve[0] (an external tool's own binary) is kept as it is", () => {
+  assert.deepEqual(resolveCommand(["/home/x/.local/bin/nebula", "motherapp", "serve"], "/c/motherapp/tools/nebula", "/usr/bin/node24"), {
+    cmd: "/home/x/.local/bin/nebula",
+    args: ["motherapp", "serve"],
+  });
+});
+
+test("externalToolsDir: <config dir>/tools, the variable overrides, off under node --test", () => {
+  assert.equal(externalToolsDir({ XDG_CONFIG_HOME: "/c" }), "/c/motherapp/tools");
+  assert.equal(externalToolsDir({}), path.join(os.homedir(), ".config", "motherapp", "tools"));
+  assert.equal(externalToolsDir({ XDG_CONFIG_HOME: "/c", MOTHERAPP_EXTERNAL_TOOLS_DIR: "/x/tools" }), "/x/tools");
+  assert.equal(externalToolsDir({ XDG_CONFIG_HOME: "/c", MOTHERAPP_EXTERNAL_TOOLS_DIR: "" }), undefined);
+  assert.equal(externalToolsDir({ XDG_CONFIG_HOME: "/c", MOTHERAPP_EXTERNAL_TOOLS_DIR: "off" }), undefined);
+  assert.equal(externalToolsDir({ XDG_CONFIG_HOME: "/c", MOTHERAPP_EXTERNAL_TOOLS_DIR: "OFF" }), undefined);
+  // a core started by a test never reads the user's own folder, unless the test names one
+  assert.equal(externalToolsDir({ XDG_CONFIG_HOME: "/c", NODE_TEST_CONTEXT: "child-v8" }), undefined);
+  assert.equal(externalToolsDir({ NODE_TEST_CONTEXT: "child-v8", MOTHERAPP_EXTERNAL_TOOLS_DIR: "/x/tools" }), "/x/tools");
+  // this very process runs under node --test
+  assert.equal(externalToolsDir(), undefined);
+});
+
+test("discoverAllTools: external folder is optional, a built-in id wins, symlinked dirs are followed there", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-ext-"));
+  const builtIn = path.join(tmp, "repo-tools");
+  const ext = path.join(tmp, "ext");
+  const put = (root: string, name: string, body: string) => {
+    fs.mkdirSync(path.join(root, name), { recursive: true });
+    fs.writeFileSync(path.join(root, name, "manifest.json"), body);
+  };
+  put(builtIn, "a", '{"id":"a","title":"A","serve":["node","a.ts"]}');
+  put(builtIn, "b", '{"id":"b","title":"B","serve":["node","b.ts"]}');
+
+  // no external folder given, a missing one, and the same folder twice: the built-in tools only
+  for (const dir of [undefined, path.join(tmp, "missing"), builtIn]) {
+    const r = discoverAllTools(builtIn, dir);
+    assert.deepEqual(r.tools.map((t) => [t.manifest.id, t.external]), [["a", undefined], ["b", undefined]]);
+    assert.deepEqual(r.errors, []);
+  }
+
+  put(ext, "nebula", '{"id":"nebula","title":"Nebula","serve":["/usr/local/bin/nebula","motherapp","serve"],"page":"page.ts"}');
+  put(ext, "clash", '{"id":"b","title":"Other B","serve":["/bin/b"]}');
+  put(ext, "broken", "{nope");
+  fs.writeFileSync(path.join(ext, "a-file"), "not a tool");
+  // a tool installed as a link to a directory elsewhere, a dangling link, and a link to a file
+  put(path.join(tmp, "elsewhere"), "linked", '{"id":"linked","title":"Linked","serve":["./run"]}');
+  fs.symlinkSync(path.join(tmp, "elsewhere", "linked"), path.join(ext, "linked"));
+  fs.symlinkSync(path.join(tmp, "gone"), path.join(ext, "dangling"));
+  fs.symlinkSync(path.join(ext, "a-file"), path.join(ext, "file-link"));
+
+  const r = discoverAllTools(builtIn, ext);
+  assert.deepEqual(r.tools.map((t) => [t.manifest.id, t.external, t.dir]), [
+    ["a", undefined, path.join(builtIn, "a")],
+    ["b", undefined, path.join(builtIn, "b")],
+    ["linked", true, path.join(ext, "linked")], // the link's own path, not its target
+    ["nebula", true, path.join(ext, "nebula")],
+  ]);
+  assert.equal(r.tools.find((t) => t.manifest.id === "b")!.manifest.title, "B");
+  assert.deepEqual(r.errors.map((e) => path.basename(e.dir)).sort(), ["broken", "clash"]);
+  assert.match(r.errors.find((e) => e.dir.endsWith("clash"))!.error, /external tool id "b" is taken by the built-in tool in .*repo-tools/);
+
+  // the checkout's own folder does not follow links (unchanged)
+  fs.symlinkSync(path.join(tmp, "elsewhere", "linked"), path.join(builtIn, "linked"));
+  assert.deepEqual(discoverTools(builtIn).tools.map((t) => t.manifest.id), ["a", "b"]);
+
+  // an external folder that is a file is an error, not a crash
+  const asFile = discoverAllTools(builtIn, path.join(ext, "a-file"));
+  assert.equal(asFile.tools.length, 2);
+  assert.equal(asFile.errors.length, 1);
+  fs.rmSync(tmp, { recursive: true });
 });
 
 test("config: created with defaults when missing, normalized when partial, kept when broken", () => {

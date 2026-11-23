@@ -3,6 +3,9 @@
 // Environment overrides (mainly for development and tests):
 //   MOTHERAPP_PORT       listen port (otherwise config.json `port`, default 7323)
 //   MOTHERAPP_TOOLS_DIR  directory scanned for tools/*/manifest.json (default <repo>/tools)
+//   MOTHERAPP_EXTERNAL_TOOLS_DIR  second folder scanned for <id>/manifest.json, for tools that
+//                        live outside the checkout (default <config dir>/tools); "" or "off":
+//                        none; none under node --test unless set
 //   MOTHERAPP_WEB_DIR    built frontend (default <repo>/web/dist)
 //   MOTHERAPP_BUILD_INFO build-info.json to report (default <repo>/build-info.json)
 //   MOTHERAPP_RELEASE_URL the "latest release" API URL, or "off" (default GitHub's; off under
@@ -17,7 +20,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { LogService, RotatingFile } from "./logService.ts";
 import { Manager } from "./manager.ts";
-import { buildInfoFile, configDir, defaultToolsDir, defaultWebDir, repoRoot, stateDir } from "./paths.ts";
+import { buildInfoFile, configDir, defaultToolsDir, defaultWebDir, externalToolsDir, repoRoot, stateDir } from "./paths.ts";
 import { startServer } from "./server.ts";
 import { ReleaseChecker } from "./releases.ts";
 import { openInBrowser } from "./tray.ts";
@@ -56,8 +59,10 @@ async function main(): Promise<void> {
     node: process.version,
     pid: process.pid,
   });
+  const external = externalToolsDir();
   const manager = new Manager({
     toolsDir: defaultToolsDir(),
+    ...(external !== undefined ? { externalToolsDir: external } : {}),
     configFile: path.join(configDir(), "config.json"),
     log,
     ...(fs.existsSync(appIcon) ? { notifyIcon: appIcon } : {}),
