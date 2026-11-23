@@ -6,13 +6,19 @@ import { defaultNotificationsConfig, normalizeNotifications } from "./notificati
 import type { NotificationsConfig } from "./notifications.ts";
 
 export interface ToolConfig {
-  enabled: boolean;
+  /** Missing: the manifest's defaultEnabled (default true). */
+  enabled?: boolean;
+  /**
+   * false: the tool doesn't exist for LAN clients ("On the network" in Settings, DESIGN.md § 3
+   * "Network switch scope"). Default true; only false is stored.
+   */
+  network?: false;
 }
 
 export interface Config {
   /** Listen port on 127.0.0.1. Default 7323. */
   port: number;
-  /** Per-tool settings; tools missing here use their manifest's defaultEnabled (default true). */
+  /** Per-tool settings, only what the user changed: enabled or not, and off the network. */
   tools: Record<string, ToolConfig>;
   /**
    * Sidebar order set on the Settings page (issue #20). Missing or empty: the default order
@@ -79,9 +85,11 @@ function normalize(raw: unknown): Config {
   if (typeof r.port === "number" && Number.isInteger(r.port) && r.port >= 0 && r.port < 65536) cfg.port = r.port;
   if (typeof r.tools === "object" && r.tools !== null) {
     for (const [id, t] of Object.entries(r.tools as Record<string, unknown>)) {
-      if (typeof t === "object" && t !== null && typeof (t as ToolConfig).enabled === "boolean") {
-        cfg.tools[id] = { enabled: (t as ToolConfig).enabled };
-      }
+      if (typeof t !== "object" || t === null) continue;
+      const tool: ToolConfig = {};
+      if (typeof (t as ToolConfig).enabled === "boolean") tool.enabled = (t as ToolConfig).enabled!;
+      if ((t as ToolConfig).network === false) tool.network = false;
+      if (Object.keys(tool).length > 0) cfg.tools[id] = tool;
     }
   }
   const order = normalizeOrder(r.order);

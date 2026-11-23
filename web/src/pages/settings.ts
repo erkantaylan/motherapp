@@ -1,4 +1,5 @@
-// Built-in settings page: enable/disable tools, restart them, set their sidebar order (#20);
+// Built-in settings page: enable/disable tools, restart them, set their sidebar order (#20) and
+// whether each is on the network (only on a page the core counts as this computer);
 // notifications (mute, per tool, per kind, sounds); the network switches; which version is running.
 import { NO_SOUND } from "@motherapp/protocol";
 import type { NetworkInfo, NotificationKindSettings, NotificationSettings, NotificationToolSettings, ToolInfo, UpdateStatus, VersionInfo } from "@motherapp/protocol";
@@ -568,6 +569,13 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
   const orderDot = statusDot();
   const reset = h("button", { class: "btn-outline theme-secondary btn-sm", text: "Reset to default order" });
   reset.type = "button";
+  // Only for a page the core told each tool's `onNetwork` (one opened on this computer at a
+  // localhost address); a page anywhere else has no such switch and isn't told it exists.
+  const networkHint = h("p", {
+    class: "w-text muted network-hint",
+    text: "“On the network” off: the tool doesn't exist for other devices (no page, no actions, no notifications, no log lines). It only matters while “Local network” below is on, and can be changed only here, on this computer.",
+  });
+  networkHint.hidden = true;
   root.append(
     h("header", { class: "page-header" }, h("h2", { text: "Settings" })),
     h("h3", { class: "w-text heading", text: "Tools" }),
@@ -580,6 +588,7 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     rowsEl,
     live,
     keyHint,
+    networkHint,
     h("p", { class: "w-text muted", text: "Changes are saved to ~/.config/motherapp/config.json." }),
     notifications.el,
     desktop.el,
@@ -767,6 +776,18 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
             enabled.checked = info.enabled;
           });
       });
+      const onNetwork = switchControl("On the network", `On the network: ${first.title}`);
+      onNetwork.el.classList.add("row-network");
+      onNetwork.input.addEventListener("change", () => {
+        dot.set("setting");
+        app.conn
+          .request("tool.setOnNetwork", { tool: info.id, onNetwork: onNetwork.input.checked })
+          .then(() => dot.set("set"))
+          .catch((e: Error) => {
+            dot.set("failed", e.message);
+            onNetwork.input.checked = info.onNetwork !== false;
+          });
+      });
       const restart = h("button", { class: "btn-outline theme-secondary btn-sm row-restart", text: "Restart" });
       restart.type = "button";
       restart.addEventListener("click", () => {
@@ -786,6 +807,7 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
         handle,
         h("div", { class: "row-labels" }, title, sub),
         h("label", { class: "control row-enabled" }, h("span", { class: "control-label", text: "Enabled" }), h("div", { class: "switch" }, enabled)),
+        onNetwork.el,
         restart,
         dot.el,
       );
@@ -798,6 +820,10 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
         sub.textContent = `${next.id} · ${next.status}${next.statusText ? ` · ${next.statusText}` : ""}`;
         sub.title = sub.textContent; // .row-sub is one line, cut with an ellipsis
         enabled.checked = next.enabled;
+        // Updated in place: the core's `tools` push follows the user's own change too.
+        onNetwork.el.hidden = next.onNetwork === undefined;
+        onNetwork.input.checked = next.onNetwork !== false;
+        onNetwork.input.setAttribute("aria-label", `On the network: ${next.title}`);
         restart.hidden = !next.enabled;
       };
       update(first);
@@ -819,6 +845,7 @@ export function mountSettings(app: App, root: HTMLElement): () => void {
     list.update(ids.map((id) => [id, byId.get(id)!] as const));
     if (active && active.isConnected && document.activeElement !== active) active.focus();
     reset.disabled = !app.orderSaved && !model.hasPending;
+    networkHint.hidden = !app.tools.some((t) => t.onNetwork !== undefined);
   }
   sync();
   const off = app.onTools(sync);

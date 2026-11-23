@@ -201,11 +201,17 @@ function fakeMonitor() {
   return { monitor, started, watchers, fire: () => watchers.forEach((w) => w("eth0: connection changed")) };
 }
 
-async function setup(t: { after(fn: () => unknown): void }, opts: { config?: unknown; net?: ReturnType<typeof fakeNet>; allowSource?: (a: string | undefined) => boolean; interfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>; addTools?: (toolsDir: string) => void } = {}) {
+async function setup(t: { after(fn: () => unknown): void }, opts: { config?: unknown; net?: ReturnType<typeof fakeNet>; allowSource?: (a: string | undefined) => boolean; interfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>; addTools?: (toolsDir: string) => void; addExternalTools?: (dir: string) => void } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ma-net-"));
   const toolsDir = path.join(tmp, "tools");
   fs.mkdirSync(toolsDir);
   opts.addTools?.(toolsDir);
+  // a second tools folder, as main.ts passes for the tools outside the checkout
+  const externalToolsDir = path.join(tmp, "external-tools");
+  if (opts.addExternalTools) {
+    fs.mkdirSync(externalToolsDir);
+    opts.addExternalTools(externalToolsDir);
+  }
   const webDir = path.join(tmp, "web");
   fs.mkdirSync(webDir);
   fs.writeFileSync(path.join(webDir, "index.html"), "<!doctype html><title>t</title>");
@@ -214,7 +220,7 @@ async function setup(t: { after(fn: () => unknown): void }, opts: { config?: unk
   const lines: { level: string; msg: string }[] = [];
   const log = new LogService({ stdout: null });
   log.subscribe((e) => lines.push({ level: e.level, msg: e.msg }));
-  const manager = new Manager({ toolsDir, configFile, log });
+  const manager = new Manager({ toolsDir, configFile, log, ...(opts.addExternalTools ? { externalToolsDir } : {}) });
   manager.init();
   const fnet = opts.net ?? fakeNet();
   const mon = fakeMonitor();
@@ -237,7 +243,7 @@ async function setup(t: { after(fn: () => unknown): void }, opts: { config?: unk
     await server.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
-  return { server, port: server.port, manager, lines, configFile, fnet, mon };
+  return { server, port: server.port, manager, lines, configFile, fnet, mon, toolsDir, externalToolsDir };
 }
 
 /** GET / with a chosen Host header; "refused" for ECONNREFUSED, "closed" for a dropped socket. */
@@ -267,8 +273,9 @@ class Ws {
       this.ws.once("error", () => res("refused"));
     });
   }
+  /** Resolves when the socket has closed; fails after 8 s rather than hang the run. */
   closed(): Promise<void> {
-    return new Promise((res) => (this.ws.readyState === this.ws.CLOSED ? res() : this.ws.once("close", () => res())));
+    return waitFor(() => this.ws.readyState === this.ws.CLOSED, "the connection to be closed");
   }
   async call(method: string, params: unknown = {}): Promise<{ result?: any; error?: any }> {
     const id = ++this.id;
@@ -514,4 +521,322 @@ test("the 30 s re-check and the monitor run only while the switch is on", async 
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(s.fnet.state.calls.length, 0);
   assert.equal(s.mon.watchers.size, 0);
+});
+
+// ---- a tool that is off the network (Settings -> "On the network"; DESIGN.md § 3 "Network switch scope") ----
+
+// A tool without the SDK: it writes down everything it hears, has state, a stream, a
+// notification kind and a log line.
+const HIDEABLE_TOOL = `
+import * as fs from "node:fs";
+import * as readline from "node:readline";
+const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\\n");
+const me = process.env.MOTHERAPP_TOOL_ID;
+let n = 0;
+for await (const line of readline.createInterface({ input: process.stdin })) {
+  const m = JSON.parse(line);
+  fs.appendFileSync("heard.log", m.method + (m.params?.name ? ":" + m.params.name : "") + (m.method === "watch" ? ":" + m.params.watching : "") + "\\n");
+  if (m.id === undefined) continue;
+  const name = m.params?.name;
+  let result = null;
+  if (m.method === "describe") result = { title: "Tool " + me, page: "custom" };
+  else if (m.method === "state.get") result = { state: { n } };
+  else if (m.method === "stream.open") setTimeout(() => send({ method: "stream", params: { name, value: "tick from " + me } }), 5);
+  else if (m.method === "action" && name === "inc") { n++; send({ method: "state", params: { changes: [{ path: "n", value: n }] } }); result = n; }
+  else if (m.method === "action" && name === "notify") send({ method: "notify", params: { kind: "done", title: "Done in " + me } });
+  else if (m.method === "action" && name === "log") send({ method: "log", params: { level: "info", msg: "hello from " + me } });
+  else if (m.method === "action") result = "ran";
+  send({ id: m.id, result });
+}
+`;
+
+function writeHideable(dir: string, id: string): void {
+  const d = path.join(dir, id);
+  fs.mkdirSync(d);
+  fs.writeFileSync(path.join(d, "t.mjs"), HIDEABLE_TOOL);
+  fs.writeFileSync(path.join(d, "page.ts"), "export default class P extends HTMLElement {}\n");
+  fs.writeFileSync(path.join(d, "icon.svg"), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  fs.writeFileSync(
+    path.join(d, "manifest.json"),
+    JSON.stringify({ id, title: `Tool ${id}`, serve: ["node", "t.mjs"], icon: "icon.svg", page: "page.ts", localActions: ["secret"], notifications: [{ id: "done", label: "Done" }] }),
+  );
+}
+
+/** GET with a chosen Host header: status and body. */
+function getBody(address: string, port: number, hostHeader: string, pathname: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: address, port, path: pathname, headers: { host: hostHeader }, agent: false }, (res) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (c: string) => (body += c));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+/** A core with two tools in tools/ and two in the external folder, LAN open, all running. */
+async function hideableSetup(t: { after(fn: () => unknown): void }, tools: Record<string, unknown>) {
+  const s = await setup(t, {
+    config: { port: 0, tools, keep: "me", ...TRUSTED_HOME },
+    addTools: (dir) => ["plain", "shy"].forEach((id) => writeHideable(dir, id)),
+    addExternalTools: (dir) => ["xplain", "xshy"].forEach((id) => writeHideable(dir, id)),
+  });
+  t.after(() => s.manager.shutdown());
+  await waitFor(() => ["plain", "shy", "xplain", "xshy"].every((id) => s.manager.host(id).status === "running"), "tools running");
+  await waitFor(() => s.server.lan.open, "LAN open");
+  const local = new Ws(`ws://127.0.0.1:${s.port}/ws`, { origin: `http://localhost:${s.port}` });
+  assert.equal(await local.open(), "open");
+  const heard = (id: string) => {
+    const f = path.join(id.startsWith("x") ? s.externalToolsDir : s.toolsDir, id, "heard.log");
+    return fs.readFileSync(f, "utf8").trim().split("\n").filter((l) => !/^(describe|state\.get)$/.test(l));
+  };
+  const lanClient = async () => {
+    const c = new Ws(`ws://127.0.0.2:${s.port}/ws`, { host: `kappa.local:${s.port}`, origin: `http://kappa.local:${s.port}` });
+    assert.equal(await c.open(), "open");
+    return c;
+  };
+  const file = () => JSON.parse(fs.readFileSync(s.configFile, "utf8"));
+  return { ...s, local, heard, lanClient, file };
+}
+
+const toolsOf = (c: Ws) => c.msgs.filter((m) => m.method === "tools").at(-1)?.params as { tools: Record<string, any>[]; orderSaved: boolean } | undefined;
+const pushes = (c: Ws, method: string) => c.msgs.filter((m) => m.method === method).map((m) => m.params);
+const HIDDEN = ["shy", "xshy"];
+
+test("off the network: for a LAN client the tool doesn't exist, in every message and route; this computer sees everything", async (t) => {
+  const s = await hideableSetup(t, { shy: { network: false }, xshy: { network: false, enabled: true } });
+  const { local, port } = s;
+  // Something to see from every tool before the LAN clients connect.
+  for (const id of ["plain", "shy", "xplain", "xshy"]) {
+    for (const name of ["inc", "notify", "log"]) assert.equal((await local.call("action", { tool: id, name })).error, undefined);
+  }
+  await waitFor(() => s.manager.notifications.backlog().length === 4, "four notifications recorded");
+  const lan = await s.lanClient();
+  // A loopback source that came in under a LAN name (a relay) is a LAN client too.
+  const relayed = new Ws(`ws://127.0.0.1:${port}/ws`, { host: `kappa:${port}` });
+  assert.equal(await relayed.open(), "open");
+
+  // -- this computer: every tool, with its setting
+  await waitFor(() => toolsOf(local) !== undefined, "tools");
+  assert.deepEqual(toolsOf(local)!.tools.map((x) => [x.id, x.onNetwork]), [["plain", true], ["shy", false], ["xplain", true], ["xshy", false]]);
+  assert.deepEqual(pushes(local, "snapshot").map((p) => p.tool).sort(), ["plain", "shy", "xplain", "xshy"]);
+  const status = await getBody("127.0.0.1", port, `localhost:${port}`, "/api/status");
+  assert.deepEqual(JSON.parse(status.body).tools.map((x: any) => x.id), ["plain", "shy", "xplain", "xshy"]);
+  for (const id of HIDDEN) {
+    assert.equal((await getBody("127.0.0.1", port, `localhost:${port}`, `/tools/${id}/page.ts`)).status, 200);
+    assert.equal((await getBody("127.0.0.1", port, `localhost:${port}`, `/tools/${id}/icon.svg`)).status, 200);
+  }
+  assert.deepEqual((await local.call("notifications.settings.get")).result.tools.map((x: any) => x.id), ["plain", "shy", "xplain", "xshy"]);
+  const localLogs = (await local.call("logs.subscribe")).result.entries as any[];
+  assert.ok(localLogs.some((e) => e.tool === "shy" && e.msg === "hello from shy"));
+  assert.ok(localLogs.some((e) => e.tool === "core" && /^discovered 4 tool/.test(e.msg)));
+  assert.deepEqual((await local.call("notifications.subscribe")).result.entries.map((e: any) => e.tool), ["plain", "shy", "xplain", "xshy"]);
+  assert.equal((await local.call("action", { tool: "shy", name: "secret" })).result, "ran"); // localActions as before
+
+  for (const [who, c, address, hostHeader] of [["lan", lan, "127.0.0.2", `kappa.local:${port}`], ["relayed", relayed, "127.0.0.1", `kappa:${port}`]] as const) {
+    // -- lists
+    await waitFor(() => toolsOf(c) !== undefined, "tools");
+    assert.deepEqual(toolsOf(c)!.tools.map((x) => x.id), ["plain", "xplain"], who);
+    assert.ok(toolsOf(c)!.tools.every((x) => !("onNetwork" in x)), "a LAN client isn't told the setting exists");
+    assert.equal(toolsOf(c)!.orderSaved, false);
+    await waitFor(() => pushes(c, "snapshot").length === 2, "snapshots");
+    assert.deepEqual(pushes(c, "snapshot").map((p) => p.tool).sort(), ["plain", "xplain"]);
+
+    // -- HTTP
+    const st = await getBody(address, port, hostHeader, "/api/status");
+    assert.deepEqual(JSON.parse(st.body).tools.map((x: any) => x.id), ["plain", "xplain"]);
+    const never = await getBody(address, port, hostHeader, "/tools/nosuch/page.ts");
+    for (const id of HIDDEN) {
+      for (const f of ["page.ts", "icon.svg"]) assert.deepEqual(await getBody(address, port, hostHeader, `/tools/${id}/${f}`), never, `${id}/${f} answers as an unknown tool`);
+    }
+    assert.equal(never.status, 404);
+    assert.equal((await getBody(address, port, hostHeader, "/tools/plain/page.ts")).status, 200);
+    assert.equal((await getBody(address, port, hostHeader, "/tools/xplain/icon.svg")).status, 200);
+
+    // -- requests that name a tool: the answer an id that was never installed gets
+    const asUnknown = async (method: string, params: (tool: string) => object) => {
+      const never = await c.call(method, params("nosuch"));
+      for (const id of HIDDEN) {
+        const got = await c.call(method, params(id));
+        assert.deepEqual({ ...got, id: 0 }, JSON.parse(JSON.stringify({ ...never, id: 0 }).replaceAll("nosuch", id)), `${method} for ${id}`);
+      }
+      return never;
+    };
+    assert.equal((await asUnknown("action", (tool) => ({ tool, name: "inc" }))).error.code, ErrorCode.UnknownTool);
+    assert.equal((await asUnknown("action", (tool) => ({ tool, name: "secret" }))).error.code, ErrorCode.UnknownTool); // not LocalOnly
+    assert.equal((await asUnknown("stream.open", (tool) => ({ tool, name: "wave" }))).error.code, ErrorCode.UnknownTool);
+    assert.equal((await asUnknown("stream.close", (tool) => ({ tool, name: "wave" }))).result, null);
+    assert.equal((await asUnknown("tool.watch", (tool) => ({ tool }))).error.code, ErrorCode.UnknownTool);
+    assert.equal((await asUnknown("tool.restart", (tool) => ({ tool }))).error.code, ErrorCode.UnknownTool);
+    assert.equal((await asUnknown("tool.setEnabled", (tool) => ({ tool, enabled: false }))).error.code, ErrorCode.UnknownTool);
+    assert.equal((await asUnknown("notifications.setTool", (tool) => ({ tool, enabled: false }))).error.code, ErrorCode.InvalidParams);
+    assert.equal((await asUnknown("notifications.setKind", (tool) => ({ tool, kind: "done", enabled: false }))).error.code, ErrorCode.InvalidParams);
+    // -- the setting itself: the same refusal for a hidden tool, a visible one and no tool at all
+    for (const onNetwork of [true, false]) {
+      const never = await asUnknown("tool.setOnNetwork", (tool) => ({ tool, onNetwork }));
+      assert.match(never.error.message, /^Only from this computer/);
+      assert.deepEqual((await c.call("tool.setOnNetwork", { tool: "plain", onNetwork })).error, never.error);
+    }
+    assert.deepEqual((await c.call("tool.setOnNetwork", { tool: "shy", onNetwork: "yes" })).error.message.slice(0, 23), "Only from this computer");
+
+    // -- notifications: history, settings rows
+    assert.deepEqual((await c.call("notifications.subscribe")).result.entries.map((e: any) => e.tool), ["plain", "xplain"]);
+    assert.deepEqual((await c.call("notifications.subscribe", { limit: 1 })).result.entries.map((e: any) => e.tool), ["xplain"]);
+    assert.deepEqual((await c.call("notifications.settings.get")).result.tools.map((x: any) => x.id), ["plain", "xplain"]);
+    assert.deepEqual((await c.call("notifications.setTool", { tool: "plain", enabled: true })).result.tools.map((x: any) => x.id), ["plain", "xplain"]);
+    assert.deepEqual((await c.call("notifications.setKind", { tool: "plain", kind: "done", enabled: true })).result.tools.map((x: any) => x.id), ["plain", "xplain"]);
+    assert.deepEqual((await c.call("notifications.setMuted", { muted: false })).result.tools.map((x: any) => x.id), ["plain", "xplain"]);
+
+    // -- logs: nothing of the tool, and nothing of the core's that names it
+    const logs = (await c.call("logs.subscribe")).result.entries as any[];
+    assert.ok(logs.some((e) => e.tool === "plain" && e.msg === "hello from plain"));
+    assert.ok(logs.some((e) => e.tool === "core" && /^network: LAN opened/.test(e.msg)));
+    assert.deepEqual(logs.filter((e) => HIDDEN.includes(e.tool)), []);
+    assert.deepEqual(logs.filter((e) => /^discovered /.test(e.msg)), [], "it lists every tool id");
+    const two = (await c.call("logs.subscribe", { limit: 2 })).result.entries as any[];
+    assert.deepEqual(two, logs.slice(-2), "the newest two of what it may see");
+  }
+
+  // -- live pushes: state, stream, notification, log, notification settings. Each is made for a
+  // hidden tool first and then for a visible one; when the visible one's arrived, the other didn't.
+  const before = lan.msgs.length;
+  await lan.call("stream.open", { tool: "plain", name: "wave" });
+  await local.call("stream.open", { tool: "shy", name: "wave" });
+  for (const id of ["shy", "xshy", "plain"]) for (const name of ["inc", "notify", "log"]) await local.call("action", { tool: id, name });
+  await local.call("notifications.setTool", { tool: "shy", enabled: true });
+  for (const c of [lan, relayed]) {
+    await waitFor(() => pushes(c, "state").some((p) => p.tool === "plain"), "state push");
+    await waitFor(() => pushes(c, "notification").some((p) => p.entry.tool === "plain"), "notification push");
+    await waitFor(() => pushes(c, "log").some((p) => p.entry.msg === "hello from plain"), "log push");
+    await waitFor(() => pushes(c, "notifications.settings").length >= 3, "settings pushes");
+    assert.deepEqual(pushes(c, "notifications.settings").at(-1).tools.map((x: any) => x.id), ["plain", "xplain"]);
+  }
+  await waitFor(() => pushes(lan, "stream").length > 0 && pushes(local, "stream").length > 0, "stream values");
+  assert.deepEqual(pushes(lan, "stream").map((p) => p.value), ["tick from plain"]);
+  await waitFor(() => pushes(local, "state").filter((p) => HIDDEN.includes(p.tool)).length >= 2 && pushes(local, "notification").filter((p) => HIDDEN.includes(p.entry.tool)).length >= 2, "this computer got the hidden tools' pushes");
+  assert.ok(lan.msgs.length > before);
+
+  // -- order: the tools a LAN client can't see keep their places and can't be named
+  assert.equal((await lan.call("tools.setOrder", { order: ["xshy", "xplain", "shy", "plain"] })).result, null);
+  await waitFor(() => toolsOf(local)!.tools.map((x) => x.id).join() === "xplain,shy,plain,xshy", "the order on this computer");
+  await waitFor(() => toolsOf(lan)!.tools.map((x) => x.id).join() === "xplain,plain" && toolsOf(lan)!.orderSaved, "the order on the LAN client");
+  assert.equal((await lan.call("tools.resetOrder")).result, null);
+  await waitFor(() => toolsOf(lan)!.tools.map((x) => x.id).join() === "plain,xplain" && !toolsOf(lan)!.orderSaved, "reset on the LAN client");
+  assert.deepEqual(toolsOf(local)!.tools.map((x) => x.id), ["plain", "shy", "xplain", "xshy"]);
+
+  // -- nothing a LAN client was sent names a hidden tool, apart from the errors that repeat the
+  // id it asked about itself
+  for (const c of [lan, relayed]) {
+    const sent = JSON.stringify(c.msgs.filter((m) => m.error === undefined));
+    for (const id of HIDDEN) assert.ok(!new RegExp(`\\b${id}\\b`).test(sent.replaceAll("xshy", id === "shy" ? "-" : "xshy")), `${id} in a message to a LAN client`);
+  }
+  // -- and the tools heard only what this computer asked for
+  assert.deepEqual(s.heard("shy"), ["action:inc", "action:notify", "action:log", "action:secret", "stream.open:wave", "action:inc", "action:notify", "action:log"]);
+  assert.deepEqual(s.heard("xshy"), ["action:inc", "action:notify", "action:log", "action:inc", "action:notify", "action:log"]);
+  assert.deepEqual(s.file().tools, { shy: { network: false }, xshy: { network: false, enabled: true } }, "no LAN request changed a tool's settings");
+  for (const c of [local, lan, relayed]) c.ws.close();
+});
+
+test("on the network (the default): a LAN client sees and uses every tool, built-in and external, as before", async (t) => {
+  const s = await hideableSetup(t, {});
+  const lan = await s.lanClient();
+  await waitFor(() => toolsOf(lan) !== undefined && pushes(lan, "snapshot").length === 4, "tools and snapshots");
+  assert.deepEqual(toolsOf(lan)!.tools.map((x) => x.id), ["plain", "shy", "xplain", "xshy"]);
+  assert.deepEqual((await getBody("127.0.0.2", s.port, `kappa.local:${s.port}`, "/api/status")).body.match(/"id":"\w+"/g), ['"id":"plain"', '"id":"shy"', '"id":"xplain"', '"id":"xshy"']);
+  for (const id of HIDDEN) {
+    assert.equal((await getBody("127.0.0.2", s.port, `kappa.local:${s.port}`, `/tools/${id}/page.ts`)).status, 200);
+    assert.equal((await lan.call("action", { tool: id, name: "inc" })).result, 1);
+    assert.equal((await lan.call("action", { tool: id, name: "secret" })).error.code, ErrorCode.LocalOnly); // localActions still apply
+    assert.equal((await lan.call("action", { tool: id, name: "notify" })).error, undefined);
+    assert.equal((await lan.call("action", { tool: id, name: "log" })).error, undefined);
+    assert.equal((await lan.call("tool.watch", { tool: id })).result, null);
+    assert.equal((await lan.call("stream.open", { tool: id, name: "wave" })).result, null);
+    assert.equal((await lan.call("notifications.setTool", { tool: id, enabled: true })).error, undefined);
+  }
+  await waitFor(() => pushes(lan, "stream").length === 2, "stream values");
+  await waitFor(() => pushes(lan, "state").length === 2, "state pushes");
+  assert.deepEqual((await lan.call("notifications.subscribe")).result.entries.map((e: any) => e.tool), HIDDEN);
+  assert.deepEqual((await lan.call("notifications.settings.get")).result.tools.map((x: any) => x.id), ["plain", "shy", "xplain", "xshy"]);
+  const logs = (await lan.call("logs.subscribe")).result.entries as any[];
+  assert.ok(logs.some((e) => e.msg === "hello from shy") && logs.some((e) => e.msg === "hello from xshy") && logs.some((e) => /^discovered 4 tool/.test(e.msg)));
+  assert.equal((await lan.call("tools.setOrder", { order: ["xshy", "shy"] })).result, null);
+  await waitFor(() => toolsOf(lan)!.tools.map((x) => x.id).join() === "xshy,shy,plain,xplain", "a LAN client may order every tool it sees");
+  assert.equal((await lan.call("tools.resetOrder")).result, null);
+  await waitFor(() => !toolsOf(lan)!.orderSaved, "reset");
+  assert.equal(s.file().order, undefined, "a real reset: no saved order left");
+  assert.equal((await lan.call("tool.setEnabled", { tool: "xshy", enabled: false })).result, null);
+  assert.deepEqual(s.file().tools, { xshy: { enabled: false } });
+  lan.ws.close();
+  s.local.ws.close();
+});
+
+test("changing it: only from this computer, saved as tools.<id>.network, and at once for connected LAN clients", async (t) => {
+  const s = await hideableSetup(t, { shy: { enabled: true, custom: 1 } });
+  const { local } = s;
+  const lan = await s.lanClient();
+  await waitFor(() => toolsOf(lan)?.tools.length === 4, "all four tools on the LAN client");
+  await lan.call("stream.open", { tool: "shy", name: "wave" });
+  await lan.call("tool.watch", { tool: "shy" });
+  await waitFor(() => s.heard("shy").includes("watch:true"), "the tool is watched");
+  assert.match((await lan.call("tool.setOnNetwork", { tool: "plain", onNetwork: false })).error.message, /^Only from this computer/);
+  assert.equal(s.manager.isOnNetwork("plain"), true);
+
+  for (const id of HIDDEN) {
+    // -- off: saved, this computer's page keeps its connection and gets the push, the LAN client is dropped
+    assert.equal((await local.call("tool.setOnNetwork", { tool: id, onNetwork: "no" })).error.code, ErrorCode.InvalidParams);
+    assert.equal((await local.call("tool.setOnNetwork", { tool: "nosuch", onNetwork: false })).error.code, ErrorCode.UnknownTool);
+    const before = await s.lanClient();
+    await waitFor(() => toolsOf(before)?.tools.some((x) => x.id === id) === true, "the tool on a LAN client");
+    assert.equal((await local.call("tool.setOnNetwork", { tool: id, onNetwork: false })).result, null);
+    await before.closed();
+    await waitFor(() => toolsOf(local)!.tools.find((x) => x.id === id)!.onNetwork === false, "the push to this computer");
+    assert.equal(local.ws.readyState, local.ws.OPEN);
+    // what its page does next: reconnect, and the tool isn't there
+    const after = await s.lanClient();
+    await waitFor(() => toolsOf(after) !== undefined, "tools after the reconnect");
+    assert.ok(!toolsOf(after)!.tools.some((x) => x.id === id));
+    assert.equal((await after.call("action", { tool: id, name: "inc" })).error.code, ErrorCode.UnknownTool);
+    // the same value again changes nothing and drops nobody
+    assert.equal((await local.call("tool.setOnNetwork", { tool: id, onNetwork: false })).result, null);
+    await after.call("network.get");
+    assert.equal(after.ws.readyState, after.ws.OPEN);
+
+    // -- on again: the LAN client is dropped again, and its reconnect has the tool and its state
+    assert.equal((await local.call("tool.setOnNetwork", { tool: id, onNetwork: true })).result, null);
+    await after.closed();
+    const back = await s.lanClient();
+    await waitFor(() => pushes(back, "snapshot").some((p) => p.tool === id), "the tool's snapshot");
+    assert.ok(toolsOf(back)!.tools.some((x) => x.id === id));
+    assert.equal(typeof (await back.call("action", { tool: id, name: "inc" })).result, "number");
+    back.ws.close();
+    assert.equal((await local.call("tool.setOnNetwork", { tool: id, onNetwork: false })).result, null);
+  }
+  await lan.closed(); // the first one went with the first change
+  // its stream and its watching went with it (the tool was told once the debounce ran)
+  await waitFor(() => s.heard("shy").includes("stream.close:wave"), "the stream closed");
+  assert.equal(s.manager.host("shy").viewerCount, 0);
+
+  // -- config.json: only what was changed, other keys kept; enabling keeps it
+  assert.deepEqual(s.file().tools, { shy: { enabled: true, custom: 1, network: false }, xshy: { network: false } });
+  assert.equal(s.file().keep, "me");
+  assert.equal((await local.call("tool.setEnabled", { tool: "xshy", enabled: true })).result, null);
+  assert.deepEqual(s.file().tools.xshy, { network: false, enabled: true });
+  assert.equal(s.manager.isOnNetwork("xshy"), false);
+  assert.equal((await local.call("tool.setOnNetwork", { tool: "shy", onNetwork: true })).result, null);
+  assert.deepEqual(s.file().tools.shy, { enabled: true, custom: 1 }, "back to the default: the key is gone");
+  // -- the log says so under the tool's own name (so a LAN client's logs don't, while it is hidden)
+  const logs = (await local.call("logs.subscribe")).result.entries as any[];
+  assert.ok(logs.some((e) => e.tool === "xshy" && /^taken off the network/.test(e.msg)));
+  assert.ok(logs.some((e) => e.tool === "shy" && e.msg === "on the network again"));
+  local.ws.close();
+});
+
+test("the setting is read from config.json at start; a broken value means on the network", async (t) => {
+  const s = await hideableSetup(t, { shy: { network: false }, xshy: { network: "no" }, plain: { network: true }, xplain: {} });
+  assert.deepEqual(["plain", "shy", "xplain", "xshy"].map((id) => s.manager.isOnNetwork(id)), [true, false, true, true]);
+  assert.deepEqual([...s.manager.offNetwork()], ["shy"]);
+  assert.equal(s.manager.isEnabled("shy"), true, "network alone doesn't disable a tool");
+  s.local.ws.close();
 });

@@ -104,6 +104,15 @@ export interface Site {
   cdp: Cdp;
   /** The temp dir (config in `config/motherapp/config.json`). */
   tmp: string;
+  /** One more page in the same browser (closed with the rest). */
+  newPage(): Promise<Cdp>;
+}
+
+export interface SiteOptions {
+  /** More keys for the core's config.json (`port` and `tools` are the harness's). */
+  config?: Record<string, unknown>;
+  /** More environment for the core, e.g. a PATH with stand-in commands first. */
+  env?: Record<string, string>;
 }
 
 /** A tool for the temp tools dir: an id under tools/ or an absolute dir; enabled unless said. */
@@ -113,7 +122,7 @@ export type SiteTool = string | { dir: string; enabled: boolean };
  * Builds the frontend, starts a core over copies of `tools`, and a headless browser with one page. Everything is stopped
  * and removed in `t.after`. The core gets MOTHERAPP_NOTIFY=off and MOTHERAPP_TRAY=off: nothing reaches the desktop.
  */
-export async function startSite(t: { after(fn: () => unknown): void }, browserBin: string, name: string, tools: SiteTool[]): Promise<Site> {
+export async function startSite(t: { after(fn: () => unknown): void }, browserBin: string, name: string, tools: SiteTool[], opts: SiteOptions = {}): Promise<Site> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `ma-${name}-`));
   const procs: ChildProcess[] = [];
   t.after(async () => {
@@ -152,7 +161,7 @@ export async function startSite(t: { after(fn: () => unknown): void }, browserBi
   }
   const cfgDir = path.join(tmp, "config", "motherapp");
   fs.mkdirSync(cfgDir, { recursive: true });
-  fs.writeFileSync(path.join(cfgDir, "config.json"), JSON.stringify({ port: 0, tools: enabled }));
+  fs.writeFileSync(path.join(cfgDir, "config.json"), JSON.stringify({ ...opts.config, port: 0, tools: enabled }));
   const core = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(repo, "core/src/main.ts")], {
     env: {
       ...process.env,
@@ -163,6 +172,7 @@ export async function startSite(t: { after(fn: () => unknown): void }, browserBi
       MOTHERAPP_PORT: "0",
       MOTHERAPP_NOTIFY: "off",
       MOTHERAPP_TRAY: "off",
+      ...opts.env,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -210,5 +220,12 @@ export async function startSite(t: { after(fn: () => unknown): void }, browserBi
   const cdp = new Cdp(pageWs);
   await cdp.open();
   t.after(() => cdp.close());
-  return { port: port!, cdp, tmp };
+  const newPage = async (): Promise<Cdp> => {
+    const target = (await (await fetch(`http://${http}/json/new?about:blank`, { method: "PUT" })).json()) as { webSocketDebuggerUrl: string };
+    const page = new Cdp(target.webSocketDebuggerUrl);
+    await page.open();
+    t.after(() => page.close());
+    return page;
+  };
+  return { port: port!, cdp, tmp, newPage };
 }

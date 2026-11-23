@@ -11,7 +11,8 @@ import type { Config } from "./config.ts";
 import type { LogService } from "./logService.ts";
 import { discoverAllTools } from "./manifest.ts";
 import type { DiscoveredTool } from "./manifest.ts";
-import { mergeOrder, orderToSave } from "./toolOrder.ts";
+import { defaultOrder, mergeOrder, orderToSaveAmong } from "./toolOrder.ts";
+import type { OrderableTool } from "./toolOrder.ts";
 import { ToolHost } from "./toolHost.ts";
 import type { Clock, SpawnFn } from "./toolHost.ts";
 import type { RestartPolicyOptions } from "./restartPolicy.ts";
@@ -51,6 +52,8 @@ export interface ManagerOptions {
 
 export interface ManagerEvents {
   tools: [];
+  /** A tool's "On the network" setting changed (after the `tools` event for it). */
+  onNetwork: [string];
   snapshot: [ToolHost];
   state: [ToolHost, StateChange[]];
   stream: [ToolHost, string, JsonValue];
@@ -169,8 +172,8 @@ export class Manager extends EventEmitter<ManagerEvents> {
   }
 
   isEnabled(id: string): boolean {
-    const t = this.config.tools[id];
-    if (t) return t.enabled;
+    const enabled = this.config.tools[id]?.enabled;
+    if (enabled !== undefined) return enabled;
     return this.hosts.get(id)?.manifest.defaultEnabled ?? true;
   }
 
@@ -201,15 +204,33 @@ export class Manager extends EventEmitter<ManagerEvents> {
     return info;
   }
 
+  private orderable(): OrderableTool[] {
+    return [...this.hosts.values()].map((h) => (h.manifest.order === undefined ? { id: h.id } : { id: h.id, order: h.manifest.order }));
+  }
+
   /** Tool ids in display order (issue #20; rules in toolOrder.ts). */
   order(): string[] {
-    const tools = [...this.hosts.values()].map((h) => (h.manifest.order === undefined ? { id: h.id } : { id: h.id, order: h.manifest.order }));
-    return mergeOrder(tools, this.config.order);
+    return mergeOrder(this.orderable(), this.config.order);
   }
 
   /** True when the user has saved an order (so "Reset to default order" has something to do). */
   get orderSaved(): boolean {
     return (this.config.order?.length ?? 0) > 0;
+  }
+
+  /** The default order of the tools a client sees (see `resetOrder`). */
+  private defaultOrderAmong(sees: (id: string) => boolean): string[] {
+    return defaultOrder(this.orderable().filter((t) => sees(t.id)));
+  }
+
+  /**
+   * `orderSaved` for a client that sees only some of the tools: would its "Reset to default
+   * order" move anything it can see?
+   */
+  orderSavedAmong(sees: (id: string) => boolean): boolean {
+    const current = this.order();
+    if (current.every(sees)) return this.orderSaved;
+    return current.filter(sees).join("\0") !== this.defaultOrderAmong(sees).join("\0");
   }
 
   /** Every tool, in display order. */
@@ -219,12 +240,13 @@ export class Manager extends EventEmitter<ManagerEvents> {
 
   /**
    * Saves a new order as config.json's `order` (other keys kept). Unknown ids are dropped, and
-   * tools the request left out follow in their current order.
+   * tools the request left out follow in their current order. With `sees` (a client that sees
+   * only some of the tools), the others keep their places and can't be named.
    */
-  setOrder(requested: unknown): void {
+  setOrder(requested: unknown, sees: (id: string) => boolean = () => true): void {
     let order: string[];
     try {
-      order = orderToSave(requested, this.order());
+      order = orderToSaveAmong(requested, this.order(), sees);
     } catch (e) {
       throw new RpcError(ErrorCode.InvalidParams, (e as Error).message);
     }
@@ -236,8 +258,13 @@ export class Manager extends EventEmitter<ManagerEvents> {
     this.emit("tools");
   }
 
-  /** Forgets the saved order: back to the manifest hints, then alphabetical. */
-  resetOrder(): void {
+  /**
+   * Forgets the saved order: back to the manifest hints, then alphabetical. For a client that
+   * sees only some of the tools, only those go back to their default order, in the places they
+   * hold now; the others don't move (which is a saved order again).
+   */
+  resetOrder(sees: (id: string) => boolean = () => true): void {
+    if (!this.order().every(sees)) return this.setOrder(this.defaultOrderAmong(sees), sees);
     this.patchConfig((raw) => {
       delete raw.order;
     });
@@ -301,11 +328,52 @@ export class Manager extends EventEmitter<ManagerEvents> {
       tools[id] = { ...(isObj(prev) ? prev : {}), enabled };
       raw.tools = tools;
     });
-    this.config.tools[id] = { enabled };
+    this.config.tools[id] = { ...this.config.tools[id], enabled };
     this.opts.log.core("info", enabled ? "enabled" : "disabled", undefined, id);
     if (enabled) host.start();
     else await host.stop();
     this.emit("tools");
+  }
+
+  /**
+   * The "On the network" setting (DESIGN.md § 3 "Network switch scope"): false means the tool
+   * doesn't exist for a LAN client. Default true; server.ts applies it.
+   */
+  isOnNetwork(id: string): boolean {
+    return this.config.tools[id]?.network !== false;
+  }
+
+  /** The tools that are off the network. */
+  offNetwork(): Set<string> {
+    const out = new Set<string>();
+    for (const id of this.hosts.keys()) if (!this.isOnNetwork(id)) out.add(id);
+    return out;
+  }
+
+  /** Saves it as config.json `tools.<id>.network` (only `false` is stored; other keys kept). */
+  setOnNetwork(id: string, onNetwork: boolean): void {
+    this.host(id);
+    if (this.isOnNetwork(id) === onNetwork) return;
+    this.patchConfig((raw) => {
+      const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+      const tools = isObj(raw.tools) ? raw.tools : {};
+      const prev = tools[id];
+      const next: Record<string, unknown> = { ...(isObj(prev) ? prev : {}) };
+      if (onNetwork) delete next.network;
+      else next.network = false;
+      if (Object.keys(next).length > 0) tools[id] = next;
+      else delete tools[id];
+      raw.tools = tools;
+    });
+    const next = { ...this.config.tools[id] };
+    if (onNetwork) delete next.network;
+    else next.network = false;
+    if (Object.keys(next).length > 0) this.config.tools[id] = next;
+    else delete this.config.tools[id];
+    // Logged under the tool, so a LAN client's logs page doesn't show it while the tool is hidden.
+    this.opts.log.core("info", onNetwork ? "on the network again" : "taken off the network: LAN clients no longer see this tool", undefined, id);
+    this.emit("tools");
+    this.emit("onNetwork", id);
   }
 
   restart(id: string): void {

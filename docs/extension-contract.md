@@ -30,7 +30,7 @@ tools/<id>/
 | `page` | Optional custom page module (see § 6). |
 | `defaultEnabled` | Optional, default `true`. Whether the tool is enabled when first discovered. |
 | `wide` | Optional, default `false`. The page may grow to 1600 px on a wide screen instead of the usual 960 px column (the CPU page uses it for its live column). Lay the page out so it still works at 960 px and on a phone. |
-| `localActions` | Optional array of action names only this computer may call, even while the "Local network" switch is on. The core refuses them for any other connection with `-32004` before the tool hears of them; the test is the one for changing network settings (a loopback source under a localhost name). For what must not leave this machine (DESIGN.md § 3 "Network switch scope"). A page can read the code from the rejected `ctx.action` and adapt, as `tools/tmux/page.ts` does. |
+| `localActions` | Optional array of action names only this computer may call, even while the "Local network" switch is on. The core refuses them for any other connection with `-32004` before the tool hears of them; the test is the one for changing network settings (a loopback source under a localhost name). For what must not leave this machine (DESIGN.md § 3 "Network switch scope"). Hiding a whole tool from the network is not a manifest matter: the user does that in Settings (§ 2 "On the network or not"). A page can read the code from the rejected `ctx.action` and adapt, as `tools/tmux/page.ts` does. |
 | `notifications` | Optional array of the kinds of notification the tool sends: `[{ "id": "finished", "label": "A session finished", "sound": "bell" }]`. `id` matches `[a-z0-9][a-z0-9_-]*` (at most 64 characters) and is unique within the tool; `label` is what Settings calls it; `sound` is the default sound, a file name from `/usr/share/sounds/freedesktop/stereo` without `.oga`, or `"none"` (the default). A manifest with a bad entry is refused. See "Notifications" in § 2. |
 | `order` | Optional number, a default sidebar position hint: lower comes first, and tools without one follow alphabetically by id. It applies only until the user re-orders the tools on the Settings page; after that their saved order rules, and a newly installed tool is appended at the end (alphabetically among other new ones), hint or not. Audio has `"order": 1` so it comes first out of the box. |
 | `bin` | Optional. `{ "<command>": "<script relative to the tool dir>" }`, e.g. `{"audioctl": "audioctl.ts"}`. For each entry `install.sh` writes `~/.local/bin/<command>`, a bash wrapper that runs the script with the installer's Node 24 by absolute path (so an older `node` on PATH or a keyboard shortcut's minimal PATH doesn't matter), and `--uninstall` removes it. The script must be a Node script; the command name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and must be unique across tools. The core ignores this field. |
@@ -219,8 +219,29 @@ A tool never shows a desktop notification itself. It sends `notify`, and the cor
   know or proxy it). The inbox tool does (default 7324), so that cloudflared can expose that
   port and nothing of the core. Such a tool owns the port's security entirely: bind to
   `127.0.0.1` only, never trust `X-Forwarded-*`, cap bodies, never log URLs that carry tokens.
-  This is the one exception to the all-or-none network switch (DESIGN.md § 3), and needs a
+  Such a listener is outside the core's network switch altogether (DESIGN.md § 3), and needs a
   decision there for any further tool.
+
+### On the network or not (nothing to write)
+
+Every tool has an **"On the network"** switch in Settings → Tools. It is the core's, it is the
+user's choice, and a tool has nothing to declare or implement for it: no manifest key, no
+message, and the tool is never told which way it is set. It is on by default.
+
+While it is off, the tool does not exist for anything that isn't this computer (a LAN client,
+while the "Local network" switch is on). The core leaves the tool out of the tool list and
+`/api/status`, sends none of its state, stream values or notifications there, serves none of
+its files under `/tools/<id>/`, shows none of its log lines, and answers every action for it as
+it would for an id that isn't installed, before the tool hears of it. On this computer nothing
+changes: the tool keeps running, polling, notifying and logging as usual. What it means for you:
+
+- Don't build your own "local only" switch. For a whole tool this is it; for single actions
+  that must never leave this machine even when the tool is on the network, use `localActions`.
+  Both can apply to the same tool.
+- A page can't tell, and needn't: on a device that may not see the tool the page is never loaded.
+- It covers what goes through the core. A listener of your own (above) and anything your tool
+  writes elsewhere are yours to guard. And if your tool publishes facts about *other* tools in
+  its state (as the shortcuts tool lists their commands), those are shown wherever your tool is.
 
 ## 3. The SDK (`@motherapp/tool-sdk`)
 

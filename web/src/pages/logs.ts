@@ -63,6 +63,8 @@ export class LogsPage extends HTMLElement {
           .request("logs.subscribe", { limit: MAX_ENTRIES })
           .then((r) => {
             this.entries = r.entries;
+            // The tool filter lists the tools of the entries too: drop what is no longer among them.
+            this.refreshTools();
             this.rebuild();
           })
           .catch(() => {});
@@ -85,6 +87,11 @@ export class LogsPage extends HTMLElement {
     if (this.toolSelect.options.length === opts.length && opts.every((o, i) => this.toolSelect.options[i]!.value === o.value)) return;
     this.toolSelect.replaceChildren(...opts);
     this.toolSelect.value = cur;
+    // The tool being filtered on is gone (it went off the network): back to all tools.
+    if (this.toolSelect.selectedIndex < 0) {
+      this.toolSelect.value = "";
+      this.filter = { ...this.filter, tool: "" };
+    }
   }
 
   private setFilter(f: Partial<LogFilter>): void {

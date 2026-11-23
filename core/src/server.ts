@@ -8,6 +8,11 @@
 //   /api/status       JSON for `motherapp status`: version info and each tool's state
 //                     (?refresh=1 looks the checkout up again)
 //   everything else   the built frontend (web/dist), index.html as fallback
+//
+// A tool that is off the network (Settings -> "On the network", manager.ts `isOnNetwork`) does
+// not exist for a connection that isn't from this computer, which is the test `canChangeSettings`
+// makes for the network settings and `localActions`: here /tools/<id>/ is a 404 and /api/status
+// leaves it out, and `Client.sees` does the same for every message on /ws.
 import * as fs from "node:fs";
 import * as http from "node:http";
 import { stripTypeScriptTypes } from "node:module";
@@ -18,10 +23,11 @@ import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { ErrorCode, RpcError, RpcPeer } from "@motherapp/protocol";
-import type { JsonObject, NetworkInfo, NotificationSettings, UiNotifications, UiRequests } from "@motherapp/protocol";
+import type { JsonObject, LogEntry, NetworkInfo, NotificationEntry, NotificationSettings, ToolInfo, UiNotifications, UiRequests } from "@motherapp/protocol";
 import { NotificationError } from "./notifications.ts";
 import { canChangeSettings, isAllowedSource, logSafe, refusal, RejectLog } from "./access.ts";
 import { LanController } from "./lan.ts";
+import { logEntryVisible, newest, visibleNotificationSettings } from "./toolVisibility.ts";
 import type { LogService } from "./logService.ts";
 import { realMonitor, realRunner } from "./netIdentity.ts";
 import type { MonitorFn, Runner } from "./netIdentity.ts";
@@ -119,9 +125,16 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       return send(res, 400, "bad request");
     }
 
+    // From this computer every tool exists; from anywhere else only those on the network.
+    const local = canChangeSettings(req.socket.remoteAddress, req.headers, lan.hostContext().subdomains);
+    const sees = (id: string) => local || manager.isOnNetwork(id);
+
     if (pathname === "/api/status") {
       const refresh = url.searchParams.get("refresh") === "1";
-      const tools = manager.list().map(({ id, title, enabled, status, statusText }) => ({ id, title, enabled, status, ...(statusText ? { statusText } : {}) }));
+      const tools = manager
+        .list()
+        .filter((t) => sees(t.id))
+        .map(({ id, title, enabled, status, statusText }) => ({ id, title, enabled, status, ...(statusText ? { statusText } : {}) }));
       void (version ? version.get(refresh) : Promise.resolve(null)).then(
         (v) => send(res, 200, JSON.stringify({ version: v, tools }) + "\n", MIME[".json"]),
         (e: Error) => send(res, 500, e.message),
@@ -131,7 +144,8 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
     const toolMatch = /^\/tools\/([^/]+)\/(.+)$/.exec(pathname);
     if (toolMatch) {
-      const host = manager.hosts.get(toolMatch[1]!);
+      // A tool that is off the network answers as an id that was never installed.
+      const host = sees(toolMatch[1]!) ? manager.hosts.get(toolMatch[1]!) : undefined;
       const file = host ? safeJoin(host.dir, toolMatch[2]!) : undefined;
       const ext = file ? path.extname(file) : "";
       if (!host || !file || !TOOL_FILE_EXT.has(ext) || !fs.existsSync(file)) return send(res, 404, "not found");
@@ -225,14 +239,29 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   const broadcast = <K extends keyof UiNotifications>(method: K, params: UiNotifications[K]) => {
     for (const c of clients) c.notify(method, params);
   };
-  manager.on("tools", () => broadcast("tools", toolsNotification(manager)));
-  manager.on("snapshot", (h) => broadcast("snapshot", { tool: h.id, state: h.state, stale: h.stale.list() }));
-  manager.on("state", (h, changes) => broadcast("state", { tool: h.id, changes }));
+  /** To the clients that may see this tool. */
+  const broadcastTool = <K extends keyof UiNotifications>(tool: string, method: K, params: UiNotifications[K]) => {
+    for (const c of clients) if (c.sees(tool)) c.notify(method, params);
+  };
+  manager.on("tools", () => {
+    for (const c of clients) c.notify("tools", c.toolsNotification());
+  });
+  manager.on("snapshot", (h) => broadcastTool(h.id, "snapshot", { tool: h.id, state: h.state, stale: h.stale.list() }));
+  manager.on("state", (h, changes) => broadcastTool(h.id, "state", { tool: h.id, changes }));
   manager.on("stream", (h, name, value) => {
-    for (const c of clients) if (c.hasStream(h.id, name)) c.notify("stream", { tool: h.id, name, value });
+    for (const c of clients) if (c.hasStream(h.id, name) && c.sees(h.id)) c.notify("stream", { tool: h.id, name, value });
+  });
+  // A tool went off the network or came back: what a LAN client may see changed in every part
+  // of its page (tools, state, streams, notification history, settings rows, logs). Its
+  // connection is dropped, and the page's reconnect builds all of it again from what it may see
+  // now. The pages on this computer keep their connection and got the `tools` push.
+  manager.on("onNetwork", () => {
+    for (const c of clients) if (!c.canChange()) c.close();
   });
   const offVersion = version?.onChange((v) => broadcast("version", v));
-  const offNotifySettings = manager.notifications.onSettings((s) => broadcast("notifications.settings", s));
+  const offNotifySettings = manager.notifications.onSettings((s) => {
+    for (const c of clients) c.notify("notifications.settings", c.notificationSettings(s));
+  });
   const offTray = manager.tray.onChange((info) => broadcast("tray", info));
 
   return new Promise((resolve, reject) => {
@@ -258,10 +287,6 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       });
     });
   });
-}
-
-function toolsNotification(manager: Manager): UiNotifications["tools"] {
-  return { tools: manager.list(), orderSaved: manager.orderSaved };
 }
 
 /** One browser connection. */
@@ -297,9 +322,9 @@ class Client {
       timeoutMs: 0,
     });
     ws.on("message", (data) => this.peer.receiveLine(data.toString()));
-    this.notify("tools", toolsNotification(manager));
+    this.notify("tools", this.toolsNotification());
     for (const h of manager.hosts.values()) {
-      if (h.hasSnapshot) this.notify("snapshot", { tool: h.id, state: h.state, stale: h.stale.list() });
+      if (h.hasSnapshot && this.sees(h.id)) this.notify("snapshot", { tool: h.id, state: h.state, stale: h.stale.list() });
     }
   }
 
@@ -311,13 +336,47 @@ class Client {
     return this.streams.has(`${tool}\0${name}`);
   }
 
-  /** Only a loopback connection under a localhost name may change network settings or call a tool's `localActions`. */
+  /**
+   * Only a loopback connection under a localhost name may change network settings or call a
+   * tool's `localActions`; it is also the only one for which a tool that is off the network exists.
+   */
   canChange(): boolean {
     return canChangeSettings(this.conn.remoteAddress, this.conn, this.lan.hostContext().subdomains);
   }
 
   networkInfo(): NetworkInfo {
     return this.lan.info(this.canChange());
+  }
+
+  /**
+   * Does this tool exist for this connection? Every tool does from this computer; from anywhere
+   * else only the ones that are on the network (Settings -> "On the network").
+   */
+  readonly sees = (tool: string): boolean => this.manager.isOnNetwork(tool) || this.canChange();
+
+  /** The `tools` push for this connection; only this computer is told `onNetwork`. */
+  toolsNotification(): UiNotifications["tools"] {
+    const list = this.manager.list();
+    if (this.canChange()) return { tools: list.map((t): ToolInfo => ({ ...t, onNetwork: this.manager.isOnNetwork(t.id) })), orderSaved: this.manager.orderSaved };
+    return { tools: list.filter((t) => this.sees(t.id)), orderSaved: this.manager.orderSavedAmong(this.sees) };
+  }
+
+  notificationSettings(s: NotificationSettings): NotificationSettings {
+    return visibleNotificationSettings(s, this.sees);
+  }
+
+  /** The tools this connection can't see; empty from this computer. */
+  private hidden(): Set<string> {
+    const off = this.manager.offNetwork();
+    return off.size > 0 && this.canChange() ? new Set() : off;
+  }
+
+  private seesLog(entry: LogEntry): boolean {
+    return logEntryVisible(entry, this.hidden());
+  }
+
+  private seesNotification(entry: NotificationEntry): boolean {
+    return this.sees(entry.tool);
   }
 
   private mustChange(): void {
@@ -339,7 +398,8 @@ class Client {
   /** A bad tool, kind or sound name becomes InvalidParams (a save failure is already an RpcError). */
   private notificationChange<T extends NotificationSettings | void>(fn: () => T): T {
     try {
-      return fn();
+      const r = fn();
+      return (r ? this.notificationSettings(r) : r) as T;
     } catch (e) {
       if (e instanceof NotificationError) throw new RpcError(ErrorCode.InvalidParams, e.message);
       throw e;
@@ -352,9 +412,14 @@ class Client {
       if (typeof v !== "string") throw new RpcError(ErrorCode.InvalidParams, `${method}: "${k}" must be a string`);
       return v;
     };
+    /** A tool id this connection may name; one it can't see is answered as one that doesn't exist. */
+    const seen = (id: string, code: number = ErrorCode.UnknownTool): string => {
+      if (!this.sees(id)) throw new RpcError(code, `unknown tool: ${id}`);
+      return id;
+    };
     switch (method as keyof UiRequests) {
       case "action": {
-        const tool = str("tool");
+        const tool = seen(str("tool"));
         const name = str("name");
         // The same test as network settings, so the tool itself never hears of a LAN client's
         // attempt (DESIGN.md § 3 "Network switch scope").
@@ -367,7 +432,7 @@ class Client {
         });
       }
       case "stream.open": {
-        const tool = str("tool");
+        const tool = seen(str("tool"));
         const name = str("name");
         const key = `${tool}\0${name}`;
         const host = this.manager.host(tool);
@@ -387,16 +452,19 @@ class Client {
       case "tool.watch": {
         const tool = p.tool;
         if (tool !== null && typeof tool !== "string") throw new RpcError(ErrorCode.InvalidParams, `${method}: "tool" must be a string or null`);
-        if (tool !== null) this.manager.host(tool); // unknown tool -> error, nothing changes
+        if (tool !== null) this.manager.host(seen(tool)); // unknown tool -> error, nothing changes
         this.setWatching(tool ?? undefined);
         return null;
       }
       case "logs.subscribe": {
         this.unsubscribeLogs?.();
         const limit = typeof p.limit === "number" ? p.limit : undefined;
-        const entries = this.log.backlog(limit);
+        // A connection that can't see every tool gets the newest `limit` of what it may see.
+        const entries = this.hidden().size === 0 ? this.log.backlog(limit) : newest(this.log.backlog().filter((e) => this.seesLog(e)), limit);
         // Subscribe after taking the backlog; both happen synchronously, so nothing is lost.
-        this.unsubscribeLogs = this.log.subscribe((entry) => this.notify("log", { entry }));
+        this.unsubscribeLogs = this.log.subscribe((entry) => {
+          if (this.seesLog(entry)) this.notify("log", { entry });
+        });
         return { entries };
       }
       case "logs.unsubscribe":
@@ -404,18 +472,26 @@ class Client {
         this.unsubscribeLogs = undefined;
         return null;
       case "tool.restart":
-        this.manager.restart(str("tool"));
+        this.manager.restart(seen(str("tool")));
         return null;
       case "tool.setEnabled": {
         if (typeof p.enabled !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "enabled must be a boolean");
-        await this.manager.setEnabled(str("tool"), p.enabled);
+        await this.manager.setEnabled(seen(str("tool")), p.enabled);
         return null;
       }
+      case "tool.setOnNetwork": {
+        // Before anything about the tool: a LAN client gets this answer for every id.
+        this.mustChange();
+        if (typeof p.onNetwork !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "onNetwork must be a boolean");
+        this.manager.setOnNetwork(str("tool"), p.onNetwork);
+        return null;
+      }
+      // The tools this connection can't see keep their places in the order.
       case "tools.setOrder":
-        this.manager.setOrder(p.order);
+        this.manager.setOrder(p.order, this.sees);
         return null;
       case "tools.resetOrder":
-        this.manager.resetOrder();
+        this.manager.resetOrder(this.sees);
         return null;
       case "version.get":
         if (!this.version) throw new RpcError(ErrorCode.MethodNotFound, "version info not available");
@@ -438,9 +514,14 @@ class Client {
       case "notifications.subscribe": {
         this.unsubscribeNotifications?.();
         const limit = typeof p.limit === "number" ? p.limit : undefined;
-        const entries = this.manager.notifications.backlog(limit);
+        const entries =
+          this.hidden().size === 0
+            ? this.manager.notifications.backlog(limit)
+            : newest(this.manager.notifications.backlog().filter((e) => this.seesNotification(e)), limit !== undefined && Number.isInteger(limit) && limit >= 0 ? limit : undefined);
         // Subscribe after taking the backlog; both happen synchronously, so nothing is lost.
-        this.unsubscribeNotifications = this.manager.notifications.subscribe((entry) => this.notify("notification", { entry }));
+        this.unsubscribeNotifications = this.manager.notifications.subscribe((entry) => {
+          if (this.seesNotification(entry)) this.notify("notification", { entry });
+        });
         return { entries };
       }
       case "notifications.unsubscribe":
@@ -448,7 +529,7 @@ class Client {
         this.unsubscribeNotifications = undefined;
         return null;
       case "notifications.settings.get":
-        return this.manager.notifications.settings();
+        return this.notificationSettings(this.manager.notifications.settings());
       case "notifications.setMuted": {
         if (typeof p.muted !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "muted must be a boolean");
         const muted = p.muted;
@@ -458,7 +539,8 @@ class Client {
         if (typeof p.enabled !== "boolean") throw new RpcError(ErrorCode.InvalidParams, "enabled must be a boolean");
         const tool = str("tool");
         const enabled = p.enabled;
-        return this.notificationChange(() => this.manager.notifications.setTool(tool, enabled));
+        // The service's own answer for a tool it doesn't know is InvalidParams.
+        return this.notificationChange(() => this.manager.notifications.setTool(seen(tool, ErrorCode.InvalidParams), enabled));
       }
       case "notifications.setKind": {
         const tool = str("tool");
@@ -470,7 +552,7 @@ class Client {
         }
         if (p.sound !== undefined) change.sound = str("sound");
         if (change.enabled === undefined && change.sound === undefined) throw new RpcError(ErrorCode.InvalidParams, "give enabled, sound or both");
-        return this.notificationChange(() => this.manager.notifications.setKind(tool, kind, change));
+        return this.notificationChange(() => this.manager.notifications.setKind(seen(tool, ErrorCode.InvalidParams), kind, change));
       }
       case "notifications.previewSound": {
         const sound = str("sound");

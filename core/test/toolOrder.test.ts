@@ -10,7 +10,7 @@ import { LogService } from "../src/logService.ts";
 import { Manager } from "../src/manager.ts";
 import { validateManifest } from "../src/manifest.ts";
 import { startServer } from "../src/server.ts";
-import { defaultOrder, mergeOrder, orderToSave } from "../src/toolOrder.ts";
+import { defaultOrder, mergeOrder, orderToSave, orderToSaveAmong } from "../src/toolOrder.ts";
 import { waitFor } from "./helpers.ts";
 
 const tools = [{ id: "tmux" }, { id: "audio" }, { id: "brightness" }, { id: "inbox" }];
@@ -203,4 +203,56 @@ test("server: tools.setOrder / tools.resetOrder reach every connected client", a
     assert.deepEqual(c.lastTools()!.tools.map((x) => x.id), ["brightness", "inbox", "tmux"]);
   }
   for (const c of [a, b, late]) c.ws.close();
+});
+
+// ---- a client that sees only some of the tools (the others are off the network) ----
+
+test("orderToSaveAmong: unseen tools keep their places, seen ones fill the rest in the asked order", () => {
+  const current = ["a", "h1", "b", "c", "h2"];
+  const sees = (id: string) => !id.startsWith("h");
+  assert.deepEqual(orderToSaveAmong(["c", "a", "b"], current, sees), ["c", "h1", "a", "b", "h2"]);
+  // an unseen id is dropped like an unknown one; seen tools left out follow in their order
+  assert.deepEqual(orderToSaveAmong(["h2", "b", "nosuch", "h1"], current, sees), ["b", "h1", "a", "c", "h2"]);
+  assert.deepEqual(orderToSaveAmong([], current, sees), current);
+  // seeing everything: exactly orderToSave
+  assert.deepEqual(orderToSaveAmong(["h2", "c"], current, () => true), orderToSave(["h2", "c"], current));
+  assert.deepEqual(orderToSaveAmong(["a"], current, () => false), current);
+  assert.throws(() => orderToSaveAmong("a", current, sees), /order must be an array/);
+});
+
+test("manager: order, reset and orderSaved for a client that sees only some of the tools", (t) => {
+  const { manager, configFile } = setup(t, ["brightness", "inbox", "tmux", "zaudio"], { port: 0, tools: { inbox: { network: false } } });
+  const sees = (id: string) => manager.isOnNetwork(id);
+  const ids = () => manager.list().map((i) => i.id);
+  assert.deepEqual(ids(), ["zaudio", "brightness", "inbox", "tmux"]); // the hint first
+  assert.equal(manager.orderSavedAmong(sees), false);
+  assert.equal(manager.orderSavedAmong(() => true), false);
+
+  manager.setOrder(["tmux", "inbox", "zaudio"], sees);
+  assert.deepEqual(ids(), ["tmux", "zaudio", "inbox", "brightness"], "inbox stayed third");
+  assert.equal(manager.orderSavedAmong(sees), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configFile, "utf8")).order, ["tmux", "zaudio", "inbox", "brightness"]);
+
+  // its reset: the tools it sees go back to their default order, inbox doesn't move
+  manager.resetOrder(sees);
+  assert.deepEqual(ids(), ["zaudio", "brightness", "inbox", "tmux"]);
+  assert.equal(manager.orderSavedAmong(sees), false, "nothing left for its Reset to do");
+  assert.equal(manager.orderSaved, true, "for this computer it is a saved order");
+
+  // this computer moves the hidden tool; the LAN client's view of the order is unchanged
+  manager.setOrder(["inbox"]);
+  assert.deepEqual(ids(), ["inbox", "zaudio", "brightness", "tmux"]);
+  assert.equal(manager.orderSavedAmong(sees), false);
+  manager.resetOrder();
+  assert.equal(manager.orderSaved, false);
+  assert.equal(JSON.parse(fs.readFileSync(configFile, "utf8")).order, undefined);
+  assert.throws(() => manager.setOrder("nope", sees), /order must be an array/);
+});
+
+test("config: tools.<id>.network is kept only as false, with or without enabled", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ma-net-cfg-"));
+  const file = path.join(dir, "config.json");
+  fs.writeFileSync(file, JSON.stringify({ tools: { a: { network: false }, b: { enabled: false, network: false }, c: { network: true }, d: { enabled: true, network: "no" }, e: 5, f: {} } }));
+  assert.deepEqual(loadConfig(file).config.tools, { a: { network: false }, b: { enabled: false, network: false }, d: { enabled: true } });
+  fs.rmSync(dir, { recursive: true });
 });

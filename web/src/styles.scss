@@ -417,7 +417,7 @@ $dock-min: 1480px;
   // slot empty instead of shifting its switch and dot.
   .list-group.tool-order {
     display: grid;
-    grid-template-columns: [handle] auto [labels] minmax(0, 1fr) [enabled] auto [restart] auto [dot] auto [end];
+    grid-template-columns: [handle] auto [labels] minmax(0, 1fr) [enabled] auto [network] auto [restart] auto [dot] auto [end];
     column-gap: var(--bs-spacer-4);
   }
   .tool-order > .list-row {
@@ -430,6 +430,9 @@ $dock-min: 1480px;
   .tool-order > .list-row > .drag-handle { grid-column: handle; }
   .tool-order > .list-row > .row-labels { grid-column: labels; }
   .tool-order > .list-row > .row-enabled { grid-column: enabled; flex-wrap: nowrap; gap: var(--bs-spacer-3); }
+  // "On the network": only on a page opened on this computer; elsewhere the column is empty.
+  .tool-order > .list-row > .row-network { grid-column: network; flex-wrap: nowrap; gap: var(--bs-spacer-3); white-space: nowrap; }
+  .tool-order > .list-row > .row-network[hidden] { display: none; }
   .tool-order > .list-row > .row-restart { grid-column: restart; justify-self: start; }
   .tool-order > .list-row > .dot { grid-column: dot; }
   // Narrow: the name gets the first line to itself, the controls stay in their columns below it.
@@ -437,6 +440,8 @@ $dock-min: 1480px;
     .tool-order > .list-row > .drag-handle { grid-row: 1 / span 2; }
     .tool-order > .list-row > .row-labels { grid-row: 1; grid-column: labels / end; }
     .tool-order > .list-row > :is(.row-enabled, .row-restart, .dot) { grid-row: 2; }
+    // A line of its own under them, starting where "Enabled" starts: beside them it doesn't fit.
+    .tool-order > .list-row > .row-network { grid-row: 3; grid-column: enabled / end; justify-self: start; }
   }
   .drag-handle {
     flex: none;

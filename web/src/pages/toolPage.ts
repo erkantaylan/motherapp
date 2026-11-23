@@ -108,6 +108,15 @@ export function mountToolPage(app: App, toolId: string, root: HTMLElement): () =
       banner.textContent = app.conn.connected ? "Unknown tool." : "";
       banner.hidden = banner.textContent === "";
       restart.hidden = true;
+      // A tool that was here and is gone (taken off the network while this page was open on
+      // another device): its page goes too, not only its name in the sidebar.
+      if (renderedKey !== "" || body.hasChildNodes()) {
+        cleanup();
+        cleanup = () => {};
+        body.replaceChildren();
+        renderedKey = "";
+        root.closest(".content")?.classList.remove("content-wide");
+      }
       return;
     }
     title.textContent = info.title;

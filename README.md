@@ -56,7 +56,9 @@ icon. `"tray": false` in config.json turns it off; `MOTHERAPP_TRAY=off` does so 
 private/link-local source addresses on the machine's interfaces, with **no login**, but only
 while the active NetworkManager connection is one you trusted (its UUID plus the gateway's MAC,
 `lan.trusted`). These settings change only from this computer. They apply to the core's UI and
-API only; the inbox tool's tunnel listener is separate and has its own token auth.
+API only; the inbox tool's tunnel listener is separate and has its own token auth. A tool can be
+kept off the network on its own: Settings → Tools → **On the network** (shown only on this
+computer; `tools.<id>.network: false`). For other devices such a tool doesn't exist at all.
 
 ## Dependencies
 

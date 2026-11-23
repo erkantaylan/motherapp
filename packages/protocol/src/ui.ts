@@ -1,5 +1,8 @@
 // Browser <-> core contract over the WebSocket at /ws (JSON-RPC 2.0, one message per frame).
 // The core pushes `tools` and one `snapshot` per tool right after connecting, then deltas.
+// A tool the user took off the network (`tool.setOnNetwork`) is, for a connection that isn't
+// from this computer, an unknown tool in every message here: it is in no list and no push, and
+// a request that names it gets the answer an id that was never installed gets.
 
 import type { JsonObject, JsonValue, RpcId } from "./jsonrpc.ts";
 import type { Widget } from "./layout.ts";
@@ -31,6 +34,12 @@ export interface ToolInfo {
   pageUrl?: string;
   /** The manifest's `wide`: the page gets the full width of a wide screen. */
   wide?: boolean;
+  /**
+   * The tool's "On the network" setting (config.json `tools.<id>.network`, default true). Sent
+   * only to a connection that may change it (`NetworkInfo.canChange`); any other connection
+   * gets no such field, and no tool for which it is false (DESIGN.md § 3 "Network switch scope").
+   */
+  onNetwork?: boolean;
 }
 
 export interface LogEntry {
@@ -275,6 +284,14 @@ export interface UiRequests {
   "tool.restart": { params: { tool: string }; result: null };
   "tool.setEnabled": { params: { tool: string; enabled: boolean }; result: null };
   /**
+   * Settings -> a tool's "On the network" switch. Off: for every connection that isn't from
+   * this computer the tool doesn't exist (not in `tools`, no state, no actions, no files, no
+   * notifications, no log entries). Refused unless `canChange`, like the network settings, and
+   * with the same answer whether or not the tool exists. Those other connections are then
+   * dropped, so their pages reconnect and show the tools they may see.
+   */
+  "tool.setOnNetwork": { params: { tool: string; onNetwork: boolean }; result: null };
+  /**
    * Saves the sidebar order (config.json `order`). Unknown ids are dropped; tools left out
    * follow in their current order. Every client then gets a `tools` notification.
    */
@@ -333,6 +350,7 @@ export interface UiNotifications {
    * Every tool, in display order (the user's order from Settings, else the default). Sent on
    * connect and to every client whenever a tool, its status or the order changes.
    * `orderSaved`: the user has saved an order (so "Reset to default order" would change it).
+   * A connection that isn't from this computer gets only the tools that are "on the network".
    */
   tools: { tools: ToolInfo[]; orderSaved?: boolean };
   /** Full cached state of one tool (on connect and after the tool (re)starts). */

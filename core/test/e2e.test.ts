@@ -382,7 +382,7 @@ test("an external tool (outside the checkout, serve is an absolute executable) w
 
   // identity, icon file and custom page, served from the tool's own folder
   assert.deepEqual(list.map((x) => x.id), ["ext", "crash", "custom", "ok"], "the manifest's order hint applies");
-  assert.deepEqual({ ...ext(), status: "" }, { id: "ext", title: "External (live)", enabled: true, status: "", iconUrl: "/tools/ext/icon.svg", page: "custom", pageUrl: "/tools/ext/page.ts" });
+  assert.deepEqual({ ...ext(), status: "" }, { id: "ext", title: "External (live)", enabled: true, status: "", iconUrl: "/tools/ext/icon.svg", page: "custom", pageUrl: "/tools/ext/page.ts", onNetwork: true });
   const page = await fetch(`${base}/tools/ext/page.ts`);
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-type") ?? "", /javascript/);

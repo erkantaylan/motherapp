@@ -48,3 +48,15 @@ export function orderToSave(requested: unknown, current: readonly string[]): str
   for (const id of current) if (!out.includes(id)) out.push(id);
   return out;
 }
+
+/**
+ * `orderToSave` for a client that sees only some of the tools (the others are off the network,
+ * DESIGN.md § 3 "Network switch scope"): the tools it can't see keep their places in `current`,
+ * and the ones it sees fill the remaining places in the order it asked for. Ids it can't see
+ * are dropped from the request like unknown ones.
+ */
+export function orderToSaveAmong(requested: unknown, current: readonly string[], sees: (id: string) => boolean): string[] {
+  const visible = orderToSave(requested, current.filter(sees));
+  let next = 0;
+  return current.map((id) => (sees(id) ? visible[next++]! : id));
+}
